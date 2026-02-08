@@ -346,8 +346,9 @@ class TestCollect:
 
     def test_collect_default_date_range(self, tmp_path):
         collector = ECBCollector(output_dir=tmp_path)
-        with patch.object(collector, "_fetch", return_value=pd.DataFrame()) as mock_fetch, patch(
-            "time.sleep"
+        with (
+            patch.object(collector, "_fetch", return_value=pd.DataFrame()) as mock_fetch,
+            patch("time.sleep"),
         ):
             collector.collect()
 

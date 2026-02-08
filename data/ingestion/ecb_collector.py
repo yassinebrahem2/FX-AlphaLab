@@ -270,9 +270,7 @@ class ECBCollector(BaseCollector):
             response.raise_for_status()
         except requests.exceptions.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
-                raise ValueError(
-                    f"Invalid ECB dataset: {dataset.dataflow}/{dataset.key}"
-                ) from exc
+                raise ValueError(f"Invalid ECB dataset: {dataset.dataflow}/{dataset.key}") from exc
             raise
 
         if not response.content:
@@ -296,9 +294,7 @@ class ECBCollector(BaseCollector):
         Returns:
             DataFrame[date, rate_type, rate, frequency, unit, source]
         """
-        _empty = pd.DataFrame(
-            columns=["date", "rate_type", "rate", "frequency", "unit", "source"]
-        )
+        _empty = pd.DataFrame(columns=["date", "rate_type", "rate", "frequency", "unit", "source"])
         if df.empty:
             return _empty
 
