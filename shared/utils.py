@@ -2,12 +2,11 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import pytz
 
 
-def setup_logger(name: str, log_file: Optional[Path] = None, level=logging.INFO) -> logging.Logger:
+def setup_logger(name: str, log_file: Path | None = None, level=logging.INFO) -> logging.Logger:
     """Set up logger with console and file handlers."""
     logger = logging.getLogger(name)
     logger.setLevel(level)

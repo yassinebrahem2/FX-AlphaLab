@@ -70,8 +70,6 @@ exclude = '''
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-select = ["E", "F", "W", "I", "N", "UP"]
-ignore = ["E501"]
 exclude = [
     ".git",
     ".venv",
@@ -79,6 +77,10 @@ exclude = [
     "build",
     "dist",
 ]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
