@@ -2,6 +2,8 @@
 Price Data Pipeline Runner
 Week 4 – Foundation & Data
 """
+from src.storage.db import initialize_database
+from src.storage.load_price import load_price_dataframe
 
 from pathlib import Path
 from datetime import datetime, timezone
@@ -50,6 +52,7 @@ def run() -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     CLEAN_DIR.mkdir(parents=True, exist_ok=True)
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+    initialize_database()
 
     for pair in FX_PAIRS:
         print(f"Fetching {pair} {TIMEFRAME}")
@@ -86,7 +89,7 @@ def run() -> None:
 
         clean_path = CLEAN_DIR / f"{pair}_{TIMEFRAME}.csv"
         df_clean.to_csv(clean_path, index=False)
-
+        load_price_dataframe(df_clean)
         # -----------------------------
         # Manifest Update
         # -----------------------------
