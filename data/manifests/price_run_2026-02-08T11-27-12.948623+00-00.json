@@ -1,0 +1,22 @@
+{
+  "run_time_utc": "2026-02-08T11:27:12.948623+00:00",
+  "timeframe": "H1",
+  "pairs": {
+    "EURUSD": {
+      "rows": 5000,
+      "file": "data\\raw\\price\\EURUSD_H1.csv"
+    },
+    "GBPUSD": {
+      "rows": 5000,
+      "file": "data\\raw\\price\\GBPUSD_H1.csv"
+    },
+    "USDCHF": {
+      "rows": 5000,
+      "file": "data\\raw\\price\\USDCHF_H1.csv"
+    },
+    "USDJPY": {
+      "rows": 5000,
+      "file": "data\\raw\\price\\USDJPY_H1.csv"
+    }
+  }
+}
