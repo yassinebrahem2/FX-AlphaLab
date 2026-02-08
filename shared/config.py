@@ -1,4 +1,5 @@
 """Configuration management for FX-AlphaLab."""
+
 import os
 from pathlib import Path
 
