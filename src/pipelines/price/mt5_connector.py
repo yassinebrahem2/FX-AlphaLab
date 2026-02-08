@@ -7,7 +7,9 @@ Infrastructure-only component.
 - No intelligence or trading logic
 """
 
+import time
 from typing import Dict
+
 import MetaTrader5 as mt5
 import pandas as pd
 
@@ -33,27 +35,40 @@ class MT5Connector:
         "D1": mt5.TIMEFRAME_D1,
     }
 
-    def __init__(self) -> None:
+    def __init__(self, max_retries: int = 3, retry_delay_sec: int = 2) -> None:
         self.connected: bool = False
+        self.max_retries = max_retries
+        self.retry_delay_sec = retry_delay_sec
 
     def connect(self) -> None:
-        """Initialize MT5 connection."""
+        """
+        Initialize MT5 connection with retries.
+        """
         if self.connected:
             return
 
-        if not mt5.initialize():
-            raise RuntimeError("MT5 initialization failed")
+        for _ in range(self.max_retries):
+            if mt5.initialize():
+                self.connected = True
+                return
+            time.sleep(self.retry_delay_sec)
 
-        self.connected = True
+        raise RuntimeError(
+            f"MT5 initialization failed after {self.max_retries} attempts"
+        )
 
     def shutdown(self) -> None:
-        """Shutdown MT5 connection."""
+        """
+        Shutdown MT5 connection safely.
+        """
         if self.connected:
             mt5.shutdown()
             self.connected = False
 
     def _ensure_symbol(self, symbol: str) -> None:
-        """Ensure symbol is available in MT5."""
+        """
+        Ensure symbol is available in MT5.
+        """
         if not mt5.symbol_select(symbol, True):
             raise RuntimeError(f"Symbol not available in MT5: {symbol}")
 
@@ -61,7 +76,7 @@ class MT5Connector:
         self,
         symbol: str,
         timeframe: str,
-        n_bars: int = 5000
+        n_bars: int = 5000,
     ) -> pd.DataFrame:
         """
         Fetch raw OHLC data from MT5.
@@ -91,7 +106,7 @@ class MT5Connector:
 
         if rates is None or len(rates) == 0:
             raise RuntimeError(
-                f"No data returned for symbol={symbol}, timeframe={timeframe}"
+                f"No data returned for {symbol} ({timeframe})"
             )
 
         return pd.DataFrame(rates)
