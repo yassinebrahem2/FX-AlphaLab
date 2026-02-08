@@ -57,3 +57,28 @@ CREATE TABLE IF NOT EXISTS macro_data (
     PRIMARY KEY (event_id)
 );
 """
+
+# -------------------------------------------------------------------
+# Central Bank Documents (RAW)
+# -------------------------------------------------------------------
+
+CB_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS central_bank_documents (
+    document_id TEXT NOT NULL,
+
+    institution TEXT NOT NULL,
+    document_type TEXT NOT NULL,
+
+    title TEXT NOT NULL,
+    publication_datetime_utc TEXT,
+    url TEXT NOT NULL,
+
+    raw_text TEXT,
+
+    source TEXT NOT NULL,
+    ingested_at_utc TEXT NOT NULL,
+
+    PRIMARY KEY (document_id)
+);
+"""
+
