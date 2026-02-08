@@ -11,7 +11,6 @@ import requests
 from data.ingestion.base_collector import BaseCollector
 from data.ingestion.ecb_collector import ECBCollector
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -194,9 +193,7 @@ class TestFetch:
 
     def test_timeout_propagates(self, tmp_path):
         collector = ECBCollector(output_dir=tmp_path)
-        with patch.object(
-            collector._session, "get", side_effect=requests.exceptions.Timeout()
-        ):
+        with patch.object(collector._session, "get", side_effect=requests.exceptions.Timeout()):
             with pytest.raises(requests.exceptions.Timeout):
                 collector._fetch(ECBCollector.EXCHANGE_RATES)
 
@@ -359,8 +356,7 @@ class TestCollect:
         start_period = calls[0][1]["start_period"]
         end_period = calls[0][1]["end_period"]
         days = (
-            datetime.strptime(end_period, "%Y-%m-%d")
-            - datetime.strptime(start_period, "%Y-%m-%d")
+            datetime.strptime(end_period, "%Y-%m-%d") - datetime.strptime(start_period, "%Y-%m-%d")
         ).days
         assert 720 <= days <= 740
 
