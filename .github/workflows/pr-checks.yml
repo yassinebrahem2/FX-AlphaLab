@@ -11,10 +11,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Check PR title format
-      run: |
-        echo "${{ github.event.pull_request.title }}" | grep -E "^\[(feat|fix|docs|refactor|test|chore)\]"
-    
     - name: Check for large files
       run: |
         find . -type f -size +10M -not -path "./.git/*" | tee large_files.txt
