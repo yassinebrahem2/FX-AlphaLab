@@ -11,7 +11,7 @@ PRICE_SCHEMA = {
     "high": float,
     "low": float,
     "close": float,
-    "volume": float,
+    "volume": int,
     "source": str,               # MT5
     "ingested_at_utc": "datetime64[ns]"
 }

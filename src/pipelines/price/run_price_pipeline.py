@@ -13,6 +13,11 @@ from src.pipelines.price.mt5_fetch import (
     standardize_raw_ohlc,
     add_metadata,
 )
+from src.pipelines.price.validate import validate_schema
+from src.pipelines.price.quality_checks import (
+    check_missing_values,
+    check_monotonic_time,
+)
 
 
 # -----------------------------
@@ -45,16 +50,38 @@ def run() -> None:
     for pair in FX_PAIRS:
         print(f"Fetching {pair} {TIMEFRAME}")
 
+        # -----------------------------
+        # Ingestion & Standardisation
+        # -----------------------------
+
         df = fetch_raw_ohlc(pair, TIMEFRAME)
         df = standardize_raw_ohlc(df)
         df = add_metadata(df, pair, TIMEFRAME)
 
+        # -----------------------------
+        # Validation & Quality Gates
+        # -----------------------------
+
+        validate_schema(df)
+        check_monotonic_time(df)
+
+        quality_report = check_missing_values(df)
+
+        # -----------------------------
+        # Persistence
+        # -----------------------------
+
         file_path = RAW_DIR / f"{pair}_{TIMEFRAME}.csv"
         df.to_csv(file_path, index=False)
+
+        # -----------------------------
+        # Manifest Update
+        # -----------------------------
 
         manifest["pairs"][pair] = {
             "rows": len(df),
             "file": str(file_path),
+            "quality": quality_report,
         }
 
     manifest_path = MANIFEST_DIR / f"price_run_{run_id}.json"
