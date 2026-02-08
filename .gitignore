@@ -1,3 +1,12 @@
 venv/
 __pycache__/
 .ipynb_checkpoints/
+
+data/raw/**
+data/clean/**
+data/manifests/**
+data/*.db
+venv/
+.env
+__pycache__/
+*.pyc
