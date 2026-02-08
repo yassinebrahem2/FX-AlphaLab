@@ -2,6 +2,14 @@
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shared*", "data*", "agents*", "backend*"]
+exclude = ["tests*", "docs*", "notebooks*", "frontend*", "datasets*"]
+
+[tool.setuptools]
+py-modules = []
+
 [project]
 name = "fx-alphalab"
 version = "0.1.0"
