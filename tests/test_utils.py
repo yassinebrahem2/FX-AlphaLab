@@ -1,4 +1,5 @@
 """Tests for utility functions."""
+
 import logging
 from datetime import datetime
 
@@ -66,4 +67,3 @@ def test_is_forex_trading_time_sunday_closed():
     # Sunday at 20:00 UTC - market closed
     dt = datetime(2026, 2, 8, 20, 0, 0, tzinfo=pytz.UTC)
     assert is_forex_trading_time(dt) is False
-
