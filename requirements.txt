@@ -1,4 +1,13 @@
+# Core data stack
 pandas
 numpy
 matplotlib
+
+# Market data
 yfinance
+MetaTrader5
+
+# Macro / Economic data
+fredapi
+feedparser 
+requests
