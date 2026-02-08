@@ -1,7 +1,7 @@
 """Unit tests for MT5 data collector (CI-safe, fully mocked)."""
 
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -388,8 +388,8 @@ class TestCollect:
         mock_inst = mock_cls.return_value
         mock_inst.fetch_ohlc.return_value = _MOCK_DF.copy()
 
-        start = datetime(2023, 1, 1, tzinfo=UTC)
-        end = datetime(2024, 1, 1, tzinfo=UTC)
+        start = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
         collector = MT5Collector(output_dir=tmp_path, pairs=["EURUSD"], timeframes=["H1"])
         collector.collect(start_date=start, end_date=end)

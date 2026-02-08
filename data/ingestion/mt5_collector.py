@@ -12,7 +12,7 @@ API: https://www.mql5.com/en/docs/python_metatrader5
 """
 
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -199,7 +199,7 @@ class MT5Collector(BaseCollector):
         Raises:
             RuntimeError: If MT5 connection fails or all symbols fail.
         """
-        end = end_date or datetime.now(tz=UTC)
+        end = end_date or datetime.now(tz=timezone.utc)
         start = start_date or end - timedelta(days=self.years * 365)
         self.logger.info("Collecting MT5 data %s to %s", start.date(), end.date())
 

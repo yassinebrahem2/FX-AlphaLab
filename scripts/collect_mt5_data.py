@@ -24,12 +24,12 @@ def main() -> None:
     # Health check
     print("Running health check...")
     if not collector.health_check():
-        print("❌ MT5 terminal is not accessible!")
-        print("   Make sure MT5 is installed and demo account configured.")
-        print("   See docs/ingestion/mt5.md for setup instructions.")
+        print("[ERROR] MT5 terminal is not accessible!")
+        print("        Make sure MT5 is installed and demo account configured.")
+        print("        See docs/ingestion/mt5.md for setup instructions.")
         return
 
-    print("✅ MT5 terminal is accessible")
+    print("[OK] MT5 terminal is accessible")
     print()
 
     # Collect and export
@@ -42,22 +42,22 @@ def main() -> None:
     try:
         datasets = collector.collect()
 
-        print(f"✅ Collected {len(datasets)} datasets:")
+        print(f"[OK] Collected {len(datasets)} datasets:")
         for name, df in datasets.items():
-            print(f"   - {name}: {len(df):,} records")
+            print(f"     - {name}: {len(df):,} records")
 
         # Export to CSV
         print()
         print("Exporting to CSV...")
         for name, df in datasets.items():
             path = collector.export_csv(df, name)
-            print(f"   - {path.name}")
+            print(f"     - {path.name}")
 
         print()
-        print(f"✅ Complete! Files saved to: {collector.output_dir}")
+        print(f"[OK] Complete! Files saved to: {collector.output_dir}")
 
     except Exception as e:
-        print(f"❌ Collection failed: {e}")
+        print(f"[ERROR] Collection failed: {e}")
         raise
 
 
