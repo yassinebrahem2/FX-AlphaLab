@@ -26,7 +26,7 @@ def main() -> None:
     if not collector.health_check():
         print("❌ MT5 terminal is not accessible!")
         print("   Make sure MT5 is installed and demo account configured.")
-        print("   See docs/mt5_setup.md for setup instructions.")
+        print("   See docs/ingestion/mt5.md for setup instructions.")
         return
 
     print("✅ MT5 terminal is accessible")
@@ -36,7 +36,7 @@ def main() -> None:
     print(f"Collecting {len(collector.pairs)} pairs × {len(collector.timeframes)} timeframes...")
     print(f"Pairs: {', '.join(collector.pairs)}")
     print(f"Timeframes: {', '.join(collector.timeframes)}")
-    print(f"Bars per dataset: {collector.n_bars:,}")
+    print(f"History: {collector.years} years")
     print()
 
     try:
