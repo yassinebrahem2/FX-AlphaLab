@@ -36,12 +36,12 @@ def test_config_database_url():
 def test_config_validation_missing_fred_key():
     """Test configuration validation fails without FRED API key."""
     original_key = os.environ.get("FRED_API_KEY")
-    
+
     try:
         if "FRED_API_KEY" in os.environ:
             del os.environ["FRED_API_KEY"]
         Config.FRED_API_KEY = None
-        
+
         with pytest.raises(ValueError, match="FRED_API_KEY not set"):
             Config.validate()
     finally:

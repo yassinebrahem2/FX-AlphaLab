@@ -1,12 +1,10 @@
 """Tests for utility functions."""
 import logging
 from datetime import datetime
-from pathlib import Path
 
-import pytest
 import pytz
 
-from shared.utils import setup_logger, to_utc, is_forex_trading_time
+from shared.utils import is_forex_trading_time, setup_logger, to_utc
 
 
 def test_setup_logger_basic():
@@ -21,10 +19,10 @@ def test_setup_logger_with_file(tmp_path):
     """Test logger setup with file handler."""
     log_file = tmp_path / "test.log"
     logger = setup_logger("test_file_logger", log_file=log_file)
-    
+
     assert log_file.exists()
     logger.info("Test message")
-    
+
     assert log_file.read_text()
 
 
