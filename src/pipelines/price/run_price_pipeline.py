@@ -18,6 +18,7 @@ from src.pipelines.price.quality_checks import (
     check_missing_values,
     check_monotonic_time,
 )
+from src.pipelines.price.to_clean import raw_to_clean
 
 
 # -----------------------------
@@ -27,6 +28,7 @@ from src.pipelines.price.quality_checks import (
 TIMEFRAME = "H1"
 
 RAW_DIR = Path("data/raw/price")
+CLEAN_DIR = Path("data/clean/price")
 MANIFEST_DIR = Path("data/manifests")
 
 
@@ -44,7 +46,9 @@ def run() -> None:
         "pairs": {},
     }
 
+    # Ensure directories exist
     RAW_DIR.mkdir(parents=True, exist_ok=True)
+    CLEAN_DIR.mkdir(parents=True, exist_ok=True)
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
 
     for pair in FX_PAIRS:
@@ -54,35 +58,49 @@ def run() -> None:
         # Ingestion & Standardisation
         # -----------------------------
 
-        df = fetch_raw_ohlc(pair, TIMEFRAME)
-        df = standardize_raw_ohlc(df)
-        df = add_metadata(df, pair, TIMEFRAME)
+        df_raw = fetch_raw_ohlc(pair, TIMEFRAME)
+        df_std = standardize_raw_ohlc(df_raw)
+        df_final = add_metadata(df_std, pair, TIMEFRAME)
 
         # -----------------------------
-        # Validation & Quality Gates
+        # Validation & Quality Gates (Raw)
         # -----------------------------
 
-        validate_schema(df)
-        check_monotonic_time(df)
+        validate_schema(df_final)
+        check_monotonic_time(df_final)
 
-        quality_report = check_missing_values(df)
+        quality_report = check_missing_values(df_final)
 
         # -----------------------------
-        # Persistence
+        # Persist Raw
         # -----------------------------
 
-        file_path = RAW_DIR / f"{pair}_{TIMEFRAME}.csv"
-        df.to_csv(file_path, index=False)
+        raw_path = RAW_DIR / f"{pair}_{TIMEFRAME}.csv"
+        df_final.to_csv(raw_path, index=False)
+
+        # -----------------------------
+        # Convert to Clean
+        # -----------------------------
+
+        df_clean = raw_to_clean(df_final)
+
+        clean_path = CLEAN_DIR / f"{pair}_{TIMEFRAME}.csv"
+        df_clean.to_csv(clean_path, index=False)
 
         # -----------------------------
         # Manifest Update
         # -----------------------------
 
         manifest["pairs"][pair] = {
-            "rows": len(df),
-            "file": str(file_path),
+            "rows": len(df_final),
+            "raw_file": str(raw_path),
+            "clean_file": str(clean_path),
             "quality": quality_report,
         }
+
+    # -----------------------------
+    # Persist Manifest
+    # -----------------------------
 
     manifest_path = MANIFEST_DIR / f"price_run_{run_id}.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -94,3 +112,4 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
+
