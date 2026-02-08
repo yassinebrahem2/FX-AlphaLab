@@ -9,20 +9,14 @@ RULES:
 """
 
 from datetime import datetime, timezone
-from typing import Dict
-
-import MetaTrader5 as mt5
 import pandas as pd
+
+from src.pipelines.price.mt5_connector import MT5Connector
 
 
 # -----------------------------
 # Constants
 # -----------------------------
-
-MT5_TIMEFRAMES: Dict[str, int] = {
-    "H1": mt5.TIMEFRAME_H1,
-    "D1": mt5.TIMEFRAME_D1,
-}
 
 REQUIRED_COLUMNS = [
     "timestamp_utc",
@@ -38,34 +32,32 @@ REQUIRED_COLUMNS = [
 # MT5 Data Fetching
 # -----------------------------
 
-def fetch_raw_ohlc(pair: str, timeframe: str, n_bars: int = 5000) -> pd.DataFrame:
+def fetch_raw_ohlc(
+    pair: str,
+    timeframe: str,
+    n_bars: int = 5000,
+) -> pd.DataFrame:
     """
     Fetch raw OHLC data from MT5.
 
     Returns:
         Raw OHLC exactly as provided by MT5 (no transformations).
     """
-
-    if timeframe not in MT5_TIMEFRAMES:
-        raise ValueError(f"Unsupported timeframe: {timeframe}")
-
-    if not mt5.initialize():
-        raise RuntimeError("MT5 initialization failed")
+    connector = MT5Connector()
 
     try:
-        rates = mt5.copy_rates_from_pos(
-            pair,
-            MT5_TIMEFRAMES[timeframe],
-            0,
-            n_bars,
+        df = connector.fetch_ohlc(
+            symbol=pair,
+            timeframe=timeframe,
+            n_bars=n_bars,
         )
     finally:
-        mt5.shutdown()
+        connector.shutdown()
 
-    if rates is None or len(rates) == 0:
+    if df is None or len(df) == 0:
         raise RuntimeError(f"No data returned for {pair} {timeframe}")
 
-    return pd.DataFrame(rates)
+    return df
 
 
 # -----------------------------
@@ -78,7 +70,6 @@ def standardize_raw_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     - Convert timestamps to UTC
     - Canonical column selection
     """
-
     df = df.copy()
 
     df["timestamp_utc"] = pd.to_datetime(
@@ -109,7 +100,6 @@ def add_metadata(
     """
     Attach mandatory metadata without modifying price data.
     """
-
     df = df.copy()
     df["pair"] = pair
     df["timeframe"] = timeframe
