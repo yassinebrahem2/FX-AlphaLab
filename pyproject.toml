@@ -41,6 +41,7 @@ dev = [
     "mypy",
     "pre-commit",
     "ipykernel",
+    "types-pytz",
 ]
 
 notebook = [
