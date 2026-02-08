@@ -136,9 +136,22 @@ REQUEST_TIMEOUT=30
 
 ## Development Workflow
 
+### Branching Strategy
+
+This project follows a professional Git workflow:
+- **main**: Stable production-ready code (protected)
+- **dev**: Active development and integration branch
+- **feature/**: Feature branches created from `dev`
+
 ### Before You Start Coding
 
-1. **Create a new branch**
+1. **Ensure you're on the latest dev branch**
+   ```bash
+   git checkout dev
+   git pull origin dev
+   ```
+
+2. **Create a new branch from dev**
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -186,11 +199,13 @@ git push origin feature/your-feature-name
 ### Pull Request Process
 
 1. Push your branch to GitHub
-2. Open a Pull Request
+2. Open a Pull Request **targeting the `dev` branch**
 3. CI pipeline runs automatically (must pass)
 4. Request review from team members
 5. Address feedback
-6. Merge when approved
+6. Merge to `dev` when approved
+
+**Note**: Only maintainers merge `dev` → `main` for releases.
 
 ## Testing
 
@@ -260,12 +275,13 @@ def process_data(value: Optional[str]) -> Dict[str, int]:
 
 1. **Fork** the repository (external contributors)
 2. **Clone** your fork / the repo
-3. **Create a branch** (`git checkout -b feature/amazing-feature`)
-4. **Make changes** with tests
-5. **Run quality checks** locally
-6. **Commit** (`git commit -m 'feat: add amazing feature'`)
-7. **Push** (`git push origin feature/amazing-feature`)
-8. **Open a Pull Request**
+3. **Switch to dev** (`git checkout dev && git pull origin dev`)
+4. **Create a branch from dev** (`git checkout -b feature/amazing-feature`)
+5. **Make changes** with tests
+6. **Run quality checks** locally
+7. **Commit** (`git commit -m 'feat: add amazing feature'`)
+8. **Push** (`git push origin feature/amazing-feature`)
+9. **Open a Pull Request to `dev` branch**
 
 ### Commit Message Convention
 
