@@ -1,6 +1,10 @@
 """
 Economic Calendar Fetcher (RAW)
 STEP 4 – Exogenous Event Data
+
+This module defines the source-agnostic contract for macro / economic data
+fetching and attaches ingestion metadata. No validation, cleaning, or
+normalization is performed here.
 """
 
 from datetime import datetime, timezone
@@ -15,50 +19,38 @@ import pandas as pd
 
 class EconomicCalendarFetcher(Protocol):
     """
-    Contract for any economic calendar data source.
+    Contract for any macro / economic data source.
 
-    Implementations MUST return raw, unvalidated data.
-    No cleaning, no inference, no normalization.
+    Implementations MUST:
+    - return raw, unvalidated data
+    - make no assumptions about importance, impact, or interpretation
+    - preserve source timestamps as-is
     """
 
-    def fetch(self, start_date: str, end_date: str) -> pd.DataFrame:
+    def fetch(self) -> pd.DataFrame:
+        """
+        Fetch raw economic data.
+
+        Returns:
+            pd.DataFrame containing raw macroeconomic records
+        """
         ...
 
 
 # -------------------------------------------------------------------
-# Public API
+# Public helpers
 # -------------------------------------------------------------------
 
-def fetch_economic_calendar(
-    fetcher: EconomicCalendarFetcher,
-    start_date: str,
-    end_date: str,
-    source: str,
-) -> pd.DataFrame:
+def attach_metadata(df: pd.DataFrame, source: str) -> pd.DataFrame:
     """
-    Fetch raw economic calendar data and attach ingestion metadata.
+    Attach ingestion metadata to a raw macro DataFrame.
 
     Parameters:
-        fetcher: object implementing EconomicCalendarFetcher
-        start_date: YYYY-MM-DD
-        end_date: YYYY-MM-DD
-        source: canonical source name (e.g. FRED, ECB, Investing)
+        df: raw DataFrame returned by a fetcher
+        source: canonical source name (e.g. FRED, Investing, ECB)
 
     Returns:
-        Raw pd.DataFrame (schema not yet enforced)
-    """
-    df = fetcher.fetch(start_date=start_date, end_date=end_date)
-    return _add_metadata(df, source)
-
-
-# -------------------------------------------------------------------
-# Internal helpers
-# -------------------------------------------------------------------
-
-def _add_metadata(df: pd.DataFrame, source: str) -> pd.DataFrame:
-    """
-    Attach ingestion metadata.
-    This function MUST be side-effect free.
+        Copy of df with provenance metadata attached
     """
     df = df.copy()
     df["source"] = source
