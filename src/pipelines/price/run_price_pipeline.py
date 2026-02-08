@@ -2,14 +2,15 @@
 Price Data Pipeline Runner
 Week 4 – Foundation & Data
 """
-from src.storage.db import initialize_database
-from src.storage.load_price import load_price_dataframe
 
 from pathlib import Path
 from datetime import datetime, timezone
 import json
 
-from src.common.config import FX_PAIRS
+from src.common.config import FX_PAIRS, PRICE_TIMEFRAMES
+from src.storage.db import initialize_database
+from src.storage.load_price import load_price_dataframe
+
 from src.pipelines.price.mt5_fetch import (
     fetch_raw_ohlc,
     standardize_raw_ohlc,
@@ -27,8 +28,6 @@ from src.pipelines.price.to_clean import raw_to_clean
 # Configuration
 # -----------------------------
 
-TIMEFRAME = "H1"
-
 RAW_DIR = Path("data/raw/price")
 CLEAN_DIR = Path("data/clean/price")
 MANIFEST_DIR = Path("data/manifests")
@@ -39,80 +38,72 @@ MANIFEST_DIR = Path("data/manifests")
 # -----------------------------
 
 def run() -> None:
-    run_time_utc = datetime.now(timezone.utc)
-    run_id = run_time_utc.isoformat().replace(":", "-")
+    run_time = datetime.now(timezone.utc).isoformat()
 
     manifest = {
-        "run_time_utc": run_time_utc.isoformat(),
-        "timeframe": TIMEFRAME,
+        "run_time_utc": run_time,
+        "timeframes": PRICE_TIMEFRAMES,
         "pairs": {},
     }
 
-    # Ensure directories exist
+    # Ensure directories & DB exist
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     CLEAN_DIR.mkdir(parents=True, exist_ok=True)
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     initialize_database()
 
-    for pair in FX_PAIRS:
-        print(f"Fetching {pair} {TIMEFRAME}")
+    # -----------------------------
+    # Main ingestion loop
+    # -----------------------------
 
-        # -----------------------------
-        # Ingestion & Standardisation
-        # -----------------------------
+    for timeframe in PRICE_TIMEFRAMES:
+        for pair in FX_PAIRS:
+            print(f"Fetching {pair} {timeframe}")
 
-        df_raw = fetch_raw_ohlc(pair, TIMEFRAME)
-        df_std = standardize_raw_ohlc(df_raw)
-        df_final = add_metadata(df_std, pair, TIMEFRAME)
+            # Ingest & standardize
+            df_raw = fetch_raw_ohlc(pair, timeframe)
+            df_std = standardize_raw_ohlc(df_raw)
+            df_final = add_metadata(df_std, pair, timeframe)
 
-        # -----------------------------
-        # Validation & Quality Gates (Raw)
-        # -----------------------------
+            # Validation & quality checks
+            validate_schema(df_final)
+            check_monotonic_time(df_final)
+            quality_report = check_missing_values(df_final)
 
-        validate_schema(df_final)
-        check_monotonic_time(df_final)
+            # Persist RAW
+            raw_path = RAW_DIR / f"{pair}_{timeframe}.csv"
+            df_final.to_csv(raw_path, index=False)
 
-        quality_report = check_missing_values(df_final)
+            # Convert to CLEAN
+            df_clean = raw_to_clean(df_final)
+            clean_path = CLEAN_DIR / f"{pair}_{timeframe}.csv"
+            df_clean.to_csv(clean_path, index=False)
 
-        # -----------------------------
-        # Persist Raw
-        # -----------------------------
+            # Load to DB
+            load_price_dataframe(df_clean)
 
-        raw_path = RAW_DIR / f"{pair}_{TIMEFRAME}.csv"
-        df_final.to_csv(raw_path, index=False)
-
-        # -----------------------------
-        # Convert to Clean
-        # -----------------------------
-
-        df_clean = raw_to_clean(df_final)
-
-        clean_path = CLEAN_DIR / f"{pair}_{TIMEFRAME}.csv"
-        df_clean.to_csv(clean_path, index=False)
-        load_price_dataframe(df_clean)
-        # -----------------------------
-        # Manifest Update
-        # -----------------------------
-
-        manifest["pairs"][pair] = {
-            "rows": len(df_final),
-            "raw_file": str(raw_path),
-            "clean_file": str(clean_path),
-            "quality": quality_report,
-        }
+            # Manifest update
+            manifest["pairs"].setdefault(pair, {})
+            manifest["pairs"][pair][timeframe] = {
+                "rows": len(df_clean),
+                "raw_file": str(raw_path),
+                "clean_file": str(clean_path),
+                "quality": quality_report,
+            }
 
     # -----------------------------
     # Persist Manifest
     # -----------------------------
 
-    manifest_path = MANIFEST_DIR / f"price_run_{run_id}.json"
+    manifest_path = MANIFEST_DIR / f"price_run_{run_time.replace(':', '-')}.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
-    print("Price pipeline completed")
+    print("Price pipeline completed for all timeframes")
     print(f"Manifest written to {manifest_path}")
 
 
 if __name__ == "__main__":
     run()
 
+   
