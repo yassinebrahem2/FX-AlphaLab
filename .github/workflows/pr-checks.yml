@@ -1,0 +1,24 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  pr-validation:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check PR title format
+      run: |
+        echo "${{ github.event.pull_request.title }}" | grep -E "^\[(feat|fix|docs|refactor|test|chore)\]"
+    
+    - name: Check for large files
+      run: |
+        find . -type f -size +10M -not -path "./.git/*" | tee large_files.txt
+        if [ -s large_files.txt ]; then
+          echo "Large files found. Please use Git LFS or exclude them."
+          exit 1
+        fi
