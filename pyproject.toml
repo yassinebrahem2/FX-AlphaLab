@@ -26,7 +26,6 @@ dependencies = [
     "python-dotenv",
     "requests",
     "beautifulsoup4",
-    "MetaTrader5",
     "fredapi",
     "sqlalchemy",
     "psycopg2-binary",
@@ -50,6 +49,10 @@ notebook = [
     "seaborn",
     "plotly",
     "yfinance",
+]
+
+mt5 = [
+    "MetaTrader5",  # Windows only - for MT5 data ingestion
 ]
 
 [tool.black]
