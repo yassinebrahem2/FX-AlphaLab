@@ -7,10 +7,10 @@ on:
 jobs:
   pr-validation:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Check for large files
       run: |
         find . -type f -size +10M -not -path "./.git/*" | tee large_files.txt
