@@ -723,3 +723,162 @@ class TestNormalization:
         """Test normalized CSV with no events."""
         result = collector.save_normalized_csv([], start_date="2024-02-08", end_date="2024-02-08")
         assert result is None
+
+    def test_dual_csv_output(self, collector):
+        """Test that both raw and normalized CSVs are created."""
+        events = [
+            {
+                "date": "2024-02-08",
+                "time": "13:30",
+                "country": "United States",
+                "event": "Non-Farm Payrolls",
+                "impact": "High",
+                "actual": "150K",
+                "forecast": "180K",
+                "previous": "160K",
+                "event_url": "https://example.com/nfp",
+                "scraped_at": "2024-02-08T12:00:00Z",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save raw CSV
+            raw_path = os.path.join(tmpdir, "raw", "economic_events.csv")
+            raw_success = collector.save_to_csv(events, raw_path)
+
+            # Save normalized CSV
+            norm_path = collector.save_normalized_csv(
+                events,
+                start_date="2024-02-08",
+                end_date="2024-02-08",
+                countries=["us"],
+                output_dir=tmpdir,
+            )
+
+            # Both should succeed
+            assert raw_success is True
+            assert norm_path is not None
+
+            # Verify raw CSV has all source fields
+            with open(raw_path, encoding="utf-8") as f:
+                raw_reader = csv.DictReader(f)
+                raw_rows = list(raw_reader)
+                assert len(raw_rows) == 1
+                assert "event_url" in raw_rows[0]
+                assert "scraped_at" in raw_rows[0]
+                assert raw_rows[0]["event"] == "Non-Farm Payrolls"
+
+            # Verify normalized CSV has standardized schema
+            with open(norm_path, encoding="utf-8") as f:
+                norm_reader = csv.DictReader(f)
+                norm_rows = list(norm_reader)
+                assert len(norm_rows) == 1
+                assert "timestamp_utc" in norm_rows[0]
+                assert "country" in norm_rows[0]
+                assert norm_rows[0]["country"] == "US"
+                assert norm_rows[0]["event_name"] == "Non-Farm Payrolls"
+                assert norm_rows[0]["source"] == "investing.com"
+
+
+class TestBaseCollectorInterface:
+    """Test BaseCollector interface implementation."""
+
+    def test_source_name(self):
+        """Test SOURCE_NAME class attribute is defined."""
+        from data.ingestion.calendar_collector import EconomicCalendarCollector
+
+        assert hasattr(EconomicCalendarCollector, "SOURCE_NAME")
+        assert EconomicCalendarCollector.SOURCE_NAME == "investing"
+
+    def test_collect_method_interface(self):
+        """Test collect() method conforms to BaseCollector interface."""
+        import tempfile
+        from datetime import datetime
+        from pathlib import Path
+
+        from data.ingestion.calendar_collector import EconomicCalendarCollector
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            collector = EconomicCalendarCollector(
+                min_delay=0.1,
+                max_delay=0.2,
+                output_dir=Path(tmpdir),
+            )
+
+            # Mock the collect_events method
+            with patch.object(collector, "collect_events") as mock_collect_events:
+                mock_collect_events.return_value = [
+                    {
+                        "date": "2024-02-08",
+                        "time": "13:30",
+                        "country": "United States",
+                        "event": "Test Event",
+                        "impact": "High",
+                        "actual": "100",
+                        "forecast": "110",
+                        "previous": "90",
+                    }
+                ]
+
+                # Call collect() with datetime objects
+                result = collector.collect(
+                    start_date=datetime(2024, 2, 8), end_date=datetime(2024, 2, 8)
+                )
+
+                # Verify return type
+                assert isinstance(result, dict)
+                assert "economic_events" in result
+                assert isinstance(result["economic_events"], __import__("pandas").DataFrame)
+
+                # Verify source column exists
+                df = result["economic_events"]
+                assert "source" in df.columns
+                assert df["source"].iloc[0] == "investing.com"
+
+    def test_health_check_method_interface(self):
+        """Test health_check() method conforms to BaseCollector interface."""
+        from data.ingestion.calendar_collector import EconomicCalendarCollector
+
+        collector = EconomicCalendarCollector(min_delay=0.1, max_delay=0.2)
+
+        # Mock requests.head
+        with patch("requests.head") as mock_head:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_head.return_value = mock_response
+
+            result = collector.health_check()
+
+            assert isinstance(result, bool)
+            assert result is True
+
+    def test_inherits_from_base_collector(self):
+        """Test that EconomicCalendarCollector inherits from BaseCollector."""
+        from data.ingestion.base_collector import BaseCollector
+        from data.ingestion.calendar_collector import EconomicCalendarCollector
+
+        assert issubclass(EconomicCalendarCollector, BaseCollector)
+
+    def test_export_csv_method_inherited(self):
+        """Test that export_csv() method is inherited from BaseCollector."""
+        import tempfile
+        from pathlib import Path
+
+        from data.ingestion.calendar_collector import EconomicCalendarCollector
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            collector = EconomicCalendarCollector(
+                min_delay=0.1, max_delay=0.2, output_dir=Path(tmpdir)
+            )
+
+            # Create a test DataFrame
+            import pandas as pd
+
+            df = pd.DataFrame([{"date": "2024-02-08", "event": "Test", "source": "test"}])
+
+            # Call inherited export_csv method
+            output_path = collector.export_csv(df, "test_dataset")
+
+            assert output_path.exists()
+            assert "investing_test_dataset_" in output_path.name
+            assert output_path.suffix == ".csv"

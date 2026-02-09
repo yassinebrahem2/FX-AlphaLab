@@ -1,10 +1,10 @@
 import csv
-import logging
 import os
 import random
 import re
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -13,8 +13,11 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+from data.ingestion.base_collector import BaseCollector
+from shared.config import Config
 
-class EconomicCalendarCollector:
+
+class EconomicCalendarCollector(BaseCollector):
     """
     Web scraper for Investing.com economic calendar data.
 
@@ -27,13 +30,22 @@ class EconomicCalendarCollector:
     - CSV output functionality
     """
 
+    SOURCE_NAME = "investing"
+    BASE_URL = "https://www.investing.com"
+    DEFAULT_MIN_DELAY = 3.0
+    DEFAULT_MAX_DELAY = 5.0
+    DEFAULT_MAX_RETRIES = 3
+    DEFAULT_TIMEOUT = 30
+
     def __init__(
         self,
-        base_url: str = "https://www.investing.com",
-        min_delay: float = 3.0,
-        max_delay: float = 5.0,
-        max_retries: int = 3,
-        timeout: int = 30,
+        base_url: str = BASE_URL,
+        min_delay: float = DEFAULT_MIN_DELAY,
+        max_delay: float = DEFAULT_MAX_DELAY,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        timeout: int = DEFAULT_TIMEOUT,
+        output_dir: Path | None = None,
+        log_file: Path | None = None,
     ):
         """
         Initialize the Economic Calendar Collector.
@@ -44,7 +56,16 @@ class EconomicCalendarCollector:
             max_delay: Maximum delay between requests (seconds)
             max_retries: Maximum number of retry attempts
             timeout: Request timeout in seconds
+            output_dir: Output directory for raw CSVs (default: datasets/calendar/raw)
+            log_file: Optional log file path
         """
+        # Initialize BaseCollector first (sets up self.logger)
+        super().__init__(
+            output_dir=output_dir or Config.DATA_DIR / "datasets" / "calendar" / "raw",
+            log_file=log_file or Config.LOGS_DIR / "calendar_collector.log",
+        )
+
+        # Investing.com specific settings
         self.base_url = base_url
         self.min_delay = min_delay
         self.max_delay = max_delay
@@ -68,16 +89,6 @@ class EconomicCalendarCollector:
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
         }
-
-        # Setup logging first
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
-
-        # Robots.txt parser
-        self.robots_parser = RobotFileParser()
-        robots_url = urljoin(base_url, "/robots.txt")
-        self.robots_parser.set_url(robots_url)
-        self._load_robots_txt()
 
         # Country name/currency to ISO 3166 alpha-2 mapping
         self.country_code_map = {
@@ -145,6 +156,12 @@ class EconomicCalendarCollector:
 
         # Session for connection pooling
         self.session = requests.Session()
+
+        # Robots.txt parser (logger already set up by BaseCollector)
+        self.robots_parser = RobotFileParser()
+        robots_url = urljoin(self.base_url, "/robots.txt")
+        self.robots_parser.set_url(robots_url)
+        self._load_robots_txt()
 
     def _load_robots_txt(self) -> None:
         """Load and parse robots.txt file."""
@@ -738,14 +755,16 @@ class EconomicCalendarCollector:
         return all_events
 
     def save_to_csv(
-        self, events: list[dict[str, Any]], filename: str = "economic_events.csv"
+        self,
+        events: list[dict[str, Any]],
+        filename: str = "datasets/calendar/raw/economic_events.csv",
     ) -> bool:
         """
         Save collected events to CSV file (raw format).
 
         Args:
             events: List of event dictionaries
-            filename: Output CSV filename
+            filename: Output CSV filename (default: datasets/calendar/raw/economic_events.csv)
 
         Returns:
             True if successful, False otherwise
@@ -755,6 +774,9 @@ class EconomicCalendarCollector:
             return False
 
         try:
+            # Create output directory if needed
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+
             # Define CSV columns in desired order
             fieldnames = [
                 "date",
@@ -895,6 +917,71 @@ class EconomicCalendarCollector:
             self.logger.error(f"Error converting to DataFrame: {e}")
             return None
 
+    def collect(
+        self,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> dict[str, pd.DataFrame]:
+        """Collect economic calendar events from Investing.com.
+
+        Implements BaseCollector.collect() interface.
+
+        Args:
+            start_date: Start of the collection window (default: today)
+            end_date: End of the collection window (default: today)
+
+        Returns:
+            Dictionary with single key 'economic_events' containing raw DataFrame
+        """
+        # Convert datetime to string format expected by collect_events
+        start_str = start_date.strftime("%Y-%m-%d") if start_date else None
+        end_str = end_date.strftime("%Y-%m-%d") if end_date else None
+
+        # Collect events using existing method
+        events = self.collect_events(
+            start_date=start_str,
+            end_date=end_str,
+            countries=["us", "eu", "uk"],
+        )
+
+        # Convert to DataFrame with all source fields (§3.1)
+        if events:
+            df = pd.DataFrame(events)
+            # Ensure source column exists
+            if "source" not in df.columns:
+                df["source"] = "investing.com"
+            return {"economic_events": df}
+        else:
+            return {}
+
+    def health_check(self) -> bool:
+        """Verify Investing.com is reachable.
+
+        Implements BaseCollector.health_check() interface.
+
+        Returns:
+            True if the site is accessible, False otherwise
+        """
+        try:
+            response = requests.head(
+                self.base_url,
+                timeout=10,
+                headers={"User-Agent": self._get_random_user_agent()},
+            )
+            is_healthy = response.status_code < 500
+            if is_healthy:
+                self.logger.info(
+                    "Health check passed: %s (status %d)", self.base_url, response.status_code
+                )
+            else:
+                self.logger.warning(
+                    "Health check failed: %s (status %d)", self.base_url, response.status_code
+                )
+            return is_healthy
+        except Exception as e:
+            self.logger.error("Health check failed: %s", e)
+            return False
+
 
 def main():
     """Example usage of the EconomicCalendarCollector."""
@@ -910,19 +997,30 @@ def main():
         countries=countries,
     )
 
-    # Save normalized CSV to datasets/calendar/
     if events:
-        filepath = collector.save_normalized_csv(
+        print(f"Collected {len(events)} economic events")
+
+        # 1. Save RAW CSV first (§3.1 - preserves all source fields)
+        country_str = "_".join(c.upper() for c in sorted(countries))
+        raw_filename = f"datasets/calendar/raw/investing_economic_events_{country_str}_{today}.csv"
+        raw_success = collector.save_to_csv(events, raw_filename)
+        if raw_success:
+            print(f"Raw CSV saved to: {raw_filename}")
+
+        # 2. Save NORMALIZED CSV (§3.5 - standardized schema to datasets/calendar/)
+        normalized_filepath = collector.save_normalized_csv(
             events,
             start_date=today,
             end_date=today,
             countries=countries,
         )
-        print(f"Collected {len(events)} economic events")
-        if filepath:
-            print(f"Saved to: {filepath}")
+        if normalized_filepath:
+            print(f"Normalized CSV saved to: {normalized_filepath}")
 
         # Display first few normalized events
+        print("\n" + "=" * 80)
+        print("NORMALIZED EVENTS PREVIEW")
+        print("=" * 80)
         normalized = [collector._normalize_event(e) for e in events]
         df = pd.DataFrame(normalized)
         if not df.empty:
@@ -939,7 +1037,6 @@ def main():
             pd.set_option("display.float_format", lambda x: f"{x:.2f}")
             pd.set_option("display.max_colwidth", 40)
             pd.set_option("display.width", 160)
-            print("\nFirst 10 normalized events:")
             print(df[cols].head(10).to_string(index=False))
     else:
         print("No events found")
