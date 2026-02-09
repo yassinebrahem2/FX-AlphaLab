@@ -49,21 +49,36 @@ def test_to_utc_with_aware_datetime():
 
 
 def test_is_forex_trading_time_weekday():
-    """Test FX trading time check for weekday."""
-    # Wednesday at noon UTC - should be trading
+    """Wednesday noon UTC — market open."""
     dt = datetime(2026, 2, 11, 12, 0, 0, tzinfo=pytz.UTC)
     assert is_forex_trading_time(dt) is True
 
 
 def test_is_forex_trading_time_sunday_open():
-    """Test FX trading time on Sunday after 22:00 UTC."""
-    # Sunday at 23:00 UTC - market open
+    """Sunday 23:00 UTC — market open (opens at 22:00)."""
     dt = datetime(2026, 2, 8, 23, 0, 0, tzinfo=pytz.UTC)
     assert is_forex_trading_time(dt) is True
 
 
 def test_is_forex_trading_time_sunday_closed():
-    """Test FX trading time on Sunday before 22:00 UTC."""
-    # Sunday at 20:00 UTC - market closed
+    """Sunday 20:00 UTC — market closed (opens at 22:00)."""
     dt = datetime(2026, 2, 8, 20, 0, 0, tzinfo=pytz.UTC)
+    assert is_forex_trading_time(dt) is False
+
+
+def test_is_forex_trading_time_friday_before_close():
+    """Friday 21:00 UTC — market still open (closes at 22:00)."""
+    dt = datetime(2026, 2, 13, 21, 0, 0, tzinfo=pytz.UTC)
+    assert is_forex_trading_time(dt) is True
+
+
+def test_is_forex_trading_time_friday_after_close():
+    """Friday 22:00 UTC — market closed."""
+    dt = datetime(2026, 2, 13, 22, 0, 0, tzinfo=pytz.UTC)
+    assert is_forex_trading_time(dt) is False
+
+
+def test_is_forex_trading_time_saturday():
+    """Saturday — always closed."""
+    dt = datetime(2026, 2, 14, 12, 0, 0, tzinfo=pytz.UTC)
     assert is_forex_trading_time(dt) is False
