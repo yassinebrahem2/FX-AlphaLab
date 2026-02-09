@@ -36,60 +36,58 @@ class TestEconomicCalendarCollector:
 
     @pytest.fixture
     def sample_html_response(self):
-        """Sample HTML response from Investing.com economic calendar."""
+        """Sample HTML response matching modern Investing.com datatable-v2 layout."""
         return """
         <html>
         <body>
-            <table class="genTbl" id="economicCalendarData">
+            <table class="datatable-v2_table__xMDOH">
                 <tr class="header">
-                    <th>Date</th>
-                    <th>Time</th>
-                    <th>Country</th>
-                    <th>Event</th>
-                    <th>Impact</th>
-                    <th>Actual</th>
-                    <th>Forecast</th>
-                    <th>Previous</th>
+                    <th>Cur.</th><th>Time</th><th>Cur.</th><th>Event</th>
+                    <th>Imp.</th><th>Actual</th><th>Forecast</th><th>Previous</th><th></th>
                 </tr>
-                <tr>
-                    <td>2024-02-08</td>
-                    <td>13:30</td>
-                    <td><img src="/flags/us.svg" title="United States" alt="US"></td>
+                <tr id="1-100-UnitedStates-0" class="datatable-v2_row__hkEus">
+                    <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span> USD</td>
+                    <td><div></div></td>
+                    <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span><span>USD</span></td>
                     <td><a href="/events/non-farm-payrolls">Non-Farm Payrolls</a></td>
-                    <td class="high"><span class="impact high">High</span></td>
+                    <td><div><svg class="opacity-60"><use href="#star"></use></svg><svg class="opacity-60"><use href="#star"></use></svg><svg class="opacity-60"><use href="#star"></use></svg></div></td>
                     <td>150K</td>
                     <td>180K</td>
                     <td>160K</td>
+                    <td></td>
                 </tr>
-                <tr>
-                    <td>2024-02-08</td>
-                    <td>14:00</td>
-                    <td><img src="/flags/eu.svg" title="Eurozone" alt="EU"></td>
+                <tr id="2-101-EuroZone-1" class="datatable-v2_row__hkEus">
+                    <td><span class="flag_flag__gUPtc flag_flag--Europe__abc" title="Europe"></span> EUR</td>
+                    <td><div></div></td>
+                    <td><span class="flag_flag__gUPtc flag_flag--Europe__abc" title="Europe"></span><span>EUR</span></td>
                     <td><a href="/events/ecb-interest-rate">ECB Interest Rate Decision</a></td>
-                    <td class="medium"><span class="impact medium">Medium</span></td>
+                    <td><div><svg class="opacity-60"><use href="#star"></use></svg><svg class="opacity-60"><use href="#star"></use></svg><svg class="opacity-20"><use href="#star"></use></svg></div></td>
                     <td>4.50%</td>
                     <td>4.50%</td>
                     <td>4.50%</td>
+                    <td></td>
                 </tr>
-                <tr>
-                    <td>2024-02-08</td>
-                    <td>09:30</td>
-                    <td><img src="/flags/gb.svg" title="United Kingdom" alt="UK"></td>
+                <tr id="3-102-UnitedKingdom-2" class="datatable-v2_row__hkEus">
+                    <td><span class="flag_flag__gUPtc flag_flag--UnitedKingdom__abc" title="United Kingdom"></span> GBP</td>
+                    <td><div></div></td>
+                    <td><span class="flag_flag__gUPtc flag_flag--UnitedKingdom__abc" title="United Kingdom"></span><span>GBP</span></td>
                     <td><a href="/events/gdp-growth">GDP Growth (QoQ)</a></td>
-                    <td class="low"><span class="impact low">Low</span></td>
+                    <td><div><svg class="opacity-60"><use href="#star"></use></svg><svg class="opacity-20"><use href="#star"></use></svg><svg class="opacity-20"><use href="#star"></use></svg></div></td>
                     <td>0.2%</td>
                     <td>0.3%</td>
                     <td>0.1%</td>
+                    <td></td>
                 </tr>
-                <tr>
-                    <td>2024-02-08</td>
-                    <td>15:00</td>
-                    <td><img src="/flags/us.svg" title="United States" alt="US"></td>
+                <tr id="4-103-UnitedStates-3" class="datatable-v2_row__hkEus">
+                    <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span> USD</td>
+                    <td><div></div></td>
+                    <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span><span>USD</span></td>
                     <td><a href="/events/cpi">Consumer Price Index</a></td>
-                    <td class="high"><span class="impact high">High</span></td>
-                    <td>-</td>
+                    <td><div><svg class="opacity-60"><use href="#star"></use></svg><svg class="opacity-60"><use href="#star"></use></svg><svg class="opacity-60"><use href="#star"></use></svg></div></td>
+                    <td></td>
                     <td>3.2%</td>
                     <td>3.4%</td>
+                    <td></td>
                 </tr>
             </table>
         </body>
@@ -102,11 +100,10 @@ class TestEconomicCalendarCollector:
         return """
         <html>
         <body>
-            <table class="genTbl">
+            <table class="datatable-v2_table__xMDOH">
                 <tr class="header">
-                    <th>Date</th>
-                    <th>Time</th>
-                    <th>Country</th>
+                    <th>Cur.</th><th>Time</th><th>Cur.</th><th>Event</th>
+                    <th>Imp.</th><th>Actual</th><th>Forecast</th><th>Previous</th><th></th>
                 </tr>
             </table>
         </body>
@@ -137,26 +134,26 @@ class TestEconomicCalendarCollector:
 
     def test_parse_impact_level(self, collector):
         """Test impact level parsing from HTML elements."""
-        # Test high impact
-        high_element = Mock()
-        high_element.get.return_value = ["impact", "high"]
-        assert collector._parse_impact_level(high_element) == "High"
+        # Test SVG-based impact (modern layout): 3 filled = High
+        high_html = '<td><div><svg class="opacity-60"></svg><svg class="opacity-60"></svg><svg class="opacity-60"></svg></div></td>'
+        high_el = BeautifulSoup(high_html, "html.parser").find("td")
+        assert collector._parse_impact_level(high_el) == "High"
 
-        # Test medium impact
-        medium_element = Mock()
-        medium_element.get.return_value = ["medium"]
-        assert collector._parse_impact_level(medium_element) == "Medium"
+        # 2 filled = Medium
+        medium_html = '<td><div><svg class="opacity-60"></svg><svg class="opacity-60"></svg><svg class="opacity-20"></svg></div></td>'
+        medium_el = BeautifulSoup(medium_html, "html.parser").find("td")
+        assert collector._parse_impact_level(medium_el) == "Medium"
 
-        # Test low impact
-        low_element = Mock()
-        low_element.get.return_value = ["low"]
-        assert collector._parse_impact_level(low_element) == "Low"
+        # 1 filled = Low
+        low_html = '<td><div><svg class="opacity-60"></svg><svg class="opacity-20"></svg><svg class="opacity-20"></svg></div></td>'
+        low_el = BeautifulSoup(low_html, "html.parser").find("td")
+        assert collector._parse_impact_level(low_el) == "Low"
 
-        # Test unknown impact
-        unknown_element = Mock()
-        unknown_element.get.return_value = ["other"]
-        unknown_element.get_text.return_value = ""
-        assert collector._parse_impact_level(unknown_element) == "Unknown"
+        # Legacy CSS class fallback
+        legacy_el = Mock()
+        legacy_el.find_all.return_value = []  # No SVGs
+        legacy_el.get.return_value = ["impact", "high"]
+        assert collector._parse_impact_level(legacy_el) == "High"
 
         # Test None element
         assert collector._parse_impact_level(None) == "Unknown"
@@ -216,18 +213,18 @@ class TestEconomicCalendarCollector:
         assert result is None
 
     def test_parse_calendar_row(self, collector):
-        """Test parsing of individual calendar rows."""
-        # Create a mock HTML row
+        """Test parsing of individual calendar rows (modern datatable-v2 layout)."""
         html_row = """
-        <tr>
-            <td>2024-02-08</td>
-            <td>13:30</td>
-            <td><img src="/flags/us.svg" title="United States" alt="US"></td>
+        <tr id="1-100-UnitedStates-0" class="datatable-v2_row__hkEus">
+            <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span> USD</td>
+            <td><div></div></td>
+            <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span><span>USD</span></td>
             <td><a href="/events/non-farm-payrolls">Non-Farm Payrolls</a></td>
-            <td class="high"><span class="impact high">High</span></td>
+            <td><div><svg class="opacity-60"><use href="#s"></use></svg><svg class="opacity-60"><use href="#s"></use></svg><svg class="opacity-60"><use href="#s"></use></svg></div></td>
             <td>150K</td>
             <td>180K</td>
             <td>160K</td>
+            <td></td>
         </tr>
         """
         soup = BeautifulSoup(html_row, "html.parser")
@@ -236,29 +233,29 @@ class TestEconomicCalendarCollector:
         event_data = collector._parse_calendar_row(row)
 
         assert event_data is not None
-        assert event_data["date"] == "2024-02-08"
-        assert event_data["time"] == "13:30"
         assert event_data["country"] == "United States"
         assert event_data["event"] == "Non-Farm Payrolls"
-        assert event_data["impact"] == "High"
+        assert event_data["impact"] == "High"  # 3 filled stars
         assert event_data["actual"] == "150K"
         assert event_data["forecast"] == "180K"
         assert event_data["previous"] == "160K"
         assert event_data["event_url"] == "https://www.investing.com/events/non-farm-payrolls"
+        assert "date" in event_data
         assert "scraped_at" in event_data
 
     def test_parse_calendar_row_missing_values(self, collector):
         """Test parsing calendar rows with missing values."""
         html_row = """
-        <tr>
-            <td>2024-02-08</td>
-            <td>15:00</td>
-            <td><img src="/flags/us.svg" title="United States" alt="US"></td>
+        <tr id="4-103-UnitedStates-3" class="datatable-v2_row__hkEus">
+            <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span> USD</td>
+            <td><div></div></td>
+            <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span><span>USD</span></td>
             <td><a href="/events/cpi">Consumer Price Index</a></td>
-            <td class="high"><span class="impact high">High</span></td>
+            <td><div><svg class="opacity-60"></svg><svg class="opacity-60"></svg><svg class="opacity-60"></svg></div></td>
             <td>-</td>
             <td>3.2%</td>
             <td>3.4%</td>
+            <td></td>
         </tr>
         """
         soup = BeautifulSoup(html_row, "html.parser")
@@ -267,7 +264,7 @@ class TestEconomicCalendarCollector:
         event_data = collector._parse_calendar_row(row)
 
         assert event_data is not None
-        assert event_data["actual"] is None  # Missing actual value
+        assert event_data["actual"] is None  # "-" cleaned to None
         assert event_data["forecast"] == "3.2%"
         assert event_data["previous"] == "3.4%"
 
@@ -297,11 +294,9 @@ class TestEconomicCalendarCollector:
 
         # Check first event
         first_event = events[0]
-        assert first_event["date"] == "2024-02-08"
-        assert first_event["time"] == "13:30"
         assert first_event["country"] == "United States"
         assert first_event["event"] == "Non-Farm Payrolls"
-        assert first_event["impact"] == "High"
+        assert first_event["impact"] == "High"  # 3 filled stars
         assert first_event["actual"] == "150K"
         assert first_event["forecast"] == "180K"
         assert first_event["previous"] == "160K"
@@ -491,16 +486,24 @@ class TestIntegration:
     @patch("data.ingestion.calendar_collector.EconomicCalendarCollector._make_request_with_retry")
     def test_full_collection_workflow(self, mock_request):
         """Test the complete event collection workflow."""
-        # Mock successful response
         sample_html = """
         <html>
         <body>
-            <table class="genTbl">
+            <table class="datatable-v2_table__xMDOH">
                 <tr class="header">
-                    <th>Date</th><th>Time</th><th>Country</th><th>Event</th><th>Impact</th><th>Actual</th><th>Forecast</th><th>Previous</th>
+                    <th>Cur.</th><th>Time</th><th>Cur.</th><th>Event</th>
+                    <th>Imp.</th><th>Actual</th><th>Forecast</th><th>Previous</th><th></th>
                 </tr>
-                <tr>
-                    <td>2024-02-08</td><td>13:30</td><td><img title="United States"></td><td>Test Event</td><td class="high"></td><td>100</td><td>110</td><td>90</td>
+                <tr id="1-100-UnitedStates-0" class="datatable-v2_row__hkEus">
+                    <td><span class="flag_flag__gUPtc flag_flag--UnitedStates__abc" title="United States"></span> USD</td>
+                    <td><div></div></td>
+                    <td><span>USD</span></td>
+                    <td><a href="/events/test">Test Event</a></td>
+                    <td><div><svg class="opacity-60"></svg><svg class="opacity-60"></svg><svg class="opacity-60"></svg></div></td>
+                    <td>100</td>
+                    <td>110</td>
+                    <td>90</td>
+                    <td></td>
                 </tr>
             </table>
         </body>
@@ -526,7 +529,7 @@ class TestIntegration:
             success = collector.save_to_csv(events, temp_filename)
 
             assert success is True
-            assert len(events) == 1  # 1 country x 1 event
+            assert len(events) == 1
 
             # Verify CSV was created and has content
             assert os.path.exists(temp_filename)
@@ -597,6 +600,14 @@ class TestNormalization:
         """Test empty/None country code."""
         assert collector._to_country_code(None) == ""
         assert collector._to_country_code("") == ""
+
+    def test_to_country_code_camelcase(self, collector):
+        """Test CamelCase country names from row IDs."""
+        assert collector._to_country_code("UnitedStates") == "US"
+        assert collector._to_country_code("UnitedKingdom") == "GB"
+        assert collector._to_country_code("EuroZone") == "EU"
+        assert collector._to_country_code("NewZealand") == "NZ"
+        assert collector._to_country_code("SouthKorea") == "KR"
 
     def test_build_timestamp_utc(self, collector):
         """Test UTC timestamp building from date and time."""
@@ -702,7 +713,7 @@ class TestNormalization:
                 assert rows[0]["country"] == "US"
                 assert rows[0]["event_name"] == "Non-Farm Payrolls"
                 assert rows[0]["impact"] == "high"
-                assert rows[0]["actual"] == "150000.0"
+                assert rows[0]["actual"] == "150000"
                 assert rows[0]["source"] == "investing.com"
 
                 assert rows[1]["country"] == "EU"

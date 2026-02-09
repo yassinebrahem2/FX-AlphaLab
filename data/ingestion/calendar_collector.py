@@ -83,6 +83,7 @@ class EconomicCalendarCollector:
         self.country_code_map = {
             "united states": "US",
             "eurozone": "EU",
+            "europe": "EU",
             "united kingdom": "GB",
             "japan": "JP",
             "canada": "CA",
@@ -94,6 +95,24 @@ class EconomicCalendarCollector:
             "italy": "IT",
             "spain": "ES",
             "new zealand": "NZ",
+            "singapore": "SG",
+            "brazil": "BR",
+            "south korea": "KR",
+            "india": "IN",
+            "mexico": "MX",
+            "south africa": "ZA",
+            "turkey": "TR",
+            "sweden": "SE",
+            "norway": "NO",
+            "denmark": "DK",
+            "hong kong": "HK",
+            "indonesia": "ID",
+            "thailand": "TH",
+            "russia": "RU",
+            "poland": "PL",
+            "israel": "IL",
+            "colombia": "CO",
+            "philippines": "PH",
             # Currency code fallbacks
             "USD": "US",
             "EUR": "EU",
@@ -104,6 +123,24 @@ class EconomicCalendarCollector:
             "CHF": "CH",
             "CNY": "CN",
             "NZD": "NZ",
+            "SGD": "SG",
+            "BRL": "BR",
+            "KRW": "KR",
+            "INR": "IN",
+            "MXN": "MX",
+            "ZAR": "ZA",
+            "TRY": "TR",
+            "SEK": "SE",
+            "NOK": "NO",
+            "DKK": "DK",
+            "HKD": "HK",
+            "IDR": "ID",
+            "THB": "TH",
+            "RUB": "RU",
+            "PLN": "PL",
+            "ILS": "IL",
+            "COP": "CO",
+            "PHP": "PH",
         }
 
         # Session for connection pooling
@@ -303,18 +340,34 @@ class EconomicCalendarCollector:
         return None
 
     def _parse_impact_level(self, element) -> str:
-        """Parse impact level from HTML element."""
+        """Parse impact level from HTML element.
+
+        Investing.com uses 3 SVG star icons with opacity classes:
+        - opacity-60 = filled/active star
+        - opacity-20 = empty/inactive star
+        Impact: 3 filled=High, 2 filled=Medium, 1 filled=Low
+        """
         if not element:
             return "Unknown"
 
-        # Check for impact indicators (usually color-coded dots or text)
-        class_str = " ".join(element.get("class", []))
+        # Modern layout: count filled SVG stars (opacity-60)
+        svgs = element.find_all("svg")
+        if svgs:
+            filled = sum(1 for svg in svgs if "opacity-60" in " ".join(svg.get("class", [])))
+            if filled >= 3:
+                return "High"
+            elif filled == 2:
+                return "Medium"
+            elif filled == 1:
+                return "Low"
 
+        # Fallback: check CSS classes for legacy layout
+        class_str = " ".join(element.get("class", []))
         for impact in ["high", "medium", "low"]:
             if impact.lower() in class_str.lower():
                 return impact.capitalize()
 
-        # Look for text indicators
+        # Fallback: check text content
         text = element.get_text(strip=True).lower()
         for impact in ["high", "medium", "low"]:
             if impact in text:
@@ -409,7 +462,7 @@ class EconomicCalendarCollector:
         if not country_raw:
             return ""
 
-        # Try exact match first (for currency codes)
+        # Try exact match first (for currency codes like "USD", "EUR")
         if country_raw in self.country_code_map:
             return self.country_code_map[country_raw]
 
@@ -417,6 +470,11 @@ class EconomicCalendarCollector:
         lower = country_raw.strip().lower()
         if lower in self.country_code_map:
             return self.country_code_map[lower]
+
+        # Handle CamelCase from row IDs (e.g., "UnitedStates" → "united states")
+        spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", country_raw).strip().lower()
+        if spaced in self.country_code_map:
+            return self.country_code_map[spaced]
 
         # Return uppercase of first 2 chars as fallback
         return country_raw.strip().upper()[:2]
@@ -483,9 +541,16 @@ class EconomicCalendarCollector:
         """
         Parse a single calendar row from the HTML table.
 
-        New table structure (Tailwind CSS datatable):
-        Typical: Col 0: Currency/Country | Col 1: Time | Col 2: Event
-                 Col 3+: Impact, Actual, Forecast, Previous
+        Modern Investing.com Tailwind CSS datatable-v2 layout (9 cells):
+            Cell[0]: Currency + flag (mobile)   — flag span title=Country
+            Cell[1]: Time (usually empty in SSR, JS-rendered)
+            Cell[2]: Currency + flag (desktop)
+            Cell[3]: Event cell — <a> tag = event name
+            Cell[4]: Impact — 3 SVG stars (opacity-60=filled, opacity-20=empty)
+            Cell[5]: Actual value (plain text)
+            Cell[6]: Forecast (plain text)
+            Cell[7]: Previous (plain text)
+            Cell[8]: Expand button
 
         Args:
             row: BeautifulSoup tr element
@@ -495,71 +560,54 @@ class EconomicCalendarCollector:
         """
         try:
             cells = row.find_all("td")
-            if len(cells) < 3:
+            if len(cells) < 8:
                 return None
 
             event_data = {}
 
-            # Find event name by looking for 'a' link anywhere in the row
-            event_link = row.find("a")
-            if event_link:
-                event_data["event"] = event_link.get_text(strip=True)
-                event_data["event_url"] = urljoin(self.base_url, event_link.get("href", ""))
-            else:
-                # Fallback: use whatever is in column 2 or later
+            # Cell[3]: Event name from <a> tag
+            event_link = cells[3].find("a")
+            if not event_link:
+                # Fallback: search entire row
+                event_link = row.find("a")
+            if not event_link:
                 return None
+            event_data["event"] = event_link.get_text(strip=True)
+            event_data["event_url"] = urljoin(self.base_url, event_link.get("href", ""))
 
-            # Column 0: Currency/Country
-            country_cell = cells[0]
-            country_img = country_cell.find("img")
-            if country_img:
-                country_title = country_img.get("title", "").strip()
-                event_data["country"] = country_title if country_title else None
-            else:
-                event_data["country"] = country_cell.get_text(strip=True) or None
-
-            # Column 1: Time (HH:MM format) - try parsing
-            time_str = cells[1].get_text(strip=True) if len(cells) > 1 else ""
-            event_data["time"] = time_str if time_str and time_str != "-" else None
-
-            # Impact: Look for it with class containing 'impact'
-            impact_cell = None
-            for cell in cells[2:]:
-                if cell.get("class") and any("impact" in str(c).lower() for c in cell.get("class")):
-                    impact_cell = cell
+            # Cell[0]: Country from flag span title
+            country = None
+            for span in cells[0].find_all("span"):
+                css_classes = span.get("class", [])
+                if any("flag_flag--" in c for c in css_classes):
+                    country = span.get("title", "").strip()
                     break
-            # Fallback: check cell after event (usually col 3)
-            if not impact_cell and len(cells) > 3:
-                impact_cell = cells[3]
+            if not country:
+                # Fallback: try row ID (format: eventId-subId-Country-index)
+                row_id = row.get("id", "")
+                parts = row_id.split("-")
+                if len(parts) >= 3:
+                    country = parts[2]
+            if not country:
+                # Last fallback: currency text in Cell[0]
+                country = cells[0].get_text(strip=True) or None
+            event_data["country"] = country
 
-            event_data["impact"] = (
-                self._parse_impact_level(impact_cell) if impact_cell else "Unknown"
-            )
+            # Cell[1]: Time (usually empty in SSR — JS-rendered)
+            time_text = cells[1].get_text(strip=True)
+            event_data["time"] = time_text if time_text else None
 
-            # Try to find numeric columns (actual, forecast, previous)
-            # Look for cells with numeric content
-            numeric_cells = []
-            for cell in cells:
-                text = cell.get_text(strip=True)
-                if text and any(c.isdigit() for c in text):
-                    numeric_cells.append(text)
+            # Cell[4]: Impact from SVG star opacity
+            event_data["impact"] = self._parse_impact_level(cells[4])
 
-            # Map numeric cells to actual, forecast, previous
-            event_data["actual"] = (
-                self._clean_numeric_value(numeric_cells[0]) if len(numeric_cells) > 0 else None
-            )
-            event_data["forecast"] = (
-                self._clean_numeric_value(numeric_cells[1]) if len(numeric_cells) > 1 else None
-            )
-            event_data["previous"] = (
-                self._clean_numeric_value(numeric_cells[2]) if len(numeric_cells) > 2 else None
-            )
+            # Cell[5]: Actual | Cell[6]: Forecast | Cell[7]: Previous
+            event_data["actual"] = self._clean_numeric_value(cells[5].get_text(strip=True))
+            event_data["forecast"] = self._clean_numeric_value(cells[6].get_text(strip=True))
+            event_data["previous"] = self._clean_numeric_value(cells[7].get_text(strip=True))
 
-            # Date: Use today's date
+            # Date: use today's date (time is JS-rendered, not in SSR HTML)
             event_data["date"] = datetime.now().strftime("%Y-%m-%d")
-
-            # Add timestamp
-            event_data["scraped_at"] = datetime.utcnow().isoformat()
+            event_data["scraped_at"] = datetime.now(UTC).isoformat()
 
             return event_data
 
@@ -878,20 +926,21 @@ def main():
         normalized = [collector._normalize_event(e) for e in events]
         df = pd.DataFrame(normalized)
         if not df.empty:
-            print("\nFirst 5 normalized events:")
-            print(
-                df[
-                    [
-                        "timestamp_utc",
-                        "country",
-                        "event_name",
-                        "impact",
-                        "actual",
-                        "forecast",
-                        "previous",
-                    ]
-                ].head()
-            )
+            cols = [
+                "timestamp_utc",
+                "country",
+                "event_name",
+                "impact",
+                "actual",
+                "forecast",
+                "previous",
+                "source",
+            ]
+            pd.set_option("display.float_format", lambda x: f"{x:.2f}")
+            pd.set_option("display.max_colwidth", 40)
+            pd.set_option("display.width", 160)
+            print("\nFirst 10 normalized events:")
+            print(df[cols].head(10).to_string(index=False))
     else:
         print("No events found")
 
