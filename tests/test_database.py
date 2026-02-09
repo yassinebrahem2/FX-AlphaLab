@@ -1,27 +1,44 @@
 import os
 import tempfile
-from data.storage.database import (
-    insert_fx_prices,
-    export_to_csv,
-    get_connection,
+
+import pytest
+
+from data.storage.database import export_to_csv, get_connection, insert_fx_prices
+
+
+def postgres_available() -> bool:
+    """Check if PostgreSQL is reachable."""
+    try:
+        conn = get_connection()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not postgres_available(),
+    reason="PostgreSQL is not running or not accessible",
 )
 
 
 def test_insert_fx_prices():
     """Test inserting a sample FX price row."""
-    insert_fx_prices([
-        {
-            "timestamp_utc": "2024-01-01 12:00:00",
-            "pair": "TESTPAIR",
-            "timeframe": "M1",
-            "open": 1.0,
-            "high": 1.1,
-            "low": 0.9,
-            "close": 1.05,
-            "volume": 100,
-            "source": "pytest"
-        }
-    ])
+    insert_fx_prices(
+        [
+            {
+                "timestamp_utc": "2024-01-01 12:00:00",
+                "pair": "TESTPAIR",
+                "timeframe": "M1",
+                "open": 1.0,
+                "high": 1.1,
+                "low": 0.9,
+                "close": 1.05,
+                "volume": 100,
+                "source": "pytest",
+            }
+        ]
+    )
 
     conn = get_connection()
     with conn.cursor() as cur:
