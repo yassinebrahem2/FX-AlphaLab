@@ -382,5 +382,5 @@ This project is proprietary and confidential. All rights reserved.
 
 ---
 
-**Maintainers**: FX-AlphaLab Team  
+**Maintainers**: FX-AlphaLab Team
 **Questions?** Open an issue or reach out to the team.

@@ -26,6 +26,7 @@ ENV/
 *.sqlite
 data/raw/
 data/processed/
+data/cache/
 
 # Jupyter
 .ipynb_checkpoints/
