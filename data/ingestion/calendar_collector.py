@@ -3,7 +3,7 @@ import os
 import random
 import re
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -522,7 +522,7 @@ class EconomicCalendarCollector(BaseCollector):
                     date_part = date_part.replace(hour=hour, minute=minute)
 
             # Set as UTC
-            return date_part.replace(tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return date_part.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         except (ValueError, TypeError):
             return None
@@ -624,7 +624,7 @@ class EconomicCalendarCollector(BaseCollector):
 
             # Date: use today's date (time is JS-rendered, not in SSR HTML)
             event_data["date"] = datetime.now().strftime("%Y-%m-%d")
-            event_data["scraped_at"] = datetime.now(UTC).isoformat()
+            event_data["scraped_at"] = datetime.now(timezone.utc).isoformat()
 
             return event_data
 
