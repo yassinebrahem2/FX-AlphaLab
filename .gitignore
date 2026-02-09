@@ -49,3 +49,6 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+# Project Documentation
+AGENTS.md
