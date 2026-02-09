@@ -1,8 +1,10 @@
 import csv
 import logging
+import os
 import random
+import re
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -76,6 +78,33 @@ class EconomicCalendarCollector:
         robots_url = urljoin(base_url, "/robots.txt")
         self.robots_parser.set_url(robots_url)
         self._load_robots_txt()
+
+        # Country name/currency to ISO 3166 alpha-2 mapping
+        self.country_code_map = {
+            "united states": "US",
+            "eurozone": "EU",
+            "united kingdom": "GB",
+            "japan": "JP",
+            "canada": "CA",
+            "australia": "AU",
+            "switzerland": "CH",
+            "china": "CN",
+            "germany": "DE",
+            "france": "FR",
+            "italy": "IT",
+            "spain": "ES",
+            "new zealand": "NZ",
+            # Currency code fallbacks
+            "USD": "US",
+            "EUR": "EU",
+            "GBP": "GB",
+            "JPY": "JP",
+            "CAD": "CA",
+            "AUD": "AU",
+            "CHF": "CH",
+            "CNY": "CN",
+            "NZD": "NZ",
+        }
 
         # Session for connection pooling
         self.session = requests.Session()
@@ -317,12 +346,146 @@ class EconomicCalendarCollector:
             return cleaned
         if "B" in cleaned.upper():
             return cleaned
+        if "T" in cleaned.upper():
+            return cleaned
 
         return cleaned
+
+    def _parse_numeric_to_float(self, value: str | None) -> float | None:
+        """
+        Parse a numeric string (with optional suffixes like %, K, M, B, T) to float.
+
+        Args:
+            value: Raw string value (e.g., '150K', '4.50%', '1.060T')
+
+        Returns:
+            Float value or None if parsing failed
+        """
+        if value is None:
+            return None
+
+        cleaned = value.strip()
+        if not cleaned or cleaned in ["-", "N/A", "NA"]:
+            return None
+
+        try:
+            # Remove commas
+            cleaned = cleaned.replace(",", "")
+
+            # Handle percentage
+            if cleaned.endswith("%"):
+                return float(cleaned[:-1])
+
+            # Handle suffixes (K=thousands, M=millions, B=billions, T=trillions)
+            suffix_multipliers = {
+                "K": 1_000,
+                "M": 1_000_000,
+                "B": 1_000_000_000,
+                "T": 1_000_000_000_000,
+            }
+
+            upper = cleaned.upper()
+            for suffix, multiplier in suffix_multipliers.items():
+                if upper.endswith(suffix):
+                    num = float(cleaned[:-1])
+                    return num * multiplier
+
+            return float(cleaned)
+
+        except (ValueError, TypeError):
+            self.logger.debug(f"Could not parse numeric value: {value}")
+            return None
+
+    def _to_country_code(self, country_raw: str | None) -> str:
+        """
+        Convert country name or currency code to ISO 3166 alpha-2 code.
+
+        Args:
+            country_raw: Country name or currency code
+
+        Returns:
+            ISO 3166 alpha-2 code or original value if not mapped
+        """
+        if not country_raw:
+            return ""
+
+        # Try exact match first (for currency codes)
+        if country_raw in self.country_code_map:
+            return self.country_code_map[country_raw]
+
+        # Try case-insensitive match for country names
+        lower = country_raw.strip().lower()
+        if lower in self.country_code_map:
+            return self.country_code_map[lower]
+
+        # Return uppercase of first 2 chars as fallback
+        return country_raw.strip().upper()[:2]
+
+    def _build_timestamp_utc(self, date_str: str | None, time_str: str | None) -> str | None:
+        """
+        Build UTC ISO 8601 timestamp from date and time strings.
+
+        Args:
+            date_str: Date string (e.g., '2024-02-08')
+            time_str: Time string (e.g., '13:30')
+
+        Returns:
+            UTC ISO 8601 timestamp string or None
+        """
+        if not date_str:
+            return None
+
+        try:
+            # Try parsing date
+            date_part = datetime.strptime(date_str, "%Y-%m-%d")
+
+            # Add time if available
+            if time_str:
+                time_match = re.match(r"(\d{1,2}):(\d{2})", time_str.strip())
+                if time_match:
+                    hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                    date_part = date_part.replace(hour=hour, minute=minute)
+
+            # Set as UTC
+            return date_part.replace(tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        except (ValueError, TypeError):
+            return None
+
+    def _normalize_event(self, raw_event: dict[str, Any]) -> dict[str, Any]:
+        """
+        Normalize a raw scraped event into the standardized schema.
+
+        Schema:
+            timestamp_utc, country, event_name, impact,
+            actual, forecast, previous, source
+
+        Args:
+            raw_event: Raw event dict from scraping
+
+        Returns:
+            Normalized event dict
+        """
+        return {
+            "timestamp_utc": self._build_timestamp_utc(
+                raw_event.get("date"), raw_event.get("time")
+            ),
+            "country": self._to_country_code(raw_event.get("country")),
+            "event_name": raw_event.get("event", ""),
+            "impact": (raw_event.get("impact", "unknown") or "unknown").lower(),
+            "actual": self._parse_numeric_to_float(raw_event.get("actual")),
+            "forecast": self._parse_numeric_to_float(raw_event.get("forecast")),
+            "previous": self._parse_numeric_to_float(raw_event.get("previous")),
+            "source": "investing.com",
+        }
 
     def _parse_calendar_row(self, row) -> dict[str, Any] | None:
         """
         Parse a single calendar row from the HTML table.
+
+        New table structure (Tailwind CSS datatable):
+        Typical: Col 0: Currency/Country | Col 1: Time | Col 2: Event
+                 Col 3+: Impact, Actual, Forecast, Previous
 
         Args:
             row: BeautifulSoup tr element
@@ -332,22 +495,22 @@ class EconomicCalendarCollector:
         """
         try:
             cells = row.find_all("td")
-            if len(cells) < 7:  # Minimum expected columns
+            if len(cells) < 3:
                 return None
 
-            # Extract data based on typical Investing.com table structure
             event_data = {}
 
-            # Date (usually first column)
-            date_cell = cells[0].get_text(strip=True)
-            event_data["date"] = date_cell if date_cell else None
+            # Find event name by looking for 'a' link anywhere in the row
+            event_link = row.find("a")
+            if event_link:
+                event_data["event"] = event_link.get_text(strip=True)
+                event_data["event_url"] = urljoin(self.base_url, event_link.get("href", ""))
+            else:
+                # Fallback: use whatever is in column 2 or later
+                return None
 
-            # Time (second column)
-            time_cell = cells[1].get_text(strip=True)
-            event_data["time"] = time_cell if time_cell else None
-
-            # Country (third column - often contains flag image)
-            country_cell = cells[2]
+            # Column 0: Currency/Country
+            country_cell = cells[0]
             country_img = country_cell.find("img")
             if country_img:
                 country_title = country_img.get("title", "").strip()
@@ -355,36 +518,45 @@ class EconomicCalendarCollector:
             else:
                 event_data["country"] = country_cell.get_text(strip=True) or None
 
-            # Event name (fourth column)
-            event_cell = cells[3]
-            event_link = event_cell.find("a")
-            if event_link:
-                event_data["event"] = event_link.get_text(strip=True)
-                event_data["event_url"] = urljoin(self.base_url, event_link.get("href", ""))
-            else:
-                event_data["event"] = event_cell.get_text(strip=True)
-                event_data["event_url"] = None
+            # Column 1: Time (HH:MM format) - try parsing
+            time_str = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+            event_data["time"] = time_str if time_str and time_str != "-" else None
 
-            # Impact level (fifth column)
-            impact_cell = cells[4] if len(cells) > 4 else None
+            # Impact: Look for it with class containing 'impact'
+            impact_cell = None
+            for cell in cells[2:]:
+                if cell.get("class") and any("impact" in str(c).lower() for c in cell.get("class")):
+                    impact_cell = cell
+                    break
+            # Fallback: check cell after event (usually col 3)
+            if not impact_cell and len(cells) > 3:
+                impact_cell = cells[3]
+
             event_data["impact"] = (
                 self._parse_impact_level(impact_cell) if impact_cell else "Unknown"
             )
 
-            # Actual value (sixth column)
-            actual_cell = cells[5] if len(cells) > 5 else None
-            actual_text = actual_cell.get_text(strip=True) if actual_cell else ""
-            event_data["actual"] = self._clean_numeric_value(actual_text)
+            # Try to find numeric columns (actual, forecast, previous)
+            # Look for cells with numeric content
+            numeric_cells = []
+            for cell in cells:
+                text = cell.get_text(strip=True)
+                if text and any(c.isdigit() for c in text):
+                    numeric_cells.append(text)
 
-            # Forecast value (seventh column)
-            forecast_cell = cells[6] if len(cells) > 6 else None
-            forecast_text = forecast_cell.get_text(strip=True) if forecast_cell else ""
-            event_data["forecast"] = self._clean_numeric_value(forecast_text)
+            # Map numeric cells to actual, forecast, previous
+            event_data["actual"] = (
+                self._clean_numeric_value(numeric_cells[0]) if len(numeric_cells) > 0 else None
+            )
+            event_data["forecast"] = (
+                self._clean_numeric_value(numeric_cells[1]) if len(numeric_cells) > 1 else None
+            )
+            event_data["previous"] = (
+                self._clean_numeric_value(numeric_cells[2]) if len(numeric_cells) > 2 else None
+            )
 
-            # Previous value (eighth column - if available)
-            previous_cell = cells[7] if len(cells) > 7 else None
-            previous_text = previous_cell.get_text(strip=True) if previous_cell else ""
-            event_data["previous"] = self._clean_numeric_value(previous_text)
+            # Date: Use today's date
+            event_data["date"] = datetime.now().strftime("%Y-%m-%d")
 
             # Add timestamp
             event_data["scraped_at"] = datetime.utcnow().isoformat()
@@ -426,9 +598,13 @@ class EconomicCalendarCollector:
         try:
             soup = BeautifulSoup(response.content, "html.parser")
 
-            # Find the calendar table (typical selectors)
+            # Find the calendar table (modern Tailwind CSS + legacy selectors)
             calendar_table = (
-                soup.find("table", {"class": "genTbl"})
+                soup.find(
+                    "table",
+                    {"class": lambda x: x and "datatable-v2_table" in x},
+                )
+                or soup.find("table", {"class": "genTbl"})
                 or soup.find("table", {"id": "economicCalendarData"})
                 or soup.find("table", {"class": "economicCalendarTable"})
             )
@@ -517,7 +693,7 @@ class EconomicCalendarCollector:
         self, events: list[dict[str, Any]], filename: str = "economic_events.csv"
     ) -> bool:
         """
-        Save collected events to CSV file.
+        Save collected events to CSV file (raw format).
 
         Args:
             events: List of event dictionaries
@@ -561,6 +737,88 @@ class EconomicCalendarCollector:
             self.logger.error(f"Error saving to CSV: {e}")
             return False
 
+    def save_normalized_csv(
+        self,
+        events: list[dict[str, Any]],
+        start_date: str,
+        end_date: str,
+        countries: list[str] | None = None,
+        output_dir: str = "datasets/calendar",
+    ) -> str | None:
+        """
+        Save events in normalized format to datasets/calendar/.
+
+        Filename: {source}_{country}_{start}_{end}.csv
+        Schema: timestamp_utc, country, event_name, impact,
+                actual, forecast, previous, source
+
+        Args:
+            events: List of raw event dictionaries
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            countries: Country codes used for collection
+            output_dir: Output directory path
+
+        Returns:
+            Output filepath or None if failed
+        """
+        if not events:
+            self.logger.warning("No events to save")
+            return None
+
+        try:
+            # Create output directory
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Normalize all events
+            normalized = [self._normalize_event(e) for e in events]
+
+            # Build filename: {source}_{country}_{start}_{end}.csv
+            country_str = (
+                "_".join(sorted(set(c for c in (e["country"] for e in normalized) if c))) or "ALL"
+            )
+            if countries:
+                country_str = "_".join(c.upper() for c in sorted(countries))
+            source = "investing"
+            filename = f"{source}_{country_str}_{start_date}_{end_date}.csv"
+            filepath = os.path.join(output_dir, filename)
+
+            # Define normalized CSV columns
+            fieldnames = [
+                "timestamp_utc",
+                "country",
+                "event_name",
+                "impact",
+                "actual",
+                "forecast",
+                "previous",
+                "source",
+            ]
+
+            with open(filepath, "w", newline="", encoding="utf-8") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+
+                for event in normalized:
+                    row = {field: event.get(field, "") for field in fieldnames}
+                    # Format floats without scientific notation and handle None values
+                    for f in ["actual", "forecast", "previous"]:
+                        if row[f] is None:
+                            row[f] = ""
+                        elif isinstance(row[f], float):
+                            # Format with up to 6 decimal places, remove trailing zeros
+                            row[f] = f"{row[f]:.6f}".rstrip("0").rstrip(".")
+                    writer.writerow(row)
+
+            self.logger.info(
+                f"Successfully saved {len(normalized)} normalized events to {filepath}"
+            )
+            return filepath
+
+        except Exception as e:
+            self.logger.error(f"Error saving normalized CSV: {e}")
+            return None
+
     def get_events_dataframe(self, events: list[dict[str, Any]]) -> pd.DataFrame | None:
         """
         Convert events list to pandas DataFrame.
@@ -594,21 +852,46 @@ def main():
     """Example usage of the EconomicCalendarCollector."""
     collector = EconomicCalendarCollector()
 
+    today = datetime.now().strftime("%Y-%m-%d")
+    countries = ["us", "eu", "uk"]
+
     # Collect today's events for major economies
     events = collector.collect_events(
-        start_date=None, end_date=None, countries=["us", "eu", "uk"]  # Today  # Today only
+        start_date=today,
+        end_date=today,
+        countries=countries,
     )
 
-    # Save to CSV
+    # Save normalized CSV to datasets/calendar/
     if events:
-        collector.save_to_csv(events)
+        filepath = collector.save_normalized_csv(
+            events,
+            start_date=today,
+            end_date=today,
+            countries=countries,
+        )
         print(f"Collected {len(events)} economic events")
+        if filepath:
+            print(f"Saved to: {filepath}")
 
-        # Display first few events
-        df = collector.get_events_dataframe(events)
-        if df is not None:
-            print("\nFirst 5 events:")
-            print(df[["date", "time", "country", "event", "impact", "actual", "forecast"]].head())
+        # Display first few normalized events
+        normalized = [collector._normalize_event(e) for e in events]
+        df = pd.DataFrame(normalized)
+        if not df.empty:
+            print("\nFirst 5 normalized events:")
+            print(
+                df[
+                    [
+                        "timestamp_utc",
+                        "country",
+                        "event_name",
+                        "impact",
+                        "actual",
+                        "forecast",
+                        "previous",
+                    ]
+                ].head()
+            )
     else:
         print("No events found")
 

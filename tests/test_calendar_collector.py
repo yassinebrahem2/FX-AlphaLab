@@ -526,7 +526,7 @@ class TestIntegration:
             success = collector.save_to_csv(events, temp_filename)
 
             assert success is True
-            assert len(events) == 3  # 3 countries x 1 event
+            assert len(events) == 1  # 1 country x 1 event
 
             # Verify CSV was created and has content
             assert os.path.exists(temp_filename)
@@ -537,3 +537,178 @@ class TestIntegration:
 
         finally:
             os.unlink(temp_filename)
+
+
+class TestNormalization:
+    """Tests for normalized output schema."""
+
+    @pytest.fixture
+    def collector(self):
+        """Create a collector instance for testing."""
+        return EconomicCalendarCollector(
+            base_url="https://www.investing.com",
+            min_delay=0.1,
+            max_delay=0.2,
+            max_retries=2,
+            timeout=10,
+        )
+
+    def test_parse_numeric_to_float_percentage(self, collector):
+        """Test parsing percentage values."""
+        assert collector._parse_numeric_to_float("4.50%") == 4.50
+        assert collector._parse_numeric_to_float("0.2%") == 0.2
+        assert collector._parse_numeric_to_float("-0.3%") == -0.3
+
+    def test_parse_numeric_to_float_suffixes(self, collector):
+        """Test parsing K, M, B, T suffixes."""
+        assert collector._parse_numeric_to_float("150K") == 150_000
+        assert collector._parse_numeric_to_float("1.5M") == 1_500_000
+        assert collector._parse_numeric_to_float("2.3B") == 2_300_000_000
+        assert collector._parse_numeric_to_float("1.060T") == 1_060_000_000_000
+
+    def test_parse_numeric_to_float_plain(self, collector):
+        """Test parsing plain numeric values."""
+        assert collector._parse_numeric_to_float("216.0") == 216.0
+        assert collector._parse_numeric_to_float("100") == 100.0
+        assert collector._parse_numeric_to_float("-50") == -50.0
+
+    def test_parse_numeric_to_float_none_and_empty(self, collector):
+        """Test parsing None and empty values."""
+        assert collector._parse_numeric_to_float(None) is None
+        assert collector._parse_numeric_to_float("") is None
+        assert collector._parse_numeric_to_float("-") is None
+        assert collector._parse_numeric_to_float("N/A") is None
+
+    def test_to_country_code_names(self, collector):
+        """Test country name to ISO code mapping."""
+        assert collector._to_country_code("United States") == "US"
+        assert collector._to_country_code("United Kingdom") == "GB"
+        assert collector._to_country_code("Eurozone") == "EU"
+        assert collector._to_country_code("Japan") == "JP"
+
+    def test_to_country_code_currencies(self, collector):
+        """Test currency code to ISO code mapping."""
+        assert collector._to_country_code("USD") == "US"
+        assert collector._to_country_code("GBP") == "GB"
+        assert collector._to_country_code("EUR") == "EU"
+        assert collector._to_country_code("JPY") == "JP"
+
+    def test_to_country_code_empty(self, collector):
+        """Test empty/None country code."""
+        assert collector._to_country_code(None) == ""
+        assert collector._to_country_code("") == ""
+
+    def test_build_timestamp_utc(self, collector):
+        """Test UTC timestamp building from date and time."""
+        result = collector._build_timestamp_utc("2024-02-08", "13:30")
+        assert result == "2024-02-08T13:30:00Z"
+
+    def test_build_timestamp_utc_no_time(self, collector):
+        """Test timestamp with no time."""
+        result = collector._build_timestamp_utc("2024-02-08", None)
+        assert result == "2024-02-08T00:00:00Z"
+
+    def test_build_timestamp_utc_no_date(self, collector):
+        """Test timestamp with no date."""
+        result = collector._build_timestamp_utc(None, "13:30")
+        assert result is None
+
+    def test_normalize_event(self, collector):
+        """Test full event normalization."""
+        raw = {
+            "date": "2024-02-08",
+            "time": "13:30",
+            "country": "United States",
+            "event": "Non-Farm Payrolls",
+            "impact": "High",
+            "actual": "150K",
+            "forecast": "180K",
+            "previous": "160K",
+        }
+        normalized = collector._normalize_event(raw)
+
+        assert normalized["timestamp_utc"] == "2024-02-08T13:30:00Z"
+        assert normalized["country"] == "US"
+        assert normalized["event_name"] == "Non-Farm Payrolls"
+        assert normalized["impact"] == "high"
+        assert normalized["actual"] == 150_000
+        assert normalized["forecast"] == 180_000
+        assert normalized["previous"] == 160_000
+        assert normalized["source"] == "investing.com"
+
+    def test_normalize_event_missing_actual(self, collector):
+        """Test normalization with missing actual value."""
+        raw = {
+            "date": "2024-02-08",
+            "time": "15:00",
+            "country": "United States",
+            "event": "CPI",
+            "impact": "High",
+            "actual": None,
+            "forecast": "3.2%",
+            "previous": "3.4%",
+        }
+        normalized = collector._normalize_event(raw)
+
+        assert normalized["actual"] is None
+        assert normalized["forecast"] == 3.2
+        assert normalized["previous"] == 3.4
+
+    def test_save_normalized_csv(self, collector):
+        """Test saving normalized CSV to datasets/calendar/."""
+        events = [
+            {
+                "date": "2024-02-08",
+                "time": "13:30",
+                "country": "United States",
+                "event": "Non-Farm Payrolls",
+                "impact": "High",
+                "actual": "150K",
+                "forecast": "180K",
+                "previous": "160K",
+            },
+            {
+                "date": "2024-02-08",
+                "time": "14:00",
+                "country": "Eurozone",
+                "event": "ECB Interest Rate",
+                "impact": "Medium",
+                "actual": "4.50%",
+                "forecast": "4.50%",
+                "previous": "4.50%",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = collector.save_normalized_csv(
+                events,
+                start_date="2024-02-08",
+                end_date="2024-02-08",
+                countries=["us", "eu"],
+                output_dir=tmpdir,
+            )
+
+            assert filepath is not None
+            assert os.path.exists(filepath)
+            assert "investing_EU_US_2024-02-08_2024-02-08.csv" in filepath
+
+            # Verify content
+            with open(filepath, encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+                assert len(rows) == 2
+                assert rows[0]["timestamp_utc"] == "2024-02-08T13:30:00Z"
+                assert rows[0]["country"] == "US"
+                assert rows[0]["event_name"] == "Non-Farm Payrolls"
+                assert rows[0]["impact"] == "high"
+                assert rows[0]["actual"] == "150000.0"
+                assert rows[0]["source"] == "investing.com"
+
+                assert rows[1]["country"] == "EU"
+                assert rows[1]["actual"] == "4.5"
+
+    def test_save_normalized_csv_no_events(self, collector):
+        """Test normalized CSV with no events."""
+        result = collector.save_normalized_csv([], start_date="2024-02-08", end_date="2024-02-08")
+        assert result is None
