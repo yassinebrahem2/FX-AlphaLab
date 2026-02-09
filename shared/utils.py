@@ -37,15 +37,19 @@ def to_utc(dt: datetime, from_tz: str = "US/Eastern") -> datetime:
 
 
 def is_forex_trading_time(dt: datetime) -> bool:
-    """Check if datetime falls within FX trading hours (Mon-Fri)."""
+    """Check if datetime falls within FX trading hours.
+
+    FX market opens Sunday 22:00 UTC and closes Friday 22:00 UTC.
+    Saturday is always closed.
+    """
     utc_dt = to_utc(dt) if dt.tzinfo is None else dt.astimezone(pytz.UTC)
-    # FX market: Sunday 22:00 UTC - Friday 22:00 UTC
     weekday = utc_dt.weekday()
     hour = utc_dt.hour
 
+    if weekday == 4:  # Friday
+        return hour < 22
+    if weekday == 5:  # Saturday
+        return False
     if weekday == 6:  # Sunday
         return hour >= 22
-    elif weekday == 5:  # Saturday
-        return hour < 22
-    else:  # Mon-Fri
-        return True
+    return True  # Mon-Thu
