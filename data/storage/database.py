@@ -23,12 +23,12 @@ Example:
     ])
 """
 
-import os
 import csv
-from typing import List, Dict
+import os
+
 import psycopg2
+from psycopg2 import IntegrityError, OperationalError
 from psycopg2.extras import execute_batch
-from psycopg2 import OperationalError, IntegrityError
 
 
 def get_connection():
@@ -54,7 +54,7 @@ def get_connection():
         raise RuntimeError(f"Database connection failed: {e}")
 
 
-def _batch_insert(query: str, data: List[Dict]):
+def _batch_insert(query: str, data: list[dict]):
     """Internal helper for batch inserts with basic error handling."""
     if not data:
         return
@@ -71,7 +71,7 @@ def _batch_insert(query: str, data: List[Dict]):
         conn.close()
 
 
-def insert_fx_prices(data: List[Dict]):
+def insert_fx_prices(data: list[dict]):
     """
     Insert multiple FX price records into the database.
 
@@ -101,7 +101,7 @@ def insert_fx_prices(data: List[Dict]):
     _batch_insert(query, data)
 
 
-def insert_economic_events(data: List[Dict]):
+def insert_economic_events(data: list[dict]):
     """
     Insert economic calendar events.
 
@@ -127,7 +127,7 @@ def insert_economic_events(data: List[Dict]):
     _batch_insert(query, data)
 
 
-def insert_ecb_policy_rates(data: List[Dict]):
+def insert_ecb_policy_rates(data: list[dict]):
     """
     Insert ECB policy rate data.
 
@@ -151,7 +151,7 @@ def insert_ecb_policy_rates(data: List[Dict]):
     _batch_insert(query, data)
 
 
-def insert_ecb_exchange_rates(data: List[Dict]):
+def insert_ecb_exchange_rates(data: list[dict]):
     """
     Insert ECB exchange rate data.
 
@@ -174,7 +174,7 @@ def insert_ecb_exchange_rates(data: List[Dict]):
     _batch_insert(query, data)
 
 
-def insert_macro_indicators(data: List[Dict]):
+def insert_macro_indicators(data: list[dict]):
     """
     Insert macroeconomic indicator data.
 
