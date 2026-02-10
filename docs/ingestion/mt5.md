@@ -1,48 +1,57 @@
-# MT5 Data Collector
+# MT5 Data Collection
 
-Historical OHLCV price data collection via the MetaTrader 5 Python API.
+MetaTrader 5 (MT5) provides historical and real-time OHLCV price data for FX pairs through the official MT5 Python API.
 
-Implements the `BaseCollector` interface defined in [base_collector.py](../../data/ingestion/base_collector.py) and follows the §3.1 raw CSV contract.
+## Overview
+
+**Data Type**: FX price data (OHLCV candles)
+**Source**: MetaTrader 5 terminal
+**Update Frequency**: Real-time
+**Setup Required**: Windows + MT5 terminal + broker account
+**Output**: Bronze CSV → Silver Parquet
 
 ## Prerequisites
 
-- **Windows** (MT5 terminal is Windows-only)
-- MT5 terminal installed and running
-- A demo or live broker account logged in
-- Python package: `pip install MetaTrader5`
+⚠️ **Windows Only**: MT5 terminal is Windows-exclusive
 
-## MT5 Terminal Setup
+### Required Software
+- Windows 10/11
+- MetaTrader 5 desktop terminal
+- Demo or live broker account
+- Python package: `MetaTrader5`
 
-### 1. Install MetaTrader 5
+### Installation Steps
+
+#### 1. Install MetaTrader 5
 
 Download from https://www.metatrader5.com and run the installer.
 
-The **desktop terminal** is required (not the web version).
+**Important**: Desktop terminal required (not web version).
 
-### 2. Create a Demo Account
+#### 2. Create Demo Account
 
 1. Open MT5
 2. File > Open an Account
-3. Choose any demo broker
+3. Choose any broker
 4. Select **Demo Account**
 5. Complete registration and log in
 
-Verify you can see: account number, balance, and live prices in Market Watch.
+Verify: You should see account number, balance, and live prices.
 
-### 3. Enable Required Symbols
+#### 3. Enable FX Symbols
 
 1. Open **Market Watch** (Ctrl+M)
 2. Right-click > Symbols
-3. Enable the required pairs:
+3. Enable these pairs:
    - EURUSD
    - GBPUSD
    - USDJPY
    - EURGBP
    - USDCHF
 
-Ensure prices are updating (the bid/ask columns should show live values).
+Verify: Bid/ask columns show updating prices.
 
-### 4. Verify Python Connectivity
+#### 4. Test Python Connectivity
 
 ```python
 import MetaTrader5 as mt5
@@ -56,210 +65,300 @@ print(f"Account: {info.login}, Balance: {info.balance}")
 mt5.shutdown()
 ```
 
-Expected: no errors, MT5 version and account info printed.
+Expected: No errors, MT5 version and account info printed.
+
+### Setup Verification
+
+```bash
+python -m scripts.collect_mt5_data --health-check
+```
+
+Expected output:
+```
+[INFO] Health check: PASSED
+```
+
+## Configuration
+
+### Default Settings
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| Pairs | EURUSD, GBPUSD, USDJPY, EURGBP, USDCHF | FX pairs to collect |
+| Timeframes | H1, H4, D1 | Bar sizes |
+| Years | 3 | Historical data depth |
+
+### Supported Timeframes
+
+| Code | Description | Bars/Day |
+|------|-------------|----------|
+| `H1` | 1-hour bars | 24 |
+| `H4` | 4-hour bars | 6 |
+| `D1` | Daily bars | 1 |
 
 ## Usage
 
-### Basic Collection (Default: 3 Years, All Pairs)
+### Command Line (Recommended)
 
-```python
-from data.ingestion.mt5_collector import MT5Collector
-
-collector = MT5Collector()
-results = collector.collect()
-
-# Export to CSV (§3.1 naming: mt5_EURUSD_H1_YYYYMMDD.csv)
-for name, df in results.items():
-    collector.export_csv(df, name)
+#### Bronze Only (Default Configuration)
+```bash
+python -m scripts.collect_mt5_data
 ```
 
-**Output location**: `datasets/prices/raw/mt5_EURUSD_H1_20260208.csv`, etc.
+#### Bronze + Silver (Full Pipeline)
+```bash
+python -m scripts.collect_mt5_data --preprocess
+```
 
-### Custom Date Range
+#### Custom Pairs and Timeframes
+```bash
+python -m scripts.collect_mt5_data \
+    --pairs EURUSD,GBPUSD \
+    --timeframes H1,D1 \
+    --preprocess
+```
+
+#### Custom Date Range
+```bash
+python -m scripts.collect_mt5_data \
+    --start 2022-01-01 \
+    --end 2024-12-31 \
+    --preprocess
+```
+
+#### Specific Years of History
+```bash
+python -m scripts.collect_mt5_data --years 5 --preprocess
+```
+
+#### All Options
+```bash
+python -m scripts.collect_mt5_data --help
+
+Options:
+  --pairs PAIRS         Comma-separated FX pairs
+                        Default: EURUSD,GBPUSD,USDJPY,EURGBP,USDCHF
+  --timeframes TFS      Comma-separated timeframes
+                        Default: H1,H4,D1
+  --years N             Years of history to fetch (default: 3)
+  --start DATE          Start date (YYYY-MM-DD, overrides --years)
+  --end DATE            End date (YYYY-MM-DD, default: today)
+  --preprocess          Run Silver preprocessing after collection
+  --health-check        Verify MT5 connectivity only
+  --verbose, -v         Enable debug logging
+```
+
+### Programmatic Usage
 
 ```python
 from datetime import datetime, timezone
-from data.ingestion.mt5_collector import MT5Collector
+from src.ingestion.collectors.mt5_collector import MT5Collector
 
+# Initialize with defaults
 collector = MT5Collector()
-results = collector.collect(
-    start_date=datetime(2022, 1, 1, tzinfo=timezone.utc),
-    end_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-)
+
+# Collect all configured pairs/timeframes
+data = collector.collect()
+
+# Export Bronze CSV
+for name, df in data.items():
+    collector.export_csv(df, name)
 ```
 
-### Custom Pairs and Timeframes
-
+#### Custom Configuration
 ```python
-from data.ingestion.mt5_collector import MT5Collector
-
+# Custom pairs, timeframes, and history
 collector = MT5Collector(
     pairs=["EURUSD", "GBPUSD"],
-    timeframes=["D1"],
-    years=5,
+    timeframes=["H1", "D1"],
+    years=5
 )
-results = collector.collect()
-```
-
-### Health Check
-
-```python
-from data.ingestion.mt5_collector import MT5Collector
-
-collector = MT5Collector()
-if collector.health_check():
-    results = collector.collect()
-else:
-    print("MT5 terminal is not accessible")
-```
-
-### CLI Usage
-
-```bash
-# Collect all defaults (5 pairs, 3 timeframes, 3 years)
-python -m data.ingestion.mt5_collector
-
-# Custom pairs and timeframes
-python -m data.ingestion.mt5_collector \
-    --pairs EURUSD,GBPUSD \
-    --timeframes H1,D1
 
 # Custom date range
-python -m data.ingestion.mt5_collector \
-    --start-date 2022-01-01 \
-    --end-date 2025-01-01
-
-# Override number of years (when not using --start-date)
-python -m data.ingestion.mt5_collector --years 5
-
-# Custom output directory
-python -m data.ingestion.mt5_collector --output-dir /path/to/output
-
-# Skip CSV export
-python -m data.ingestion.mt5_collector --no-export
+data = collector.collect(
+    start_date=datetime(2022, 1, 1, tzinfo=timezone.utc),
+    end_date=datetime(2024, 12, 31, tzinfo=timezone.utc)
+)
 ```
 
-## Output Schema (Raw CSV — §3.1)
+## Output Schema
 
-**File**: `datasets/prices/raw/mt5_{pair}_{timeframe}_{YYYYMMDD}.csv`
+### Bronze Layer (Raw OHLCV)
 
-All MT5 fields are preserved (§3.1: "do not strip fields"):
+**Location**: `data/raw/mt5/`
+**Format**: CSV
+**Filename**: `mt5_{PAIR}_{TIMEFRAME}_{YYYYMMDD}.csv`
+
+**Example**: `mt5_EURUSD_H1_20260210.csv`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `time` | datetime (UTC) | Bar open time |
+| `time` | integer | Unix timestamp (UTC) |
 | `open` | float | Open price |
 | `high` | float | High price |
 | `low` | float | Low price |
 | `close` | float | Close price |
-| `tick_volume` | integer | Tick volume |
+| `tick_volume` | integer | Tick count |
 | `spread` | integer | Spread in points |
 | `real_volume` | integer | Real volume (0 for FX) |
-| `source` | string | Always `mt5` |
+| `source` | string | "mt5" |
 
-> These are raw outputs. The `data/preprocessing/` normaliser will transform them into the standardised §3.3 format with `timestamp_utc`, `pair`, and `timeframe` columns.
+### Silver Layer (Normalized OHLCV)
+
+**Location**: `data/processed/ohlcv/`
+**Format**: Parquet
+**Preprocessor**: `PriceNormalizer`
+**Filename**: `mt5_{PAIR}_{TIMEFRAME}_{start}_{end}.parquet`
+
+**Example**: `mt5_EURUSD_H1_2022-01-01_2024-12-31.parquet`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `timestamp_utc` | datetime | ISO 8601 UTC timestamp |
+| `pair` | string | Currency pair (e.g., "EURUSD") |
+| `timeframe` | string | Bar size (H1, H4, D1) |
+| `open` | float | Open price |
+| `high` | float | High price |
+| `low` | float | Low price |
+| `close` | float | Close price |
+| `volume` | float | Tick volume |
+| `source` | string | "mt5" |
 
 ## Architecture
 
-```
-MT5Connector (infrastructure)         MT5Collector (business logic)
-│                                     │
-├── connect()                         ├── collect()          ← BaseCollector
-├── shutdown()                        ├── health_check()     ← BaseCollector
-├── fetch_ohlc(symbol, tf, start,     ├── export_csv()       ← BaseCollector
-│              end)                   │
-└── timeframes property               └── _fetch_and_normalise()
-                                          ├── calls connector.fetch_ohlc()
-                                          ├── adds source column
-                                          ├── lowercases column names
-                                          └── converts time to datetime
-```
+The MT5 integration uses a two-class design:
 
-**Why two classes?**
+### MT5Connector (Infrastructure)
+Low-level MT5 API wrapper:
+- Connection lifecycle
+- Raw data fetching
+- Terminal communication
 
-- `MT5Connector` is pure infrastructure: connection lifecycle, raw MT5 API calls. It knows nothing about §3.1 or CSV export.
-- `MT5Collector` is business logic: pair/timeframe iteration, §3.1 compliance, BaseCollector interface. It delegates all MT5 interaction to the connector.
+### MT5Collector (Business Logic)
+High-level data collection:
+- BaseCollector interface
+- Multi-pair/timeframe iteration
+- CSV export and naming
+- Error handling and logging
 
-This separation means:
-- Connector can be tested with direct MT5 mocks
-- Collector can be tested by mocking the connector
-- If MT5 API changes, only the connector needs updating
-
-## Configuration
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `pairs` | EURUSD, GBPUSD, USDJPY, EURGBP, USDCHF | FX pairs to collect |
-| `timeframes` | H1, H4, D1 | Bar timeframes |
-| `years` | 3 | Years of history (when start_date not specified) |
-| `output_dir` | `datasets/prices/raw/` | CSV export directory |
-| `REQUEST_DELAY` | 0.5s | Delay between consecutive fetches |
-
-### Supported Timeframes
-
-| Code | MT5 Constant | Description |
-|------|--------------|-------------|
-| `H1` | `TIMEFRAME_H1` | 1 hour bars |
-| `H4` | `TIMEFRAME_H4` | 4 hour bars |
-| `D1` | `TIMEFRAME_D1` | Daily bars |
+This separation allows:
+- ✅ Testing without MT5 installation
+- ✅ Easy MT5 API version updates
+- ✅ Reusable connector in other contexts
 
 ## Error Handling
 
-| Error | Behaviour |
-|-------|-----------|
-| **MT5 not installed** | `ImportError` at constructor time |
-| **Terminal not running** | `RuntimeError` after retry attempts (default: 3 retries, 2s backoff) |
-| **Symbol unavailable** | `RuntimeError`; `collect()` logs and continues to next symbol |
-| **No data for range** | `RuntimeError`; `collect()` logs and continues |
-| **All symbols fail** | `RuntimeError("No data collected from MT5")` |
-| **Any exception during collect** | Connector is always shut down (finally block) |
+| Error | Behavior |
+|-------|----------|
+| MT5 not installed | ImportError at initialization |
+| Terminal not running | RuntimeError after retry (3 attempts, 2s backoff) |
+| Symbol unavailable | Logs warning, continues to next symbol |
+| No data for range | Logs warning, continues to next pair/timeframe |
+| All symbols fail | RuntimeError("No data collected") |
+| Any exception | Terminal always shut down (finally block) |
 
-Partial failure is handled gracefully: if 3 out of 15 symbol/timeframe combinations fail, the other 12 are still returned.
+**Partial failure handling**: If 3 out of 15 pairs/timeframes fail, the other 12 are still returned.
+
+## Rate Limiting
+
+- **Politeness delay**: 0.5 seconds between consecutive fetches
+- Prevents overloading MT5 terminal
+- Ensures stable data retrieval
+
+## Health Check
+
+```bash
+python -m scripts.collect_mt5_data --health-check
+```
+
+Verifies:
+- ✅ MT5 terminal is installed
+- ✅ Terminal is running
+- ✅ Broker account is logged in
+- ✅ Python can connect to terminal
+
+## Logging
+
+**Console**: INFO level
+**File**: `logs/collectors/mt5_collector.log` (DEBUG level)
+
+Enable verbose mode:
+```bash
+python -m scripts.collect_mt5_data --verbose
+```
+
+## Example Workflow
+
+```bash
+# 1. Health check
+python -m scripts.collect_mt5_data --health-check
+
+# 2. Collect default data (Bronze + Silver)
+python -m scripts.collect_mt5_data --preprocess
+
+# 3. Verify output
+ls data/raw/mt5/             # Bronze CSV files
+ls data/processed/ohlcv/     # Silver Parquet files
+```
 
 ## Troubleshooting
 
-### `MT5 initialization failed`
+### "MT5 initialization failed"
 
-- Ensure MT5 terminal is installed (not just the web version)
-- Ensure MT5 is running and logged into a broker account
-- Restart MT5 and retry
-- Run Python as the same OS user that installed MT5
+**Solutions**:
+- Ensure MT5 terminal is **running**
+- Verify broker account is **logged in**
+- Restart MT5 terminal
+- Run Python as same user that installed MT5
 
-### `No data returned for SYMBOL`
+### "No data returned for SYMBOL"
 
-- Check symbol name: use `EURUSD`, not `EUR/USD`
-- Ensure the symbol is visible in Market Watch with live prices
-- Check broker data availability (some brokers limit history)
-- Try a smaller date range
+**Solutions**:
+- Check symbol name: use `EURUSD` not `EUR/USD`
+- Ensure symbol visible in Market Watch with live prices
+- Check broker historical data availability
+- Try smaller date range
 
-### `Symbol not available in MT5`
+### "Symbol not available in MT5"
 
-- Open Market Watch (Ctrl+M) > right-click > Symbols
-- Search for the symbol and enable it
-- Wait for prices to start updating
+**Solutions**:
+- Market Watch > right-click > Symbols
+- Search for symbol and enable it
+- Wait for prices to update
+- Some brokers have limited symbol lists
 
-### Permission errors
+### Permission Errors
 
-- Close MT5 and reopen
-- Avoid running MT5 as admin if Python is running as a normal user (or vice versa)
+**Solutions**:
+- Avoid running MT5 as admin if Python runs as normal user
+- Ensure both MT5 and Python have same privilege level
+- Close and reopen MT5
 
 ## Requirements
 
 ```
-MetaTrader5    # Windows-only, pip install MetaTrader5
+MetaTrader5>=5.0.0    # Windows only
 pandas>=2.0
 ```
 
 ## API Reference
 
-- **MT5 Python docs**: https://www.mql5.com/en/docs/python_metatrader5
-- **MT5 download**: https://www.metatrader5.com/en/download
+- **MT5 Python Documentation**: https://www.mql5.com/en/docs/python_metatrader5
+- **MT5 Download**: https://www.metatrader5.com/en/download
 - **copy_rates_range**: https://www.mql5.com/en/docs/python_metatrader5/mt5copyratesrange_py
 
 ## Testing
 
-Tests are fully CI-safe — the MetaTrader5 module is mocked at the `sys.modules` level so no MT5 installation is required to run them:
-
 ```bash
-python -m pytest tests/test_mt5_collector.py -v
+pytest tests/ingestion/test_mt5_collector.py -v
 ```
+
+Tests are fully CI-safe—MetaTrader5 module is mocked (no MT5 installation required).
+
+## Limitations
+
+- **Windows only**: MT5 terminal not available on macOS/Linux
+- **Terminal dependency**: MT5 must be running during collection
+- **Broker-specific**: Historical data depth varies by broker
+- **FX only**: Configured for FX pairs (stocks/commodities require symbol updates)
+- **Real volume**: Always 0 for FX (tick volume used instead)

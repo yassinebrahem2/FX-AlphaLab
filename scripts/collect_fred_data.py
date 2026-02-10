@@ -1,43 +1,45 @@
-"""FRED data collection script.
+"""FRED data collection and preprocessing script.
 
-Collects macroeconomic indicators from FRED API and exports to CSV.
+Two-stage pipeline:
+1. Collection (Bronze): Fetch raw data from FRED API → data/raw/fred/
+2. Preprocessing (Silver): Transform to standardized schema → data/processed/macro/
 
 Usage:
-    # Collect last 2 years of data (default)
+    # Collect Bronze (raw) data only
     python scripts/collect_fred_data.py
+
+    # Collect and preprocess to Silver
+    python scripts/collect_fred_data.py --preprocess
 
     # Collect specific date range
     python scripts/collect_fred_data.py --start 2023-01-01 --end 2023-12-31
-
-    # Collect specific series only
-    python scripts/collect_fred_data.py --series DFF UNRATE
-
-    # Force refresh (bypass cache)
-    python scripts/collect_fred_data.py --no-cache
 
     # Health check only
     python scripts/collect_fred_data.py --health-check
 
 Example:
-    $ python scripts/collect_fred_data.py --start 2024-01-01
+    $ python scripts/collect_fred_data.py --start 2024-01-01 --preprocess
     [INFO] FREDCollector initialized
     [INFO] Health check: PASSED
-    [INFO] Collecting data from 2024-01-01 to 2026-02-09
+    [INFO] Collecting data from 2024-01-01 to 2026-02-10
     [INFO] Collected STLFSI4: 107 observations
     [INFO] Collected DFF: 405 observations
     [INFO] Collected CPIAUCSL: 14 observations
     [INFO] Collected UNRATE: 14 observations
-    [INFO] Exported 4 CSV files to data/datasets/macro/
-    [SUCCESS] Collection complete
+    [INFO] Exported 4 CSV files to data/raw/fred/ (Bronze)
+    [INFO] Starting Silver preprocessing...
+    [INFO] Processed 4 series to data/processed/macro/ (Silver)
+    [SUCCESS] Collection and preprocessing complete
 """
 
 import argparse
 import sys
 from datetime import datetime, timedelta
-from pathlib import Path
 
-from data.ingestion.fred_collector import FREDCollector
-from shared.utils import setup_logger
+from src.ingestion.collectors.fred_collector import FREDCollector
+from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer
+from src.shared.config import Config
+from src.shared.utils import setup_logger
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,13 +65,6 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--series",
-        nargs="+",
-        help="Specific FRED series IDs to collect (e.g., DFF UNRATE). Default: all predefined series",
-        metavar="ID",
-    )
-
-    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Bypass cache and force fresh API calls",
@@ -82,22 +77,15 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--output-dir",
-        type=str,
-        help="Custom output directory for CSV files",
-        metavar="PATH",
+        "--preprocess",
+        action="store_true",
+        help="Also run Silver preprocessing after collection",
     )
 
     parser.add_argument(
         "--clear-cache",
         action="store_true",
         help="Clear all cached data before collecting",
-    )
-
-    parser.add_argument(
-        "--consolidated",
-        action="store_true",
-        help="Export all series to a single consolidated CSV file",
     )
 
     parser.add_argument(
@@ -122,9 +110,8 @@ def main() -> int:
 
     try:
         # Initialize collector
-        output_dir = Path(args.output_dir) if args.output_dir else None
-        collector = FREDCollector(output_dir=output_dir)
-        logger.info("FREDCollector initialized")
+        collector = FREDCollector()
+        logger.info("FREDCollector initialized (Bronze layer: %s)", collector.output_dir)
 
         # Health check
         if not collector.health_check():
@@ -167,57 +154,44 @@ def main() -> int:
             logger.error("Start date must be before end date")
             return 1
 
-        logger.info("Collecting data from %s to %s", start_date.date(), end_date.date())
+        logger.info("Collecting Bronze data from %s to %s", start_date.date(), end_date.date())
 
-        # Collect data
-        if args.series:
-            # Collect specific series
-            logger.info("Collecting series: %s", ", ".join(args.series))
-            data = collector.get_multiple_series(
-                args.series,
-                start_date=start_date,
-                end_date=end_date,
-                use_cache=not args.no_cache,
-            )
+        # STAGE 1: Collect Bronze (raw) data
+        logger.info("Collecting all predefined series (Bronze layer)")
+        data = collector.collect(start_date=start_date, end_date=end_date)
 
-            if args.consolidated:
-                # Export to consolidated file
-                path = collector.export_consolidated_csv(
-                    data=data, filename="fred_custom_indicators"
-                )
-                logger.info("Exported %d series to consolidated file: %s", len(data), path.name)
-            else:
-                # Export with series ID as dataset name
-                paths = {}
-                for series_id, df in data.items():
-                    path = collector.export_csv(df, series_id.lower())
-                    paths[series_id] = path
-
-        else:
-            # Collect all predefined series
-            logger.info("Collecting all predefined series")
-            data = collector.collect(start_date=start_date, end_date=end_date)
-
-            if args.consolidated:
-                # Export to consolidated file
-                path = collector.export_consolidated_csv(data=data)
-                logger.info("Exported %d series to consolidated file: %s", len(data), path.name)
-            else:
-                # Export each series separately
-                paths = collector.export_all_to_csv(data=data)
-
-        # Report results
         if not data:
             logger.warning("No data collected")
             return 1
 
-        if not args.consolidated:
-            logger.info("Exported %d CSV files to %s:", len(paths), collector.output_dir)
-            for name, path in paths.items():
-                records = len(data.get(name, []))
-                logger.info("  - %s: %d records -> %s", name, records, path.name)
+        # Export to Bronze layer
+        paths = collector.export_all_to_csv(data=data)
+        logger.info("Exported %d Bronze CSV files to %s:", len(paths), collector.output_dir)
+        for name, path in paths.items():
+            records = len(data.get(name, []))
+            logger.info("  - %s: %d records -> %s", name, records, path.name)
 
-        logger.info("SUCCESS: Collection complete")
+        # STAGE 2: Preprocess to Silver (optional)
+        if args.preprocess:
+            logger.info("Starting Silver preprocessing...")
+            normalizer = MacroNormalizer(
+                input_dir=Config.DATA_DIR / "raw",
+                output_dir=Config.DATA_DIR / "processed" / "macro",
+                sources=["fred"],
+            )
+            silver_paths = normalizer.process_and_export(start_date=start_date, end_date=end_date)
+
+            logger.info(
+                "Exported %d Silver CSV files to %s:", len(silver_paths), normalizer.output_dir
+            )
+            for series_id, path in silver_paths.items():
+                logger.info("  - %s -> %s", series_id, path.name)
+
+            logger.info("SUCCESS: Collection and preprocessing complete")
+        else:
+            logger.info("SUCCESS: Collection complete (Bronze only)")
+            logger.info("Run with --preprocess to transform to Silver layer")
+
         return 0
 
     except ValueError as e:
