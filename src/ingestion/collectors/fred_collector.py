@@ -145,7 +145,7 @@ class FREDCollector(BaseCollector):
         """
         super().__init__(
             output_dir=output_dir or Config.DATA_DIR / "raw" / "fred",
-            log_file=log_file or Config.LOGS_DIR / "fred_collector.log",
+            log_file=log_file or Config.LOGS_DIR / "collectors" / "fred_collector.log",
         )
 
         self._api_key = api_key or Config.FRED_API_KEY

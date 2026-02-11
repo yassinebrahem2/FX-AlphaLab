@@ -49,7 +49,7 @@ class CalendarPreprocessor(BasePreprocessor):
         super().__init__(
             input_dir=input_dir or Config.DATA_DIR / "raw" / "calendar",
             output_dir=output_dir or Config.DATA_DIR / "processed" / "events",
-            log_file=log_file or Config.LOGS_DIR / "calendar_preprocessor.log",
+            log_file=log_file or Config.LOGS_DIR / "preprocessors" / "calendar_preprocessor.log",
         )
 
         # Country name/currency to ISO 3166 alpha-2 mapping
@@ -128,6 +128,9 @@ class CalendarPreprocessor(BasePreprocessor):
         if not country_raw:
             return ""
 
+        # Convert to string if needed (handles pandas floats/ints)
+        country_raw = str(country_raw)
+
         # Try exact match first (for currency codes like "USD", "EUR")
         if country_raw in self.country_code_map:
             return self.country_code_map[country_raw]
@@ -204,14 +207,16 @@ class CalendarPreprocessor(BasePreprocessor):
 
         try:
             # Try parsing date
-            date_part = datetime.strptime(date_str, "%Y-%m-%d")
+            date_part = datetime.strptime(str(date_str), "%Y-%m-%d")
 
-            # Add time if available
-            if time_str and time_str.strip():
-                time_match = re.match(r"(\d{1,2}):(\d{2})", time_str.strip())
-                if time_match:
-                    hour, minute = int(time_match.group(1)), int(time_match.group(2))
-                    date_part = date_part.replace(hour=hour, minute=minute)
+            # Add time if available (convert to string and check for valid content)
+            if time_str is not None and pd.notna(time_str):
+                time_str_clean = str(time_str).strip()
+                if time_str_clean:
+                    time_match = re.match(r"(\d{1,2}):(\d{2})", time_str_clean)
+                    if time_match:
+                        hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                        date_part = date_part.replace(hour=hour, minute=minute)
 
             # Set as UTC
             return date_part.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -101,7 +101,7 @@ class MacroNormalizer(BasePreprocessor):
         super().__init__(
             input_dir=input_dir or Config.DATA_DIR / "raw",
             output_dir=output_dir or Config.DATA_DIR / "processed" / "macro",
-            log_file=log_file or Config.LOGS_DIR / "macro_normalizer.log",
+            log_file=log_file or Config.LOGS_DIR / "preprocessors" / "macro_normalizer.log",
         )
         self.sources = sources or ["fred", "ecb"]
 
@@ -254,7 +254,7 @@ class MacroNormalizer(BasePreprocessor):
 
             # Apply date filtering if specified
             if start_date or end_date:
-                timestamp_col = pd.to_datetime(silver_df["timestamp_utc"])
+                timestamp_col = pd.to_datetime(silver_df["timestamp_utc"]).dt.tz_localize(None)
                 if start_date:
                     silver_df = silver_df[timestamp_col >= start_date]
                 if end_date:
@@ -324,7 +324,7 @@ class MacroNormalizer(BasePreprocessor):
 
         # Filter by date range if provided
         if start_date or end_date:
-            timestamp_col = pd.to_datetime(df_silver["timestamp_utc"])
+            timestamp_col = pd.to_datetime(df_silver["timestamp_utc"]).dt.tz_localize(None)
             if start_date:
                 df_silver = df_silver[timestamp_col >= start_date]
             if end_date:

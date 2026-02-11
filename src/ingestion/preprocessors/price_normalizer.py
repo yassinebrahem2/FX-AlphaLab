@@ -80,7 +80,7 @@ class PriceNormalizer(BasePreprocessor):
         super().__init__(
             input_dir=input_dir or Config.DATA_DIR / "raw",
             output_dir=output_dir or Config.DATA_DIR / "processed" / "ohlcv",
-            log_file=log_file or Config.LOGS_DIR / "price_normalizer.log",
+            log_file=log_file or Config.LOGS_DIR / "preprocessors" / "price_normalizer.log",
         )
         self.sources = sources or ["mt5", "ecb"]
 

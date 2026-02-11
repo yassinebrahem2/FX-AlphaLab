@@ -61,7 +61,7 @@ class EconomicCalendarCollector(BaseCollector):
         # Initialize BaseCollector first (sets up self.logger)
         super().__init__(
             output_dir=output_dir or Config.DATA_DIR / "raw" / "calendar",
-            log_file=log_file or Config.LOGS_DIR / "calendar_collector.log",
+            log_file=log_file or Config.LOGS_DIR / "collectors" / "calendar_collector.log",
         )
 
         # Investing.com specific settings

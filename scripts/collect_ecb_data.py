@@ -171,6 +171,9 @@ def main() -> int:
         # Export to Bronze layer
         logger.info("Exporting Bronze data...")
         for name, df in data.items():
+            if df.empty:
+                logger.warning("Skipping empty dataset: %s", name)
+                continue
             path = collector.export_csv(df, name)
             logger.info("  ✓ Exported %s: %d records → %s", name, len(df), path.name)
 
@@ -189,7 +192,7 @@ def main() -> int:
             if "exchange_rates" in data:
                 logger.info("Processing exchange_rates to OHLCV...")
                 price_normalizer = PriceNormalizer(
-                    input_dir=Config.DATA_DIR / "raw" / "ecb",
+                    input_dir=Config.DATA_DIR / "raw",
                     output_dir=Config.DATA_DIR / "processed" / "ohlcv",
                     sources=["ecb"],
                 )
@@ -210,7 +213,7 @@ def main() -> int:
             if "policy_rates" in data:
                 logger.info("Processing policy_rates to macro...")
                 macro_normalizer = MacroNormalizer(
-                    input_dir=Config.DATA_DIR / "raw" / "ecb",
+                    input_dir=Config.DATA_DIR / "raw",
                     output_dir=Config.DATA_DIR / "processed" / "macro",
                     sources=["ecb"],
                 )

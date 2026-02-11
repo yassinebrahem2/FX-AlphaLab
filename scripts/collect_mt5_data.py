@@ -195,7 +195,7 @@ def main() -> int:
         logger.info("Exporting Bronze data...")
         for name, df in data.items():
             path = collector.export_csv(df, name)
-            logger.info("  ✓ Exported %s: %,d records → %s", name, len(df), path.name)
+            logger.info("  ✓ Exported %s: %d records → %s", name, len(df), path.name)
 
         logger.info("✓ Bronze collection complete: %d datasets", len(data))
 
@@ -207,7 +207,7 @@ def main() -> int:
             logger.info("=" * 60)
 
             normalizer = PriceNormalizer(
-                input_dir=Config.DATA_DIR / "raw" / "mt5",
+                input_dir=Config.DATA_DIR / "raw",
                 output_dir=Config.DATA_DIR / "processed" / "ohlcv",
                 sources=["mt5"],
             )
@@ -221,7 +221,7 @@ def main() -> int:
                 min_date = df["timestamp_utc"].min().to_pydatetime()
                 max_date = df["timestamp_utc"].max().to_pydatetime()
                 path = normalizer.export(df, identifier, min_date, max_date, format="parquet")
-                logger.info("  ✓ Processed %s: %,d records → %s", identifier, len(df), path.name)
+                logger.info("  ✓ Processed %s: %d records → %s", identifier, len(df), path.name)
 
             logger.info("✓ Silver preprocessing complete: %d datasets", len(silver_data))
 

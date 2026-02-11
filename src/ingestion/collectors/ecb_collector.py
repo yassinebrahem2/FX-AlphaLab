@@ -87,7 +87,7 @@ class ECBCollector(BaseCollector):
     ) -> None:
         super().__init__(
             output_dir=output_dir or Config.DATA_DIR / "raw" / "ecb",
-            log_file=log_file or Config.LOGS_DIR / "ecb_collector.log",
+            log_file=log_file or Config.LOGS_DIR / "collectors" / "ecb_collector.log",
         )
         self._session = self._create_session()
         self.logger.info("ECBCollector initialized, output_dir=%s", self.output_dir)

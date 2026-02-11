@@ -186,7 +186,7 @@ class MT5Collector(BaseCollector):
         """
         super().__init__(
             output_dir=output_dir or Config.DATA_DIR / "raw" / "mt5",
-            log_file=log_file or Config.LOGS_DIR / "mt5_collector.log",
+            log_file=log_file or Config.LOGS_DIR / "collectors" / "mt5_collector.log",
         )
         self.pairs = pairs or self.DEFAULT_PAIRS
         self.timeframes = timeframes or self.DEFAULT_TIMEFRAMES
