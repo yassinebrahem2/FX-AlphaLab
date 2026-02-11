@@ -33,7 +33,7 @@ jobs:
 
     - name: Type check with mypy
       run: |
-        mypy shared/ data/ agents/
+        mypy src/
       continue-on-error: true
 
     - name: Run tests with pytest

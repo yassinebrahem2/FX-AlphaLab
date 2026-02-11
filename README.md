@@ -11,8 +11,10 @@ Multi-Agent AI Framework for FX Market Analysis
 
 - [Overview](#overview)
 - [Features](#features)
+- [Data Sources](#data-sources)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
+- [Data Pipeline](#data-pipeline)
 - [Development Workflow](#development-workflow)
 - [Testing](#testing)
 - [Contributing](#contributing)
@@ -20,16 +22,57 @@ Multi-Agent AI Framework for FX Market Analysis
 
 ## Overview
 
-FX-AlphaLab is a sophisticated multi-agent AI framework designed for foreign exchange market analysis. The platform combines real-time data ingestion, advanced preprocessing, and intelligent agent orchestration to provide comprehensive market insights.
+FX-AlphaLab is a sophisticated quantitative trading system designed for foreign exchange market analysis. The platform implements a modern data lake architecture with multi-source ingestion, intelligent preprocessing, and a multi-agent AI framework for generating actionable trading insights.
+
+The system follows a layered data architecture:
+- **Bronze Layer**: Raw data ingestion with comprehensive caching
+- **Silver Layer**: Validated, normalized, and enriched data
+- **Gold Layer**: Production-ready models, predictions, and signals
+
+Built with production-grade code quality, comprehensive testing, and continuous integration to ensure reliability and maintainability.
 
 ## Features
 
-- **Multi-Source Data Ingestion**: MT5 integration, economic calendars, FRED API, ECB data
-- **Real-time Data Synchronization**: Automated data preprocessing and normalization
-- **AI-Powered Agents**: Specialized agents for different aspects of FX analysis
-- **Scalable Backend**: Built with modern Python best practices
+- **Multi-Source Data Ingestion**: MT5 integration, economic calendars, FRED API, ECB exchange rates
+- **Data Lake Architecture**: Bronze → Silver → Gold layered data pipeline
+- **Intelligent Caching**: Rate-limited API calls with smart caching and retry mechanisms
+- **Real-time Data Preprocessing**: Automated normalization, validation, and transformation
+- **Multi-Agent System**: Specialized agents for macro, sentiment, and technical analysis
+- **Alpha Generation**: Production-ready alpha model pipeline
+- **Explainability**: Built-in model interpretation and transparency tools
+- **RESTful Backend**: FastAPI-based backend with WebSocket support
 - **Comprehensive Testing**: Full test coverage with pytest
 - **CI/CD Pipeline**: Automated testing, linting, and type checking
+
+## Data Sources
+
+### Current Integrations
+
+1. **MetaTrader 5 (MT5)** - Windows Only
+   - Real-time OHLCV price data
+   - Tick data and spreads
+   - Direct broker connectivity
+   - Scripts: [scripts/collect_mt5_data.py](scripts/collect_mt5_data.py)
+
+2. **FRED (Federal Reserve Economic Data)**
+   - Macroeconomic indicators (CPI, unemployment, interest rates)
+   - Financial stress indices
+   - Managed rate limiting and caching
+   - Scripts: [scripts/collect_fred_data.py](scripts/collect_fred_data.py)
+
+3. **ECB (European Central Bank)**
+   - Official EUR exchange rates
+   - Historical FX reference rates
+   - Daily data updates
+   - Scripts: [scripts/collect_ecb_data.py](scripts/collect_ecb_data.py)
+
+4. **Economic Calendar**
+   - High-impact economic events
+   - Event timestamps and expectations
+   - Country-specific event filtering
+   - Scripts: [scripts/collect_calendar_data.py](scripts/collect_calendar_data.py)
+
+For detailed documentation on each data source, see [docs/ingestion/](docs/ingestion/).
 
 ## Project Structure
 
@@ -37,21 +80,79 @@ FX-AlphaLab is a sophisticated multi-agent AI framework designed for foreign exc
 fx-alphalab/
 ├── .github/
 │   └── workflows/          # CI/CD pipelines
-├── data/
-│   ├── ingestion/          # Data collection modules
-│   ├── preprocessing/      # Data transformation
-│   └── storage/            # Database interfaces
-├── agents/                 # AI agent implementations
-├── backend/                # Backend services
-├── frontend/               # Frontend (placeholder)
-├── shared/
-│   ├── config.py           # Configuration management
-│   └── utils.py            # Shared utilities
+├── src/                    # Source code
+│   ├── ingestion/          # Data ingestion pipeline
+│   │   ├── collectors/     # Data collectors (MT5, FRED, ECB, Calendar)
+│   │   ├── preprocessors/  # Data transformation & normalization
+│   │   └── repositories/   # Data persistence layer
+│   ├── agents/             # AI agent implementations
+│   │   ├── macro/          # Macroeconomic analysis agents
+│   │   ├── sentiment/      # Sentiment analysis agents
+│   │   └── technical/      # Technical analysis agents
+│   ├── alpha/              # Alpha generation models
+│   ├── backend/            # Backend services
+│   │   ├── routers/        # API route handlers
+│   │   ├── schemas/        # Data validation schemas
+│   │   └── websocket/      # Real-time communication
+│   ├── explain/            # Model explainability modules
+│   └── shared/             # Shared utilities
+│       ├── config.py       # Configuration management
+│       ├── utils.py        # Common utilities
+│       ├── db/             # Database interfaces
+│       └── models/         # Shared data models
+├── data/                   # Data storage
+│   ├── cache/              # Cached API responses
+│   │   ├── calendar/       # Economic event cache
+│   │   ├── ecb/            # ECB data cache
+│   │   ├── fred/           # FRED macro indicators cache
+│   │   ├── mt5/            # MT5 price data cache
+│   │   └── news/           # News data cache
+│   ├── processed/          # Processed & normalized data
+│   │   ├── events/         # Economic events (silver layer)
+│   │   ├── macro/          # Macro indicators (silver layer)
+│   │   ├── ohlcv/          # Price data (silver layer)
+│   │   └── sentiment/      # Sentiment scores
+│   └── raw/                # Raw ingested data (bronze layer)
+│       ├── calendar/       # Raw economic calendar
+│       ├── ecb/            # Raw ECB exchange rates
+│       ├── fred/           # Raw FRED data
+│       ├── mt5/            # Raw MT5 data
+│       └── news/           # Raw news articles
+├── scripts/                # Executable scripts
+│   ├── collect_*.py        # Data collection scripts
+│   ├── process_*.py        # Data processing scripts
+│   └── test_*.py           # Integration test scripts
 ├── tests/                  # Test suite
-├── notebooks/              # Jupyter notebooks for exploration
+│   ├── ingestion/          # Ingestion pipeline tests
+│   ├── agents/             # Agent tests
+│   ├── alpha/              # Alpha model tests
+│   ├── backend/            # Backend tests
+│   ├── explain/            # Explainability tests
+│   └── shared/             # Shared utilities tests
 ├── docs/                   # Documentation
-└── datasets/               # Sample/output datasets
+│   └── ingestion/          # Data ingestion docs
+├── models/                 # Trained model artifacts
+│   ├── alpha/              # Alpha models
+│   └── sentiment/          # Sentiment models
+├── outputs/                # Generated outputs
+│   ├── alpha/              # Alpha predictions
+│   ├── reports/            # Analysis reports
+│   └── signals/            # Trading signals
+├── logs/                   # Application logs
+│   ├── agents/             # Agent execution logs
+│   ├── backend/            # Backend service logs
+│   └── collectors/         # Data collection logs
+├── config/                 # Configuration files
+│   └── collectors/         # Collector configurations
+├── notebooks/              # Jupyter notebooks for exploration
+└── frontend/               # Frontend (placeholder)
 ```
+
+### Architecture Layers
+
+- **Bronze Layer** (`data/raw/`): Raw data as ingested from sources
+- **Silver Layer** (`data/processed/`): Cleaned, normalized, validated data
+- **Gold Layer** (`models/`, `outputs/`): ML models and production-ready outputs
 
 ## Getting Started
 
@@ -134,6 +235,55 @@ SCRAPING_DELAY=3.0
 REQUEST_TIMEOUT=30
 ```
 
+## Data Pipeline
+
+### Collection Scripts
+
+The system includes automated data collection scripts in the [scripts/](scripts/) directory:
+
+```bash
+# Collect FRED macroeconomic data (CPI, unemployment, interest rates)
+python scripts/collect_fred_data.py
+
+# Collect ECB exchange rates
+python scripts/collect_ecb_data.py
+
+# Collect economic calendar events
+python scripts/collect_calendar_data.py
+
+# Collect MT5 price data (Windows only)
+python scripts/collect_mt5_data.py
+
+# Process calendar data to silver layer
+python scripts/process_calendar_silver.py
+```
+
+### Data Flow
+
+1. **Bronze Layer (Raw)**: Scripts collect data from external sources and save to `data/raw/`
+   - Raw API responses cached to `data/cache/` for efficiency
+   - Rate limiting and retry logic prevent API throttling
+   - Original data format preserved
+
+2. **Silver Layer (Processed)**: Data is cleaned, validated, and normalized
+   - [src/ingestion/preprocessors/](src/ingestion/preprocessors/) handle transformations
+   - Standardized timestamps and data types
+   - Quality checks and validation
+   - Output saved to `data/processed/`
+
+3. **Gold Layer (Production)**: Ready for model consumption
+   - Feature engineering and aggregations
+   - Model predictions saved to `outputs/`
+   - Trained models persisted to `models/`
+
+### Storage Structure
+
+- **Cache**: Immutable API responses with timestamps
+- **Raw**: Original ingested data (bronze)
+- **Processed**: Cleaned and validated data (silver)
+- **Models**: Trained ML artifacts
+- **Outputs**: Predictions, signals, and reports
+
 ## Development Workflow
 
 ### Branching Strategy
@@ -170,7 +320,7 @@ This project follows a professional Git workflow:
    ruff check . --fix
 
    # Type checking
-   mypy shared/ data/ agents/
+   mypy src/
 
    # Run tests
    pytest tests/ --cov=. --cov-report=term
@@ -208,6 +358,20 @@ git push origin feature/your-feature-name
 **Note**: Only maintainers merge `dev` → `main` for releases.
 
 ## Testing
+
+### Test Structure
+
+Tests are organized to mirror the source code structure:
+
+```
+tests/
+├── ingestion/          # Tests for data collectors and preprocessors
+├── agents/             # Tests for AI agents
+├── alpha/              # Tests for alpha models
+├── backend/            # Tests for API and backend services
+├── explain/            # Tests for explainability modules
+└── shared/             # Tests for shared utilities
+```
 
 ### Running Tests
 
@@ -313,6 +477,8 @@ test: add tests for config validation
 
 ## Useful Commands
 
+### Development
+
 ```bash
 # Install dependencies
 pip install -e ".[dev,notebook,mt5]"
@@ -330,7 +496,7 @@ black .
 ruff check .
 
 # Type check
-mypy shared/ data/ agents/
+mypy src/
 
 # Run tests with coverage
 pytest --cov=. --cov-report=html
@@ -340,6 +506,22 @@ pytest --cov=. --cov-report=html
 find . -type d -name "__pycache__" -exec rm -rf {} +
 find . -type d -name ".pytest_cache" -exec rm -rf {} +
 find . -type d -name ".ruff_cache" -exec rm -rf {} +
+```
+
+### Data Collection
+
+```bash
+# Collect all data sources
+python scripts/collect_fred_data.py
+python scripts/collect_ecb_data.py
+python scripts/collect_calendar_data.py
+python scripts/collect_mt5_data.py    # Windows only
+
+# Process data to silver layer
+python scripts/process_calendar_silver.py
+
+# Test collectors
+python scripts/test_collectors.py
 ```
 
 ## Resources
