@@ -418,11 +418,12 @@ class FedCollector(DocumentCollector):
             >>> collector._extract_speaker("Governor Waller speech on...")
             "Governor Waller"
         """
-        # Common patterns: "Chair X", "Governor Y", "Vice Chair Z"
+        # Common patterns: "Vice Chair Z", "Chair X", "Governor Y"
+        # Note: Vice Chair pattern must come before Chair pattern
         patterns = [
+            r"(Vice\s+Chair(?:man)?\s+\w+)",
             r"(Chair(?:man)?\s+\w+)",
             r"(Governor\s+\w+)",
-            r"(Vice\s+Chair(?:man)?\s+\w+)",
         ]
 
         for pattern in patterns:
