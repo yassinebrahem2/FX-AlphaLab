@@ -3,7 +3,7 @@ import tempfile
 
 import pytest
 
-from data.storage.database import export_to_csv, get_connection, insert_fx_prices
+from src.shared.db.storage import export_to_csv, get_connection, insert_fx_prices
 
 
 def postgres_available() -> bool:

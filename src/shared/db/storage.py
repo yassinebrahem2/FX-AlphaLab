@@ -6,7 +6,7 @@ and export tables to CSV format.
 
 Example:
 
-    from data.storage.database import insert_fx_prices
+    from src.shared.db.storage import insert_fx_prices
 
     insert_fx_prices([
         {
@@ -36,7 +36,7 @@ def get_connection():
     Create and return a PostgreSQL database connection using environment variables.
 
     Example:
-        from data.storage.database import get_connection
+        from src.shared.db.storage import get_connection
 
         conn = get_connection()
         print("Connected:", conn is not None)
