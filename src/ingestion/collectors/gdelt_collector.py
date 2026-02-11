@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
+import hashlib
 import pandas as pd
+import time
+
+from google.cloud.bigquery.job import QueryJob
 from google.cloud import bigquery
 from google.api_core.exceptions import GoogleAPIError
 
@@ -13,6 +17,12 @@ class GDELTCollector(BaseCollector):
 
     SOURCE_NAME = "news"
 
+    TIER_1 = {"reuters.com", "bloomberg.com", "ft.com"}
+    TIER_2 = {"wsj.com", "cnbc.com"}
+
+    # -------------------------------------------------------
+    # Initialization
+    # -------------------------------------------------------
     def __init__(
         self,
         output_dir: Path,
@@ -22,138 +32,223 @@ class GDELTCollector(BaseCollector):
         super().__init__(output_dir=output_dir, log_file=log_file)
 
         self.project_id = project_id
-        self.client = bigquery.Client(project=project_id)
-        # Bronze subfolder: data/raw/news/gdelt/
+        self.client = (
+            bigquery.Client(project=project_id)
+            if project_id
+            else bigquery.Client()
+        )
+
         self.gdelt_dir = self.output_dir / "gdelt"
         self.gdelt_dir.mkdir(parents=True, exist_ok=True)
+    def _run_query_with_retry(
+        self,
+        query: str,
+        job_config: bigquery.QueryJobConfig | None = None,
+        max_retries: int = 3,
+    ) -> QueryJob:
+        """Execute a BigQuery query with exponential backoff retry."""
 
+        delay = 2  # initial backoff in seconds
+
+        for attempt in range(max_retries):
+            try:
+                return self.client.query(query, job_config=job_config)
+
+            except GoogleAPIError as e:
+                self.logger.warning(
+                    "Query failed (attempt %d/%d): %s",
+                    attempt + 1,
+                    max_retries,
+                    e,
+                )
+
+                if attempt == max_retries - 1:
+                    self.logger.error("Max retries reached. Aborting.")
+                    raise e
+
+                time.sleep(delay)
+                delay *= 2  # exponential backoff
+
+    # -------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------
+    def _assign_credibility_tier(self, domain: str | None) -> int:
+        domain = (domain or "").lower()
+        if any(d in domain for d in self.TIER_1):
+            return 1
+        if any(d in domain for d in self.TIER_2):
+            return 2
+        return 3
+
+    def _hash_url(self, url: str) -> str:
+        return hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+    def _parse_field(self, field_value):
+        if not field_value:
+            return []
+        return [item.strip() for item in str(field_value).split(";")]
+
+    # -------------------------------------------------------
+    # Main Collection Logic
+    # -------------------------------------------------------
     def collect(
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> dict[str, pd.DataFrame]:
-        """
-        Collect minimal GDELT GKG data for a given date range.
-        QUOTA-SAFE VERSION (partition-aware + dry-run).
-        """
 
         if not start_date or not end_date:
             raise ValueError("start_date and end_date must be provided.")
 
-        # 🔒 Dev restriction: only allow single-day queries
-        if start_date.date() != end_date.date():
-            raise ValueError("For development, query only ONE day at a time.")
+        current_day = start_date.date()
+        end_day = end_date.date()
 
-        start_day = start_date.date()
-        next_day = start_day + timedelta(days=1)
-
-        start_str = start_day.isoformat()
-        end_str = next_day.isoformat()
-
-        # ✅ Correct dataset + partition filter
-        query = f"""
-            SELECT
-                DATE,
-                SourceCommonName,
-                DocumentIdentifier,
-                V2Tone,
-                V2Themes AS Themes,
-                V2Locations AS Locations,
-                V2Organizations AS Organizations
-            FROM `gdelt-bq.gdeltv2.gkg_partitioned`
-            WHERE DATE(_PARTITIONTIME) >= "{start_str}"
-              AND DATE(_PARTITIONTIME) < "{end_str}"
-
-                -- FX Theme Filter
-              AND (
-        V2Themes LIKE '%ECON_CURRENCY%'
-        OR V2Themes LIKE '%ECON_CENTRAL_BANK%'
-      )
-
-  -- Currency Mention Filter
-              AND (
-        V2Themes LIKE '%EUR%'
-        OR V2Themes LIKE '%USD%'
-        OR V2Themes LIKE '%GBP%'
-        OR V2Themes LIKE '%JPY%'
-      )
-            LIMIT 10
-        """
+        all_dataframes = []
 
         try:
-            # -------------------------
-            # DRY RUN (cost estimation)
-            # -------------------------
-            job_config = bigquery.QueryJobConfig(
-                dry_run=True,
-                use_query_cache=False,
-            )
+            while current_day <= end_day:
 
-            dry_job = self.client.query(query, job_config=job_config)
+                next_day = current_day + timedelta(days=1)
 
-            bytes_scanned = dry_job.total_bytes_processed
-            gb_scanned = bytes_scanned / (1024**3)
+                start_str = current_day.isoformat()
+                end_str = next_day.isoformat()
 
-            self.logger.info("Dry run: query would scan %.4f GB", gb_scanned)
+                query = f"""
+                    SELECT
+                        DATE,
+                        SourceCommonName,
+                        DocumentIdentifier,
+                        V2Tone,
+                        V2Themes AS Themes,
+                        V2Locations AS Locations,
+                        V2Organizations AS Organizations
+                    FROM `gdelt-bq.gdeltv2.gkg_partitioned`
+                    WHERE DATE(_PARTITIONTIME) >= "{start_str}"
+                      AND DATE(_PARTITIONTIME) < "{end_str}"
+                      AND (
+                          V2Themes LIKE '%ECON_CURRENCY%'
+                          OR V2Themes LIKE '%ECON_CENTRAL_BANK%'
+                      )
+                      AND (
+                          V2Themes LIKE '%EUR%'
+                          OR V2Themes LIKE '%USD%'
+                          OR V2Themes LIKE '%GBP%'
+                          OR V2Themes LIKE '%JPY%'
+                      )
+                """
 
-            # Allow up to 5GB during dev (safe)
-            if gb_scanned > 5:
-                raise RuntimeError(
-                    f"Query too expensive ({gb_scanned:.2f} GB). Aborting."
+                # -------------------------
+                # DRY RUN
+                # -------------------------
+                job_config = bigquery.QueryJobConfig(
+                    dry_run=True,
+                    use_query_cache=False,
                 )
 
-            # -------------------------
-            # REAL EXECUTION
-            # -------------------------
-            job = self.client.query(query)
-            results = job.result()
-            df = results.to_dataframe()
+                dry_job = self._run_query_with_retry(query, job_config)
 
-            self.logger.info(
-                "Fetched %d rows from GDELT for date %s",
-                len(df),
-                start_str,
+                gb_scanned = dry_job.total_bytes_processed / (1024**3)
+
+                self.logger.info(
+                    "Dry run for %s: %.4f GB",
+                    start_str,
+                    gb_scanned,
+                )
+
+                if gb_scanned > 5:
+                    raise RuntimeError(
+                        f"Query too expensive ({gb_scanned:.2f} GB)."
+                    )
+
+                # -------------------------
+                # EXECUTION
+                # -------------------------
+                job = self._run_query_with_retry(query)
+
+
+                df = job.result().to_dataframe(
+                    create_bqstorage_client=False
+                )
+
+                self.logger.info(
+                    "Fetched %d rows for %s",
+                    len(df),
+                    start_str,
+                )
+
+                all_dataframes.append(df)
+
+                # -------------------------
+                # WRITE BRONZE JSONL
+                # -------------------------
+                output_file = (
+                    self.gdelt_dir
+                    / f"aggregated_{current_day.strftime('%Y%m%d')}.jsonl"
+                )
+
+                seen_hashes: set[str] = set()
+
+                with open(output_file, "w", encoding="utf-8") as f:
+                    for _, row in df.iterrows():
+
+                        url = row["DocumentIdentifier"]
+                        if not url:
+                            continue
+
+                        url_hash = self._hash_url(url)
+
+                        if url_hash in seen_hashes:
+                            continue
+                        seen_hashes.add(url_hash)
+
+                        tier = self._assign_credibility_tier(
+                            row["SourceCommonName"]
+                        )
+
+                        record = {
+                            "source": "GDELT",
+                            "timestamp_collected": datetime.utcnow().isoformat(),
+                            "timestamp_published": str(row["DATE"]),
+                            "url": url,
+                            "source_domain": row["SourceCommonName"],
+                            "tone": row["V2Tone"],
+                            "themes": self._parse_field(row["Themes"]),
+                            "locations": self._parse_field(row["Locations"]),
+                            "organizations": self._parse_field(
+                                row["Organizations"]
+                            ),
+                            "metadata": {
+                                "credibility_tier": tier,
+                                "url_hash": url_hash,
+                            },
+                        }
+
+                        f.write(json.dumps(record) + "\n")
+
+                self.logger.info(
+                    "Bronze JSONL written to %s (%d unique records)",
+                    output_file,
+                    len(seen_hashes),
+                )
+
+                current_day += timedelta(days=1)
+
+            combined_df = (
+                pd.concat(all_dataframes, ignore_index=True)
+                if all_dataframes
+                else pd.DataFrame()
             )
 
-            # -------------------------
-            # WRITE BRONZE JSONL
-            # -------------------------
-            output_file = self.gdelt_dir / f"aggregated_{start_day.strftime('%Y%m%d')}.jsonl"
-
-            with open(output_file, "w", encoding="utf-8") as f:
-                for _, row in df.iterrows():
-                    record = {
-                        "source": "GDELT",
-                        "timestamp_collected": datetime.utcnow().isoformat(),
-                        "timestamp_published": str(row["DATE"]),
-                        "url": row["DocumentIdentifier"],
-                        "source_domain": row["SourceCommonName"],
-                        "tone": row["V2Tone"],
-                        "themes": self._parse_field(row["Themes"]),
-                        "locations": self._parse_field(row["Locations"]),
-                        "organizations": self._parse_field(row["Organizations"]),
-                        "metadata": {},
-                    }
-
-                    f.write(json.dumps(record) + "\n")
-
-                self.logger.info("Bronze JSONL written to %s", output_file)
-
-            return {"gdelt_raw": df}
+            return {"gdelt_raw": combined_df}
 
         except GoogleAPIError as e:
             self.logger.error("GDELT query failed: %s", e)
             raise
 
-    def _parse_field(self, field_value):
-        """Convert semicolon-separated GDELT fields to list."""
-        if not field_value:
-            return []
-        return [item.strip() for item in str(field_value).split(";")]
-
-
+    # -------------------------------------------------------
+    # Health Check
+    # -------------------------------------------------------
     def health_check(self) -> bool:
-        """Verify BigQuery connectivity using a lightweight test query."""
         try:
             job = self.client.query("SELECT 1")
             _ = job.result()
