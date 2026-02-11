@@ -12,8 +12,8 @@ This collector handles ONLY the Bronze layer (§3.1):
 - Extracts full text content from publication URLs
 - Categorizes by document type
 - Preserves all source fields with standardized schema
-- Adds `source="fed"` column
-- Exports to data/raw/fed/ as CSV
+- Adds `source="fed"` field
+- Exports to data/raw/news/fed/ as JSONL (one JSON object per line)
 
 Schema (Bronze Layer):
     - source: str (always "fed")
@@ -24,7 +24,7 @@ Schema (Bronze Layer):
     - content: str (full text content extracted from URL)
     - document_type: str (fomc_statement|press_release|speech|testimony|minutes)
     - speaker: str (name for speeches, empty otherwise)
-    - metadata: str (JSON string with additional fields)
+    - metadata: dict (additional fields as nested dictionary)
 
 For Silver layer transformation (entity recognition, sentiment analysis),
 use appropriate preprocessors.
@@ -35,18 +35,16 @@ Documentation: https://www.federalreserve.gov/feeds/feeds.htm
 Example:
     >>> from pathlib import Path
     >>> from datetime import datetime
-    >>> from src.ingestion.collectors.fedcollector import FedCollector
+    >>> from src.ingestion.collectors.fed_collector import FedCollector
     >>>
     >>> collector = FedCollector()
     >>> # Collect publications (categorized by type)
     >>> data = collector.collect(start_date=datetime(2024, 1, 1))
-    >>> # Returns: {"statements": df, "speeches": df, "press_releases": df, ...}
+    >>> # Returns: {"statements": [...], "speeches": [...], "press_releases": [...], ...}
     >>> # Export to Bronze layer
-    >>> for doc_type, df in data.items():
-    >>>     path = collector.export_csv(df, doc_type)
+    >>> paths = collector.export_all(data=data)
 """
 
-import json
 import re
 import time
 from dataclasses import dataclass
@@ -54,13 +52,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import feedparser
-import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from src.ingestion.collectors.base_collector import BaseCollector
+from src.ingestion.collectors.document_collector import DocumentCollector
 from src.shared.config import Config
 
 
@@ -73,12 +70,12 @@ class FedDocumentType:
     keywords: tuple[str, ...]
 
 
-class FedCollector(BaseCollector):
+class FedCollector(DocumentCollector):
     """Collector for Federal Reserve RSS publications - Bronze Layer (Raw Data).
 
     Uses the official Federal Reserve RSS feed to collect publication metadata
     and extracts full text content. Publications are categorized by document type.
-    Raw data stored in data/raw/fed/ following §3.1 Bronze contract.
+    Raw data stored in data/raw/news/fed/ as JSONL following §3.1 Bronze contract.
 
     Features:
         - Automatic retry logic for RSS feed and content requests
@@ -87,9 +84,10 @@ class FedCollector(BaseCollector):
         - Full text content extraction from publication URLs
         - Speaker name extraction for speeches
         - UTC timestamp normalization
-        - Preserves all metadata in JSON format
+        - Preserves all metadata as nested dictionaries
         - Polite request delays
         - Comprehensive error handling
+        - JSONL export format (one JSON object per line)
 
     Note:
         This collector handles ONLY Bronze layer (raw collection).
@@ -160,25 +158,25 @@ class FedCollector(BaseCollector):
         """Initialize the Federal Reserve collector.
 
         Args:
-            output_dir: Directory for Bronze CSV exports (defaults to data/raw/fed).
+            output_dir: Directory for Bronze JSONL exports (defaults to data/raw/news/fed).
             log_file: Optional path for file-based logging.
         """
         super().__init__(
-            output_dir=output_dir or Config.DATA_DIR / "raw" / "fed",
+            output_dir=output_dir or Config.DATA_DIR / "raw" / "news" / "fed",
             log_file=log_file or Config.LOGS_DIR / "collectors" / "fed_collector.log",
         )
         self._session = self._create_session()
         self.logger.info("FedCollector initialized, output_dir=%s", self.output_dir)
 
     # ------------------------------------------------------------------
-    # BaseCollector interface
+    # DocumentCollector interface
     # ------------------------------------------------------------------
 
     def collect(
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> dict[str, pd.DataFrame]:
+    ) -> dict[str, list[dict]]:
         """Collect Fed publications categorized by document type (Bronze - raw data).
 
         Args:
@@ -186,18 +184,27 @@ class FedCollector(BaseCollector):
             end_date: End of range (default: today).
 
         Returns:
-            Dictionary mapping document type keys to DataFrames:
+            Dictionary mapping document type keys to lists of document dictionaries:
             {
-                "statements": DataFrame,     # FOMC statements
-                "speeches": DataFrame,       # Speeches and remarks
-                "press_releases": DataFrame, # Press releases
-                "testimony": DataFrame,      # Congressional testimony
-                "minutes": DataFrame         # Meeting minutes
+                "statements": [...],      # FOMC statements
+                "speeches": [...],        # Speeches and remarks
+                "press_releases": [...],  # Press releases
+                "testimony": [...],       # Congressional testimony
+                "minutes": [...]          # Meeting minutes
             }
 
-            Each DataFrame contains columns:
-            [source, timestamp_collected, timestamp_published, url, title,
-             content, document_type, speaker, metadata]
+            Each document dict contains:
+            {
+                "source": "fed",
+                "timestamp_collected": "2024-01-15T12:00:00+00:00",
+                "timestamp_published": "2024-01-15T14:00:00+00:00",
+                "url": "https://...",
+                "title": "...",
+                "content": "...",
+                "document_type": "fomc_statement",
+                "speaker": "Chair Powell",
+                "metadata": {"rss_summary": "...", ...}
+            }
 
         Raises:
             ValueError: If start_date is after end_date.
@@ -206,9 +213,9 @@ class FedCollector(BaseCollector):
         Example:
             >>> collector = FedCollector()
             >>> data = collector.collect(start_date=datetime(2024, 1, 1))
-            >>> for doc_type, df in data.items():
-            >>>     print(f"{doc_type}: {len(df)} publications")
-            >>>     collector.export_csv(df, doc_type)
+            >>> for doc_type, docs in data.items():
+            >>>     print(f"{doc_type}: {len(docs)} publications")
+            >>> paths = collector.export_all(data=data)
         """
         start = start_date or datetime.now() - timedelta(days=90)  # 3 months
         end = end_date or datetime.now()
@@ -222,11 +229,11 @@ class FedCollector(BaseCollector):
         categorized_data = self.fetch_and_categorize_publications(start_date=start, end_date=end)
 
         # Log collection summary
-        total = sum(len(df) for df in categorized_data.values())
+        total = sum(len(docs) for docs in categorized_data.values())
         self.logger.info("Collected %d total publications", total)
-        for doc_type, df in categorized_data.items():
-            if not df.empty:
-                self.logger.info("  - %s: %d publications", doc_type, len(df))
+        for doc_type, docs in categorized_data.items():
+            if docs:
+                self.logger.info("  - %s: %d publications", doc_type, len(docs))
 
         return categorized_data
 
@@ -256,7 +263,7 @@ class FedCollector(BaseCollector):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> dict[str, pd.DataFrame]:
+    ) -> dict[str, list[dict]]:
         """Fetch, parse, and categorize Fed publications by document type.
 
         Args:
@@ -264,7 +271,7 @@ class FedCollector(BaseCollector):
             end_date: End date for filtering publications.
 
         Returns:
-            Dictionary mapping document type keys to DataFrames with full schema.
+            Dictionary mapping document type keys to lists of document dictionaries.
 
         Example:
             >>> collector = FedCollector()
@@ -300,7 +307,7 @@ class FedCollector(BaseCollector):
 
         if not feed.entries:
             self.logger.warning("No entries found in RSS feed")
-            return self._empty_categorized_dataframes()
+            return {doc_type.key: [] for doc_type in self._DOCUMENT_TYPES}
 
         self.logger.info("Parsed %d entries from RSS feed", len(feed.entries))
 
@@ -342,14 +349,12 @@ class FedCollector(BaseCollector):
                 # Convert to UTC ISO 8601
                 timestamp_published = pub_date.replace(tzinfo=timezone.utc).isoformat()
 
-                # Build metadata JSON
-                metadata = json.dumps(
-                    {
-                        "rss_summary": summary,
-                        "rss_published": entry.get("published", ""),
-                        "feed_id": entry.get("id", ""),
-                    }
-                )
+                # Build metadata as nested dictionary (not JSON string)
+                metadata = {
+                    "rss_summary": summary,
+                    "rss_published": entry.get("published", ""),
+                    "feed_id": entry.get("id", ""),
+                }
 
                 # Create record with full schema
                 record = {
@@ -370,44 +375,13 @@ class FedCollector(BaseCollector):
                 self.logger.warning("Error processing entry: %s", e)
                 continue
 
-        # Convert to DataFrames
-        result = {}
-        for doc_type_key, records in categorized_records.items():
-            if records:
-                result[doc_type_key] = pd.DataFrame(records)
-            else:
-                # Return empty DataFrame with correct schema
-                result[doc_type_key] = self._empty_dataframe_with_schema()
-
         self.logger.info(
             "Categorized %d publications into %d document types",
-            sum(len(df) for df in result.values()),
-            len([df for df in result.values() if not df.empty]),
+            sum(len(records) for records in categorized_records.values()),
+            len([records for records in categorized_records.values() if records]),
         )
 
-        return result
-
-    def _empty_categorized_dataframes(self) -> dict[str, pd.DataFrame]:
-        """Return empty DataFrames for all document types with correct schema."""
-        return {
-            doc_type.key: self._empty_dataframe_with_schema() for doc_type in self._DOCUMENT_TYPES
-        }
-
-    def _empty_dataframe_with_schema(self) -> pd.DataFrame:
-        """Create an empty DataFrame with the correct schema."""
-        return pd.DataFrame(
-            columns=[
-                "source",
-                "timestamp_collected",
-                "timestamp_published",
-                "url",
-                "title",
-                "content",
-                "document_type",
-                "speaker",
-                "metadata",
-            ]
-        )
+        return categorized_records
 
     def _classify_document_type(self, title: str, summary: str) -> FedDocumentType:
         """Classify document type based on title and summary keywords.
