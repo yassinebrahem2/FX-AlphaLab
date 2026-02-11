@@ -116,7 +116,8 @@ class TestMT5Connector:
 
         mock_mt5.shutdown.assert_not_called()
 
-    def test_invalid_timeframe(self):
+    @patch("src.ingestion.collectors.mt5_collector.mt5")
+    def test_invalid_timeframe(self, mock_mt5):
         connector = MT5Connector()
         with pytest.raises(ValueError, match="Unsupported timeframe"):
             connector.fetch_ohlc("EURUSD", "M5", datetime(2023, 1, 1), datetime(2024, 1, 1))
@@ -182,13 +183,15 @@ class TestMT5Connector:
 
 
 class TestMT5CollectorInit:
-    def test_default_configuration(self, tmp_path):
+    @patch("src.ingestion.collectors.mt5_collector.mt5")
+    def test_default_configuration(self, mock_mt5, tmp_path):
         collector = MT5Collector(output_dir=tmp_path)
         assert collector.pairs == MT5Collector.DEFAULT_PAIRS
         assert collector.timeframes == MT5Collector.DEFAULT_TIMEFRAMES
         assert collector.years == MT5Collector.DEFAULT_YEARS
 
-    def test_custom_configuration(self, tmp_path):
+    @patch("src.ingestion.collectors.mt5_collector.mt5")
+    def test_custom_configuration(self, mock_mt5, tmp_path):
         collector = MT5Collector(
             output_dir=tmp_path,
             pairs=["EURUSD"],
@@ -199,7 +202,8 @@ class TestMT5CollectorInit:
         assert collector.timeframes == ["D1"]
         assert collector.years == 1
 
-    def test_default_output_dir(self, tmp_path, monkeypatch):
+    @patch("src.ingestion.collectors.mt5_collector.mt5")
+    def test_default_output_dir(self, mock_mt5, tmp_path, monkeypatch):
         monkeypatch.setattr("src.shared.config.Config.DATA_DIR", tmp_path)
         collector = MT5Collector()
         assert collector.output_dir == tmp_path / "raw" / "mt5"
