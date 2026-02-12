@@ -27,8 +27,10 @@ from src.shared.db import (
 def postgres_available() -> bool:
     """Check if PostgreSQL is reachable."""
     try:
+        from sqlalchemy import text
+
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
         return True
     except OperationalError:
         return False
