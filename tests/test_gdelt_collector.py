@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from google.api_core.exceptions import GoogleAPIError
+
 from ingestion.collectors.gdelt_collector import GDELTCollector
 
 
