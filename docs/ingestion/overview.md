@@ -35,6 +35,7 @@ All collectors and preprocessors are **pure Python libraries**:
 |--------|------|------------------|----------------|
 | **FRED** | Macroeconomic indicators | Daily | API key (free) |
 | **ECB** | Exchange rates & policy rates | Daily | None |
+| **ECB News** | Press releases, speeches, policy statements | Real-time | None |
 | **MT5** | FX price data (OHLCV) | Real-time | Windows + MT5 terminal |
 | **Calendar** | Economic events | Real-time | None |
 
@@ -68,6 +69,9 @@ python -m scripts.collect_fred_data --preprocess
 # ECB exchange rates and policy rates
 python -m scripts.collect_ecb_data --preprocess
 
+# ECB news and sentiment data
+python -m scripts.collect_ecb_news_data
+
 # MT5 FX prices (Windows only)
 python -m scripts.collect_mt5_data --preprocess
 
@@ -80,12 +84,15 @@ python -m scripts.collect_calendar_data --today --preprocess
 ```
 data/
 ├── raw/                    # Bronze layer (source format)
-│   ├── fred/              # FRED CSV files
-│   ├── ecb/               # ECB CSV files
-│   ├── mt5/               # MT5 CSV files
-│   └── calendar/          # Calendar CSV files
+│   ├── calendar/          # Calendar CSV files
+│   └── news/              # News content
+│       └── ecb/           # ECB JSONL files
 │
 └── processed/             # Silver layer (normalized)
+    ├── macro/             # Macroeconomic indicators (CSV)
+    ├── ohlcv/             # Price data (Parquet)
+    ├── events/            # Economic events (CSV)
+    └── sentiment/         # Sentiment scores (futureized)
     ├── macro/             # Macroeconomic indicators (CSV)
     ├── ohlcv/             # Price data (Parquet)
     └── events/            # Economic events (CSV)
@@ -161,7 +168,8 @@ pytest tests/ingestion/test_calendar_collector.py -v
 
 Detailed guides for each data source:
 - [FRED](fred.md) - Federal Reserve Economic Data
-- [ECB](ecb.md) - European Central Bank
+- [ECB Rates](ecb_rates.md) - European Central Bank exchange rates & policy rates
+- [ECB News](ecb_news.md) - European Central Bank press releases & speeches
 - [MT5](mt5.md) - MetaTrader 5 (FX prices)
 - [Calendar](calendar.md) - Economic calendar events
 

@@ -29,6 +29,7 @@ dependencies = [
     "beautifulsoup4",
     "feedparser",
     "fredapi",
+    "feedparser",
     "sqlalchemy",
     "pytz",
     "pyarrow",
