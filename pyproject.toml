@@ -26,6 +26,7 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "requests",
     "beautifulsoup4",
+    "feedparser",
     "fredapi",
     "sqlalchemy",
     "pytz",
