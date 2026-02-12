@@ -168,7 +168,8 @@ pytest tests/ingestion/test_calendar_collector.py -v
 
 Detailed guides for each data source:
 - [FRED](fred.md) - Federal Reserve Economic Data
-- [ECB](ecb.md) - European Central Bank
+- [ECB Rates](ecb_rates.md) - European Central Bank exchange rates & policy rates
+- [ECB News](ecb_news.md) - European Central Bank press releases & speeches
 - [MT5](mt5.md) - MetaTrader 5 (FX prices)
 - [Calendar](calendar.md) - Economic calendar events
 

@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.ingestion.collectors.ecb_collector import ECBCollector, ECBNewsDocument
+from src.ingestion.collectors.ecb_news_collector import ECBNewsCollector, ECBNewsDocument
 
 # ---------------------------------------------------------------------------
 # Sample Data
@@ -99,8 +99,8 @@ def tmp_output_dir(tmp_path):
 
 @pytest.fixture
 def collector(tmp_output_dir):
-    """ECBCollector instance with temporary output."""
-    return ECBCollector(output_dir=tmp_output_dir)
+    """ECBNewsCollector instance with temporary output."""
+    return ECBNewsCollector(output_dir=tmp_output_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -152,11 +152,11 @@ class TestECBNewsDocument:
 # ---------------------------------------------------------------------------
 
 
-class TestECBCollectorInit:
-    """Test ECBCollector initialization."""
+class TestECBNewsCollectorInit:
+    """Test ECBNewsCollector initialization."""
 
     def test_init_custom_output_dir(self, tmp_output_dir):
-        collector = ECBCollector(output_dir=tmp_output_dir)
+        collector = ECBNewsCollector(output_dir=tmp_output_dir)
         assert collector.SOURCE_NAME == "ecb"
         assert collector.output_dir == tmp_output_dir
         assert collector.output_dir.exists()
@@ -319,7 +319,7 @@ class TestContentFetching:
 class TestDocumentExtraction:
     """Test _extract_document method."""
 
-    @patch.object(ECBCollector, "_fetch_full_content")
+    @patch.object(ECBNewsCollector, "_fetch_full_content")
     def test_extract_speech_document(self, mock_fetch, collector):
         mock_fetch.return_value = "Full speech content here"
 
@@ -336,7 +336,7 @@ class TestDocumentExtraction:
         assert "timestamp_collected" in doc
         assert doc["timestamp_published"] == pub_date.isoformat()
 
-    @patch.object(ECBCollector, "_fetch_full_content")
+    @patch.object(ECBNewsCollector, "_fetch_full_content")
     def test_extract_policy_document(self, mock_fetch, collector):
         mock_fetch.return_value = "Policy decision content"
 
@@ -364,7 +364,7 @@ class TestCollectMethod:
     """Test collect method (pure, no I/O)."""
 
     @patch("src.ingestion.collectors.ecb_collector.feedparser.parse")
-    @patch.object(ECBCollector, "_fetch_full_content")
+    @patch.object(ECBNewsCollector, "_fetch_full_content")
     def test_collect_success(self, mock_fetch_content, mock_parse, collector):
         # Setup mocks
         mock_feed = make_mock_feed(
@@ -534,7 +534,7 @@ class TestExportAll:
         for path in paths.values():
             assert path.exists()
 
-    @patch.object(ECBCollector, "collect")
+    @patch.object(ECBNewsCollector, "collect")
     def test_export_all_without_data_collects(self, mock_collect, collector, tmp_output_dir):
         mock_collect.return_value = {
             "speeches": [{"source": "ecb", "title": "Speech 1"}],
@@ -562,12 +562,12 @@ class TestIntegration:
     """Integration test for full workflow."""
 
     @patch("src.ingestion.collectors.ecb_collector.feedparser.parse")
-    @patch.object(ECBCollector, "_fetch_full_content")
+    @patch.object(ECBNewsCollector, "_fetch_full_content")
     def test_full_collection_and_export_workflow(
         self, mock_fetch_content, mock_parse, tmp_output_dir
     ):
         # Setup
-        collector = ECBCollector(output_dir=tmp_output_dir)
+        collector = ECBNewsCollector(output_dir=tmp_output_dir)
 
         mock_feed = make_mock_feed(
             [

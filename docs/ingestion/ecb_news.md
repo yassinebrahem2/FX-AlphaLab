@@ -2,7 +2,7 @@
 
 European Central Bank press releases, speeches, monetary policy statements, and economic bulletins collection for sentiment analysis.
 
-> **Note**: This documentation covers ECB **news/text data**. For ECB **exchange rates and policy rates** (numeric data), see [ecb.md](ecb.md).
+> **Note**: This documentation covers ECB **news/text data**. For ECB **exchange rates and policy rates** (numeric data), see [ecb_rates.md](ecb_rates.md).
 
 ## Overview
 
@@ -95,14 +95,14 @@ Options:
 
 ```python
 from datetime import datetime, timedelta, timezone
-from src.ingestion.collectors.ecb_collector import ECBCollector
+from src.ingestion.collectors.ecb_news_collector import ECBNewsCollector
 
 # Initialize collector (uses Config defaults: data/raw/news/ecb)
-collector = ECBCollector()
+collector = ECBNewsCollector()
 
 # Or specify custom output directory
 # from pathlib import Path
-# collector = ECBCollector(output_dir=Path("custom/path"))
+# collector = ECBNewsCollector(output_dir=Path("custom/path"))
 
 # Collect last 3 months
 data = collector.collect(

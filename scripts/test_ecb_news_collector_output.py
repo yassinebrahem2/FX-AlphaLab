@@ -23,7 +23,7 @@ Usage:
 
 Example:
     $ python scripts/collect_ecb_news_data.py --start 2026-01-01
-    [INFO] ECBCollector initialized
+    [INFO] ECBNewsCollector initialized
     [INFO] Health check: PASSED
     [INFO] Collecting ECB news from 2026-01-01 to 2026-02-11
     [INFO] RSS feed retrieved: 147 total entries
@@ -37,7 +37,7 @@ import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 
-from src.ingestion.collectors.ecb_collector import ECBCollector
+from src.ingestion.collectors.ecb_news_collector import ECBNewsCollector
 from src.shared.utils import setup_logger
 
 
@@ -105,8 +105,8 @@ def main() -> int:
 
     try:
         # Initialize collector (uses Config defaults for paths)
-        collector = ECBCollector()
-        logger.info("ECBCollector initialized (Bronze layer: %s)", collector.output_dir)
+        collector = ECBNewsCollector()
+        logger.info("ECBNewsCollector initialized (Bronze layer: %s)", collector.output_dir)
 
         # Health check
         if not collector.health_check():
