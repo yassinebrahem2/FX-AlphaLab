@@ -19,6 +19,14 @@ ENV/
 # Environment
 .env
 
+# Credentials (Google Cloud, API keys, etc.)
+credentials/
+*.json
+!pyproject.toml
+!*.ipynb
+!package.json
+!tsconfig.json
+
 # Data files
 *.csv
 *.parquet
