@@ -24,7 +24,6 @@ Each line schema:
 
 from __future__ import annotations
 
-import feedparser
 import json
 import time
 from datetime import datetime, timezone
@@ -37,11 +36,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 
-from src.ingestion.collectors.base_collector import BaseCollector
 from src.shared.config import Config
 
+from src.ingestion.collectors.document_collector import DocumentCollector
 
-class BoECollector(BaseCollector):
+class BoECollector(DocumentCollector):
     SOURCE_NAME = "boe"
 
     RSS_URLS = [
@@ -61,11 +60,12 @@ class BoECollector(BaseCollector):
         output_dir: Path | None = None,
         log_file: Path | None = None,
     ) -> None:
+        log_path = log_file or (Config.LOGS_DIR / "collectors" / "boe_collector.log")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         super().__init__(
             output_dir=output_dir or Config.DATA_DIR / "raw" / "news" / "boe",
-            log_file=log_file or Config.LOGS_DIR / "collectors" / "boe_collector.log",
+            log_file=log_path,
         )
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         self._session = self._create_session()
         self.logger.info("BoECollector initialized, output_dir=%s", self.output_dir)
 
@@ -73,10 +73,13 @@ class BoECollector(BaseCollector):
 
 
     def _to_utc_iso(self, published: str | None, published_parsed: Any | None) -> str | None:
+
         """
         Convert RSS published date to UTC ISO-8601 string.
         Uses feedparser's published_parsed (time.struct_time) when available.
         """
+        from email.utils import parsedate_to_datetime
+
         if published_parsed:
             dt = datetime(
                 published_parsed.tm_year,
@@ -104,28 +107,24 @@ class BoECollector(BaseCollector):
                 return None
         return None
 
-    def _classify_document_type(self, url: str, title: str | None = None) -> str:
+    def _classify_document_type(self, url: str, title: str | None = None) -> tuple[str, str]:
         u = (url or "").lower()
         t = (title or "").lower()
 
-        # Speeches
+    # Speeches
         if "/speech/" in u or "/speeches/" in u:
-            return "speeches"
+            return "speeches", "boe_speech"
 
-        # Monetary Policy Summary
+      # Monetary Policy Summary
         if "monetary-policy-summary" in u or "monetary-policy-summary-and-minutes" in u:
-            return "summaries"
+           return "summaries", "monetary_policy_summary"
 
-        # MPC
+    # MPC
         if "/monetary-policy-committee/" in u or "/mpc/" in u or t.startswith("mpc"):
-            return "mpc"
+            return "mpc", "mpc_statement"
 
-        # Statements
-        if "/statement" in u or "statement" in t:
-            return "statements"
-
-        # Default
-        return "press_releases"
+    # Default
+        return "press_releases", "press_release" 
 
     def _fetch_article_text(self, url: str) -> str:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -139,8 +138,9 @@ class BoECollector(BaseCollector):
 
 
         resp.encoding = resp.apparent_encoding
-        
-        return resp.text
+        soup = BeautifulSoup(resp.text, "html.parser")
+        main = soup.find("main") or soup
+        return main.get_text("\n", strip=True)
 
 
 
@@ -216,10 +216,10 @@ class BoECollector(BaseCollector):
                 if published_dt < start_date or published_dt > end_date:
                     continue
 
-                document_type = self._classify_document_type(url, title)
+                bucket, doc_type = self._classify_document_type(url, title)
 
                 speaker = None
-                if document_type == "speeches":
+                if bucket == "speeches":
                     try:
                         speaker = self._extract_speaker_from_page(url)
                     except Exception:
@@ -243,7 +243,7 @@ class BoECollector(BaseCollector):
                     "url": url,
                     "title": title,
                     "content": content,
-                    "document_type": document_type,
+                    "document_type": doc_type,
                     "speaker": speaker,
                     "metadata": {
                         "rss_feed": feed_url,
@@ -255,7 +255,7 @@ class BoECollector(BaseCollector):
                     },
                 }
 
-                results[document_type].append(record)
+                results[bucket].append(record)
                 seen_urls.add(url)
                 collected_count += 1
                 time.sleep(self.REQUEST_DELAY)
@@ -264,46 +264,7 @@ class BoECollector(BaseCollector):
         self.logger.info("Collected %d BoE documents", collected_count)
         return dict(results)
 
-    def export_jsonl(
-       self,
-       data: list[dict],
-       document_type: str,
-       collection_date: datetime | None = None,
-    ) -> Path:
-        """
-        Export one document type as JSONL into Bronze layer.
-        """
-        if collection_date is None:
-            collection_date = datetime.now(timezone.utc)
 
-        day_str = collection_date.strftime("%Y%m%d")
-        out_path = self.output_dir / f"{document_type}_{day_str}.jsonl"
-        self._write_jsonl(out_path, data)
-        return out_path
-
-    def export_all_to_jsonl(
-        self,
-        data: dict[str, list[dict]] | None = None,
-        start_date: datetime | None = None,
-        end_date: datetime | None = None,
-    ) -> dict[str, Path]:
-        """
-         Collect (if needed) and export each document type to JSONL separately.
-        """
-        if data is None:
-            data = self.collect(start_date=start_date, end_date=end_date)
-
-        paths: dict[str, Path] = {}
-        collection_date = datetime.now(timezone.utc)
-
-        for doc_type, records in data.items():
-            if not records:
-                continue
-            paths[doc_type] = self.export_jsonl(records, doc_type, collection_date=collection_date)
-
-        return paths
-
-     
 
 
     def _extract_speaker_from_page(self, url: str) -> str | None:
@@ -399,19 +360,52 @@ class BoECollector(BaseCollector):
 
     def _create_session(self) -> requests.Session:
         session = requests.Session()
+
         retry = Retry(
             total=self.MAX_RETRIES,
+            connect=self.MAX_RETRIES,
+            read=self.MAX_RETRIES,
+            status=self.MAX_RETRIES,
+
+         # Exponential backoff: 0, 2, 4, 8... seconds-ish (depends on urllib3)
             backoff_factor=self.RETRY_BACKOFF,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET"],
-        )
+
+        # Retry on these HTTP status codes
+            status_forcelist=(429, 500, 502, 503, 504),
+
+        # Only retry GETs
+            allowed_methods=frozenset(["GET"]),
+
+        # Respect Retry-After header (important for 429 rate limit)
+            respect_retry_after_header=True,
+
+        # Retry even if status code is returned (not just exceptions)
+            raise_on_status=False,
+    )
+
         adapter = HTTPAdapter(max_retries=retry)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
+
         return session
+
 
     def _write_jsonl(self, path: Path, records: list[dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as f:
             for obj in records:
                 f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+if __name__ == "__main__":
+    from datetime import datetime, timezone
+
+    collector = BoECollector()
+    data = collector.collect(
+        start_date=datetime(2026, 2, 9, tzinfo=timezone.utc),
+        end_date=datetime(2026, 2, 11, tzinfo=timezone.utc),
+    )
+    print(data.keys())
+    paths = collector.export_all(data=data)
+    print(paths)
+
+

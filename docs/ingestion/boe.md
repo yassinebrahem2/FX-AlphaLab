@@ -1,56 +1,73 @@
 # Bank of England (BoE) Collector
 
-This collector ingests **Bank of England** (BoE) content required for **GBP-related sentiment analysis**.
-
-It fetches RSS feeds for:
-- Press releases
-- MPC statements (Monetary Policy Committee)
-- Speeches
-- Monetary policy summaries
-
-Output is written to the **Bronze layer** in **JSONL** format (1 JSON object per line).
-
----
-
 ## Overview
 
-**Collector**: `BoECollector`  
-**Source**: Bank of England (official website + RSS)  
-**Data Type**: News + monetary policy communications  
-**Update Frequency**: Event-based (as BoE publishes new items)  
-**Output**: Bronze JSONL  
-**Storage**: `data/raw/news/boe/`
+The **BoECollector** ingests official communications from the **Bank of
+England (BoE)** to support GBP-related sentiment analysis and
+macroeconomic signal processing.
 
----
+The collector retrieves content from official RSS feeds and linked BoE
+webpages, normalizes timestamps to UTC, classifies document types, and
+stores raw immutable records in the **Bronze layer** as JSONL files.
 
-## Setup
+------------------------------------------------------------------------
 
-Install dependencies (already in project requirements):
+## Key Characteristics
 
-```bash
-pip install feedparser beautifulsoup4 requests
+-   **Source**: Bank of England (official RSS feeds + website pages)
+-   **Layer**: Bronze (immutable raw storage)
+-   **Output Format**: JSONL (1 JSON object per line)
+-   **Storage Path**: `data/raw/news/boe/`
+-   **Collection Mode**: Date-range based
+-   **Default Lookback**: 90 days (if not specified)
+-   **Timezone Normalization**: UTC ISO-8601
+
+------------------------------------------------------------------------
+
+## Supported RSS Feeds
+
+The collector pulls from:
+
+-   https://www.bankofengland.co.uk/RSS/News
+-   https://www.bankofengland.co.uk/rss/news
+-   https://www.bankofengland.co.uk/rss/speeches
+-   https://www.bankofengland.co.uk/rss/prudential-regulation-publications
+
+------------------------------------------------------------------------
+
+## Document Classification
+
+Each RSS entry is classified using URL patterns and title heuristics.
+
+  -----------------------------------------------------------------------------
+  Bucket Key          document_type Value                   Description
+  ------------------- ------------------------------------- -------------------
+  `press_releases`    `press_release`                       General BoE news
+
+  `speeches`          `boe_speech`                          Official speeches
+
+  `summaries`         `monetary_policy_summary`             Monetary policy
+                                                            summaries/minutes
+
+  `mpc`               `mpc_statement`                       MPC-related
+                                                            statements
+  -----------------------------------------------------------------------------
+
+Returned structure from `collect()`:
+
+``` python
+dict[str, list[dict]]
 ```
 
----
+Each key represents a bucket of documents.
 
-## Health Check
-
-```bash
-python -c "from src.ingestion.collectors.boe_collector import BoECollector; print(BoECollector().health_check())"
-```
-
-Expected output:
-```
-True
-```
-
----
+------------------------------------------------------------------------
 
 ## Usage
 
-### Programmatic Usage
+### Programmatic Collection
 
-```python
+``` python
 from datetime import datetime, timezone
 from src.ingestion.collectors.boe_collector import BoECollector
 
@@ -61,94 +78,64 @@ data = collector.collect(
     end_date=datetime(2026, 2, 11, tzinfo=timezone.utc),
 )
 
-# data is a dict[str, list[dict]]
 print(data.keys())
 ```
 
-### Export JSONL (Bronze)
+### Export to Bronze JSONL
 
-```python
-# Export a single document type
+``` python
+# Export a single bucket
 collector.export_jsonl(data["press_releases"], "press_releases")
 
-# Export everything
-paths = collector.export_all_to_jsonl(data)
+# Export all buckets
+paths = collector.export_all(data)
 print(paths)
 ```
 
----
+------------------------------------------------------------------------
 
-## Default Date Range
+## Default Date Behavior
 
-If `start_date` / `end_date` are not provided:
+If no dates are provided:
 
-- `end_date = now (UTC)`
-- `start_date = end_date - 90 days`
+-   `end_date = now (UTC)`
+-   `start_date = end_date - 90 days`
 
-This satisfies the requirement:
-> “3 months minimum for Week 6”
+This ensures a minimum 3‑month lookback window.
 
----
+------------------------------------------------------------------------
 
-## Document Types
+## Bronze Output Structure
 
-The collector categorizes items into the following keys:
+### File Naming Convention
 
-| Key | Description |
-|-----|------------|
-| `press_releases` | BoE news / press releases |
-| `statements` | MPC statements |
-| `speeches` | Speeches (includes speaker extraction) |
-| `summaries` | Monetary policy summaries / minutes |
-
-The value stored in each record uses the same value for:
-- the dict key
-- `document_type`
-
----
-
-## Bronze JSONL Output
-
-### Output Directory
-
-```
-data/raw/news/boe/
-```
-
-### Filenames
-
-Each export produces:
-
-```
-{document_type}_{YYYYMMDD}.jsonl
-```
+    {bucket}_{YYYYMMDD}.jsonl
 
 Example:
-```
-press_releases_20260211.jsonl
-speeches_20260211.jsonl
-statements_20260211.jsonl
-summaries_20260211.jsonl
-```
 
----
+    press_releases_20260211.jsonl
+    speeches_20260211.jsonl
+    mpc_20260211.jsonl
+    summaries_20260211.jsonl
 
-## Output Schema (Bronze Contract)
+------------------------------------------------------------------------
 
-Each JSONL line is one record with this schema:
+## Bronze Record Schema
 
-```json
+Each line in the JSONL file follows this schema:
+
+``` json
 {
   "source": "BoE",
   "timestamp_collected": "2026-02-11T20:47:18.893696+00:00",
   "timestamp_published": "2026-02-10T16:30:00+00:00",
   "url": "https://www.bankofengland.co.uk/speech/...",
-  "title": "Measure, Model, Tackle, Tailor...",
-  "content": "<RAW_HTML_OR_RAW_TEXT>",
-  "document_type": "speeches",
-  "speaker": "James Talbot",
+  "title": "Example Title",
+  "content": "Full extracted page text",
+  "document_type": "boe_speech",
+  "speaker": "Jane Doe",
   "metadata": {
-    "rss_feed": "https://www.bankofengland.co.uk/rss/speeches",
+    "rss_feed": "...",
     "rss_id": "...",
     "rss_summary": "...",
     "rss_tags": ["..."],
@@ -158,76 +145,114 @@ Each JSONL line is one record with this schema:
 }
 ```
 
-### Notes
+### Important Notes
 
-- `timestamp_published` is normalized to **UTC ISO-8601**
-- `speaker` is only populated for `speeches` (otherwise `null`)
-- `content` is stored as **raw HTML** (Bronze principle: immutable raw)
+-   `timestamp_published` is normalized to **UTC ISO-8601**
+-   `speaker` is populated only for speech documents
+-   `content` contains extracted page text (fallback to RSS summary if
+    fetch fails)
+-   All fetch errors are preserved in metadata
+-   Bronze data remains immutable (no transformation applied)
 
----
+------------------------------------------------------------------------
+
+## Speaker Extraction (Speeches Only)
+
+For speech URLs, the collector attempts to extract the speaker using:
+
+1.  `<meta name="author">`
+2.  Text near `<h1>` header (e.g., "Speech by NAME")
+3.  Scanning `<main>` content for patterns
+
+If extraction fails, `speaker = null`.
+
+------------------------------------------------------------------------
+
+## Error Handling & Resilience
+
+### Retry Strategy
+
+-   HTTP retries enabled
+-   Exponential backoff
+-   Retries on: 429, 500, 502, 503, 504
+-   Respect `Retry-After` headers
+-   Only retries `GET` requests
+
+### Fallback Behavior
+
+If article page fetch fails after retries:
+
+-   `content` falls back to RSS summary (if available)
+-   `metadata.fetch_error` stores the error message
+-   `metadata.fetch_error_type` stores the exception class name
+
+Collection continues without crashing.
+
+------------------------------------------------------------------------
 
 ## Rate Limiting
 
-- A politeness delay is applied between entries:
-  - `REQUEST_DELAY` seconds (default: 1s)
+A politeness delay is applied between processed entries:
 
----
+    REQUEST_DELAY = 1.0 seconds
 
-## Retry / Backoff
+Ensures respectful interaction with BoE infrastructure.
 
-HTTP/network errors are handled using:
-- retries
-- exponential backoff
+------------------------------------------------------------------------
 
-This prevents failures from killing the full collection run.
+## Health Check
 
-If an article fetch fails even after retries:
-- the collector stores `content = RSS summary` (fallback)
-- the error is preserved inside metadata:
-  - `metadata.fetch_error`
-  - `metadata.fetch_error_type`
+Validate RSS connectivity:
 
----
-
-## Speaker Extraction (Speeches)
-
-For speech URLs, the collector attempts to extract a speaker name from the page.
-
-Example output:
-
-```json
-{
-  "document_type": "speeches",
-  "speaker": "James Talbot"
-}
+``` bash
+python -c "from src.ingestion.collectors.boe_collector import BoECollector; print(BoECollector().health_check())"
 ```
 
----
+Returns `True` if at least one RSS feed is reachable and contains
+entries.
+
+------------------------------------------------------------------------
 
 ## Testing
 
 Run unit tests:
 
-```bash
+``` bash
 pytest tests/ingestion/test_boe_collector.py -v
 ```
 
-Tests cover:
-- RSS parsing
-- timestamp normalization
-- document type classification
-- date filtering (inclusive bounds)
-- rate limiting (sleep called)
-- error handling + fallback behavior
-- JSONL export methods (tmp_path)
+Test coverage includes:
+
+-   Timestamp normalization
+-   Document classification
+-   Date filtering (inclusive bounds)
+-   Rate limiting behavior
+-   Error handling and fallback logic
+-   JSONL export functionality
+-   Health check behavior
+-   Speaker extraction logic
 
 All tests use mocked HTTP responses (no live BoE calls).
 
----
+------------------------------------------------------------------------
 
-## Limitations / Notes
+## Architecture Notes
 
-- BoE RSS feeds occasionally return transient `5xx` errors.
-  Retry logic prevents most failures.
-- Some pages may contain heavy HTML; Bronze stores raw HTML.
-  Transformation/cleaning belongs in Silver preprocessors.
+-   Uses `requests.Session` with configured retry adapter
+-   Parses RSS via `feedparser`
+-   Extracts page content using `BeautifulSoup`
+-   Designed to keep Bronze layer immutable
+-   Transformation/cleaning belongs to downstream Silver layer
+
+------------------------------------------------------------------------
+
+## Conclusion
+
+The BoECollector provides a robust, resilient, and production-ready
+ingestion mechanism for Bank of England communications, ensuring:
+
+-   Deterministic Bronze contracts
+-   Safe error handling
+-   Proper classification
+-   Clean UTC timestamp normalization
+-   Reliable export workflows

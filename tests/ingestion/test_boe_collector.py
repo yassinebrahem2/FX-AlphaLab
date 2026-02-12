@@ -26,15 +26,23 @@ def test_timestamp_normalization():
 def test_document_type_classification_speech():
     collector = BoECollector()
     url = "https://www.bankofengland.co.uk/speech/2026/february/test"
-    doc_type = collector._classify_document_type(url, "Test Speech")
-    assert doc_type == "speeches"
+
+    bucket, doc_type = collector._classify_document_type(url, "Test Speech")
+
+    assert bucket == "speeches"
+    assert doc_type == "boe_speech"
+
 
 
 def test_document_type_classification_mps():
     collector = BoECollector()
     url = "https://www.bankofengland.co.uk/monetary-policy-summary-and-minutes/2026/february"
-    doc_type = collector._classify_document_type(url, "Monetary Policy Summary")
-    assert doc_type == "summaries"
+
+    bucket, doc_type = collector._classify_document_type(url, "Monetary Policy Summary")
+
+    assert bucket == "summaries"
+    assert doc_type == "monetary_policy_summary"
+
 
 
 def test_health_check_returns_bool():
@@ -295,7 +303,7 @@ def test_export_jsonl_writes_file(tmp_path):
         "url": "http://test",
         "title": "Test",
         "content": "Hello",
-        "document_type": "press_releases",
+        "document_type": "press_release",
         "speaker": None,
         "metadata": {},
     }]
@@ -318,7 +326,7 @@ def test_export_all_to_jsonl_writes_multiple_files(tmp_path):
             "url": "x",
             "title": "A",
             "content": "x",
-            "document_type": "press_releases",
+            "document_type": "press_release",
             "speaker": None,
             "metadata": {},
         }],
@@ -329,13 +337,13 @@ def test_export_all_to_jsonl_writes_multiple_files(tmp_path):
             "url": "x",
             "title": "B",
             "content": "x",
-            "document_type": "speeches",
+            "document_type": "boe_speech",
             "speaker": None,
             "metadata": {},
         }],
     }
 
-    paths = collector.export_all_to_jsonl(data=fake)
+    paths = collector.export_all(data=fake)
 
     assert "press_releases" in paths
     assert "speeches" in paths
