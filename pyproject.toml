@@ -25,6 +25,7 @@ dependencies = [
     "python-dotenv",
     "requests",
     "beautifulsoup4",
+    "feedparser",
     "fredapi",
     "sqlalchemy",
     "psycopg2-binary",
