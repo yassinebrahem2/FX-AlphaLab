@@ -3,8 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["shared*", "data*", "agents*", "backend*"]
+where = ["src"]
 exclude = ["tests*", "docs*", "notebooks*", "frontend*", "datasets*"]
 
 [tool.setuptools]
@@ -30,6 +29,7 @@ dependencies = [
     "fredapi",
     "sqlalchemy",
     "pytz",
+    "pyarrow",
 ]
 
 
@@ -59,7 +59,7 @@ mt5 = [
 
 [tool.black]
 line-length = 100
-target-version = ['py311']
+target-version = ['py310']
 exclude = '''
 /(
     \.git
@@ -90,7 +90,7 @@ python_functions = "test_*"
 addopts = "-v --cov=. --cov-report=term-missing"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

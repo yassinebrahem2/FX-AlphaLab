@@ -27,7 +27,7 @@ Port	5432
 
 Run the schema file inside the Docker container:
 
-docker exec -i fx_alphalab_db psql -U postgres -d fx_alphalab < data/storage/schema.sql
+docker exec -i fx_alphalab_db psql -U postgres -d fx_alphalab < src/shared/db/schema.sql
 
 
 Verify tables were created:
@@ -56,17 +56,17 @@ Exit with:
 
 All helper functions are located in:
 
-data/storage/database.py
+src/shared/db/storage.py
 
 Connect to Database
-from data.storage.database import get_connection
+from src.shared.db.storage import get_connection
 
 conn = get_connection()
 print("Connected:", conn is not None)
 conn.close()
 
 Insert FX Prices
-from data.storage.database import insert_fx_prices
+from src.shared.db.storage import insert_fx_prices
 
 insert_fx_prices([
     {
@@ -83,7 +83,7 @@ insert_fx_prices([
 ])
 
 Export Table to CSV (For Week 6 Deliverable)
-from data.storage.database import export_to_csv
+from src.shared.db.storage import export_to_csv
 
 export_to_csv("fx_prices", "fx_prices_export.csv")
 
@@ -94,7 +94,7 @@ This creates a CSV file containing all rows from the table.
 
 Make sure the database container is running, then execute:
 
-.venv/Scripts/python -m pytest tests/test_database.py -v
+.venv/Scripts/python -m pytest tests/shared/db/test_storage.py -v
 
 
 All tests should pass.

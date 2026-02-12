@@ -48,15 +48,10 @@ jobs:
 
       - name: Type check with mypy
         run: |
-          mypy src/ || true
+          mypy src/shared/ src/agents/ src/ingestion/ src/backend/ || true
+        continue-on-error: true
 
       - name: Run tests with pytest
-        env:
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-          DB_NAME: fx_alphalab
         run: |
           pytest tests/ --cov=. --cov-report=xml --cov-report=term
 
