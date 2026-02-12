@@ -117,7 +117,7 @@ class GDELTCollector(DocumentCollector):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> list[dict]:
+    ) -> dict[str, list[dict]]:
         if not start_date or not end_date:
             raise ValueError("start_date and end_date must be provided.")
 
@@ -250,7 +250,7 @@ class GDELTCollector(DocumentCollector):
             )
 
             # Optional observability
-            tier_counts = {}
+            tier_counts: dict[int, int] = {}
             for d in documents:
                 tier = d["metadata"]["credibility_tier"]
                 tier_counts[tier] = tier_counts.get(tier, 0) + 1
@@ -284,17 +284,23 @@ class GDELTCollector(DocumentCollector):
     # -------------------------------------------------------
     def export_jsonl(
         self,
-        data: list[dict],
+        documents: list[dict],
+        document_type: str = "aggregated",
         collection_date: datetime | None = None,
     ) -> Path:
         """
         Export aggregated GDELT documents to JSONL.
 
+        Args:
+            documents: List of document dictionaries to export.
+            document_type: Document type (default: "aggregated", parameter required for supertype compatibility).
+            collection_date: Date for filename (default: current date).
+
         File naming:
             aggregated_YYYYMMDD.jsonl
         """
 
-        if not data:
+        if not documents:
             raise ValueError("Cannot export empty data list.")
 
         date_str = (collection_date or datetime.utcnow()).strftime("%Y%m%d")
@@ -302,11 +308,11 @@ class GDELTCollector(DocumentCollector):
         path = self.output_dir / f"aggregated_{date_str}.jsonl"
 
         with open(path, "w", encoding="utf-8") as f:
-            for record in data:
+            for record in documents:
                 json.dump(record, f, ensure_ascii=False)
                 f.write("\n")
 
-        self.logger.info("Exported %d records to %s", len(data), path)
+        self.logger.info("Exported %d records to %s", len(documents), path)
 
         return path
 
