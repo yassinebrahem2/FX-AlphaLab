@@ -1,10 +1,9 @@
-import pytest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
-from datetime import datetime
 
+import pytest
 from google.api_core.exceptions import GoogleAPIError
-
 from ingestion.collectors.gdelt_collector import GDELTCollector
 
 
@@ -19,7 +18,6 @@ def test_collector_initialization(tmp_path):
     assert collector.output_dir == expected_path
     assert collector.output_dir.exists()
     assert collector.output_dir.name == "gdelt"
-
 
 
 # -------------------------------------------------------
@@ -153,15 +151,16 @@ def test_prioritizes_by_credibility(tmp_path):
     collector.client = mock_client
 
     result = collector.collect(
-    start_date=datetime(2024, 1, 1),
-    end_date=datetime(2024, 1, 1),
-)
+        start_date=datetime(2024, 1, 1),
+        end_date=datetime(2024, 1, 1),
+    )
 
     docs = result["aggregated"]
 
     tiers = [d["metadata"]["credibility_tier"] for d in docs]
 
     assert tiers == sorted(tiers)
+
 
 # -------------------------------------------------------
 # Export JSONL
@@ -178,7 +177,7 @@ def test_export_jsonl_success(tmp_path):
 
     assert path.exists()
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.readlines()
 
     assert len(lines) == 2
@@ -189,6 +188,7 @@ def test_export_jsonl_empty_raises(tmp_path):
 
     with pytest.raises(ValueError):
         collector.export_jsonl([])
+
 
 def test_export_to_jsonl_with_data(tmp_path):
     collector = GDELTCollector(output_dir=tmp_path)
@@ -202,10 +202,12 @@ def test_export_to_jsonl_with_data(tmp_path):
 
     assert path.exists()
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.readlines()
 
     assert len(lines) == 2
+
+
 def test_export_to_jsonl_calls_collect(tmp_path):
     collector = GDELTCollector(output_dir=tmp_path)
 
@@ -213,9 +215,7 @@ def test_export_to_jsonl_calls_collect(tmp_path):
         {"url": "x", "metadata": {"credibility_tier": 1}},
     ]
 
-    collector.collect = MagicMock(
-    return_value={"aggregated": mock_data}
-)
+    collector.collect = MagicMock(return_value={"aggregated": mock_data})
 
     path = collector.export_to_jsonl(
         start_date=datetime(2024, 1, 1),
@@ -226,9 +226,7 @@ def test_export_to_jsonl_calls_collect(tmp_path):
 
     assert path.exists()
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.readlines()
 
     assert len(lines) == 1
-
-

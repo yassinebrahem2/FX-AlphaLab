@@ -1,11 +1,12 @@
+import hashlib
+import json
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-import hashlib
-import time
-import json
-from google.cloud.bigquery.job import QueryJob
-from google.cloud import bigquery
+
 from google.api_core.exceptions import GoogleAPIError
+from google.cloud import bigquery
+from google.cloud.bigquery.job import QueryJob
 
 from src.ingestion.collectors.document_collector import DocumentCollector
 
@@ -19,21 +20,20 @@ class GDELTCollector(DocumentCollector):
     TIER_2 = {"wsj.com", "cnbc.com"}
 
     def __init__(
-       self,
-       output_dir: Path,
+        self,
+        output_dir: Path,
         log_file: Path | None = None,
         project_id: str | None = None,
     ) -> None:
-       # Hard-enforce required path
-       base_path = Path("data/raw/news/gdelt")
+        # Hard-enforce required path
+        base_path = Path("data/raw/news/gdelt")
 
-       super().__init__(output_dir=base_path, log_file=log_file)
+        super().__init__(output_dir=base_path, log_file=log_file)
 
-       self.project_id = project_id
-       self.client: bigquery.Client | None = None
+        self.project_id = project_id
+        self.client: bigquery.Client | None = None
 
-       self.output_dir.mkdir(parents=True, exist_ok=True)
-
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
     # -------------------------------------------------------
     # Internal Lazy Client Getter (supports test injection)
@@ -118,7 +118,6 @@ class GDELTCollector(DocumentCollector):
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> list[dict]:
-
         if not start_date or not end_date:
             raise ValueError("start_date and end_date must be provided.")
 
@@ -169,25 +168,23 @@ class GDELTCollector(DocumentCollector):
 
                 dry_job = self._run_query_with_retry(query, dry_cfg)
 
-                #Handle mocked jobs safely (tests may not define total_bytes_processed)
+                # Handle mocked jobs safely (tests may not define total_bytes_processed)
                 total_bytes = getattr(dry_job, "total_bytes_processed", 0)
 
                 # If it's a MagicMock or non-numeric, treat as 0
-                if not isinstance(total_bytes, (int, float)):
-                   total_bytes = 0
+                if not isinstance(total_bytes, int | float):
+                    total_bytes = 0
 
                 gb_scanned = total_bytes / (1024**3)
 
                 self.logger.info(
-                "Dry run for %s: %.4f GB scanned",
-                start_str,
-                gb_scanned,
+                    "Dry run for %s: %.4f GB scanned",
+                    start_str,
+                    gb_scanned,
                 )
 
                 if gb_scanned > 5:
-                   raise RuntimeError(
-                     f"Query too expensive ({gb_scanned:.2f} GB)."
-    )                
+                    raise RuntimeError(f"Query too expensive ({gb_scanned:.2f} GB).")
 
                 # -------------------------
                 # Execute real query
@@ -196,24 +193,22 @@ class GDELTCollector(DocumentCollector):
                 df = job.result().to_dataframe(create_bqstorage_client=False)
 
                 for row in df.to_dict("records"):
-
                     raw_date = row.get("DATE")
 
                     timestamp_published = None
                     if raw_date:
                         try:
-                        # GDELT DATE format is usually YYYYMMDDHHMMSS
-                              dt = datetime.strptime(str(raw_date), "%Y%m%d%H%M%S")
-                              timestamp_published = dt.isoformat() + "Z"
+                            # GDELT DATE format is usually YYYYMMDDHHMMSS
+                            dt = datetime.strptime(str(raw_date), "%Y%m%d%H%M%S")
+                            timestamp_published = dt.isoformat() + "Z"
                         except Exception:
-                        # Fallback: store as string
-                              timestamp_published = str(raw_date)
-
+                            # Fallback: store as string
+                            timestamp_published = str(raw_date)
 
                     url = row.get("DocumentIdentifier")
                     if not url:
                         continue
-                
+
                     url_hash = self._hash_url(url)
                     if url_hash in seen_hashes:
                         continue
@@ -233,9 +228,7 @@ class GDELTCollector(DocumentCollector):
                             "tone": row.get("V2Tone"),
                             "themes": self._parse_field(row.get("Themes")),
                             "locations": self._parse_field(row.get("Locations")),
-                            "organizations": self._parse_field(
-                                row.get("Organizations")
-                            ),
+                            "organizations": self._parse_field(row.get("Organizations")),
                             "metadata": {
                                 "credibility_tier": tier,
                                 "url_hash": url_hash,
@@ -285,8 +278,8 @@ class GDELTCollector(DocumentCollector):
             return True
         except GoogleAPIError:
             return False
-        
-# -------------------------------------------------------
+
+    # -------------------------------------------------------
     # Export JSONL (GDELT-specific override)
     # -------------------------------------------------------
     def export_jsonl(
@@ -308,7 +301,6 @@ class GDELTCollector(DocumentCollector):
 
         path = self.output_dir / f"aggregated_{date_str}.jsonl"
 
-
         with open(path, "w", encoding="utf-8") as f:
             for record in data:
                 json.dump(record, f, ensure_ascii=False)
@@ -317,7 +309,6 @@ class GDELTCollector(DocumentCollector):
         self.logger.info("Exported %d records to %s", len(data), path)
 
         return path
-    
 
     # -------------------------------------------------------
     # Convenience Export Method
@@ -340,10 +331,7 @@ class GDELTCollector(DocumentCollector):
 
         if data is None:
             if not start_date or not end_date:
-                raise ValueError(
-                    "Must provide start_date and end_date if data is None."
-                )
+                raise ValueError("Must provide start_date and end_date if data is None.")
             result = self.collect(start_date=start_date, end_date=end_date)
             data = result["aggregated"]
         return self.export_jsonl(data)
-
