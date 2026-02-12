@@ -170,7 +170,7 @@ class TestECBNewsCollectorInit:
 class TestHealthCheck:
     """Test health_check method."""
 
-    @patch("src.ingestion.collectors.ecb_collector.requests.Session.head")
+    @patch("src.ingestion.collectors.ecb_news_collector.requests.Session.head")
     def test_health_check_success(self, mock_head, collector):
         mock_response = Mock()
         mock_response.ok = True
@@ -179,7 +179,7 @@ class TestHealthCheck:
         assert collector.health_check() is True
         mock_head.assert_called_once()
 
-    @patch("src.ingestion.collectors.ecb_collector.requests.Session.head")
+    @patch("src.ingestion.collectors.ecb_news_collector.requests.Session.head")
     def test_health_check_failure(self, mock_head, collector):
         mock_head.side_effect = Exception("Network error")
 
@@ -291,7 +291,7 @@ class TestSpeakerExtraction:
 class TestContentFetching:
     """Test _fetch_full_content method."""
 
-    @patch("src.ingestion.collectors.ecb_collector.requests.Session.get")
+    @patch("src.ingestion.collectors.ecb_news_collector.requests.Session.get")
     def test_fetch_content_success(self, mock_get, collector):
         mock_response = Mock()
         mock_response.content = SAMPLE_HTML_CONTENT.encode("utf-8")
@@ -303,7 +303,7 @@ class TestContentFetching:
         assert "Navigation menu" not in content  # Should be removed
         assert "console.log" not in content  # Script should be removed
 
-    @patch("src.ingestion.collectors.ecb_collector.requests.Session.get")
+    @patch("src.ingestion.collectors.ecb_news_collector.requests.Session.get")
     def test_fetch_content_failure(self, mock_get, collector):
         mock_get.side_effect = Exception("Network error")
 
@@ -363,7 +363,7 @@ class TestDocumentExtraction:
 class TestCollectMethod:
     """Test collect method (pure, no I/O)."""
 
-    @patch("src.ingestion.collectors.ecb_collector.feedparser.parse")
+    @patch("src.ingestion.collectors.ecb_news_collector.feedparser.parse")
     @patch.object(ECBNewsCollector, "_fetch_full_content")
     def test_collect_success(self, mock_fetch_content, mock_parse, collector):
         # Setup mocks
@@ -400,7 +400,7 @@ class TestCollectMethod:
         assert speech["document_type"] == "speech"
         assert "Christine Lagarde" in speech["title"]
 
-    @patch("src.ingestion.collectors.ecb_collector.feedparser.parse")
+    @patch("src.ingestion.collectors.ecb_news_collector.feedparser.parse")
     def test_collect_date_filtering(self, mock_parse, collector):
         # Entry outside date range
         old_entry = SAMPLE_RSS_ENTRY_SPEECH.copy()
@@ -421,7 +421,7 @@ class TestCollectMethod:
         total_docs = sum(len(docs) for docs in data.values())
         assert total_docs == 0  # Both entries are outside Feb 2026 range
 
-    @patch("src.ingestion.collectors.ecb_collector.feedparser.parse")
+    @patch("src.ingestion.collectors.ecb_news_collector.feedparser.parse")
     def test_collect_invalid_date_range(self, mock_parse, collector):
         start_date = datetime(2026, 2, 1, tzinfo=timezone.utc)
         end_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -429,7 +429,7 @@ class TestCollectMethod:
         with pytest.raises(ValueError, match="must be before end_date"):
             collector.collect(start_date=start_date, end_date=end_date)
 
-    @patch("src.ingestion.collectors.ecb_collector.feedparser.parse")
+    @patch("src.ingestion.collectors.ecb_news_collector.feedparser.parse")
     def test_collect_empty_feed(self, mock_parse, collector):
         mock_feed = make_mock_feed([])
         mock_parse.return_value = mock_feed
@@ -438,7 +438,7 @@ class TestCollectMethod:
 
         assert all(len(docs) == 0 for docs in data.values())
 
-    @patch("src.ingestion.collectors.ecb_collector.feedparser.parse")
+    @patch("src.ingestion.collectors.ecb_news_collector.feedparser.parse")
     def test_collect_no_entries_attribute(self, mock_parse, collector):
         mock_feed = Mock()
         mock_feed.entries = None
@@ -561,7 +561,7 @@ class TestExportAll:
 class TestIntegration:
     """Integration test for full workflow."""
 
-    @patch("src.ingestion.collectors.ecb_collector.feedparser.parse")
+    @patch("src.ingestion.collectors.ecb_news_collector.feedparser.parse")
     @patch.object(ECBNewsCollector, "_fetch_full_content")
     def test_full_collection_and_export_workflow(
         self, mock_fetch_content, mock_parse, tmp_output_dir
