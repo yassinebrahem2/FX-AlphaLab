@@ -41,6 +41,7 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-cov",
+    "black",
     "ruff",
     "mypy",
     "pre-commit",
