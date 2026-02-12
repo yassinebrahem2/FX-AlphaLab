@@ -90,7 +90,7 @@ class TestHealthCheckMocked:
 
 
 class TestCollectErrorHandling:
-    def test_collect_skips_article_when_fetch_fails(self, tmp_path):
+    def test_collect_skips_statement_when_fetch_fails(self, tmp_path):
         collector = BoECollector(output_dir=tmp_path)
         collector.RSS_URLS = ["https://www.bankofengland.co.uk/RSS/News"]
 
@@ -118,10 +118,10 @@ class TestCollectErrorHandling:
             )
 
         assert isinstance(out, dict)
-        assert "press_releases" in out
-        assert len(out["press_releases"]) == 1
+        assert "statements" in out
+        assert len(out["statements"]) == 1
 
-        obj = out["press_releases"][0]
+        obj = out["statements"][0]
         assert obj["metadata"]["fetch_error"] is not None
         assert obj["metadata"]["fetch_error_type"] is not None
 
@@ -148,8 +148,8 @@ def test_collect_writes_jsonl_with_required_schema(tmp_path):
             end_date=datetime(2026, 2, 10, 23, 59, 59, tzinfo=timezone.utc),
         )
 
-    assert "press_releases" in data
-    obj = data["press_releases"][0]
+    assert "statements" in data
+    obj = data["statements"][0]
 
 
     required_keys = [
@@ -254,11 +254,11 @@ def test_collect_date_filtering_inclusive_bounds(tmp_path):
             end_date=datetime(2026, 2, 10, 23, 59, 59, tzinfo=timezone.utc),
         )
 
-    assert "press_releases" in data
+    assert "statements" in data
 
-    assert len(data["press_releases"]) == 1
+    assert len(data["statements"]) == 1
 
-    assert data["press_releases"][0]["title"] == "In range"
+    assert data["statements"][0]["title"] == "In range"
 
 
 def test_collect_fallback_writes_record_when_fetch_fails(tmp_path):
@@ -285,8 +285,8 @@ def test_collect_fallback_writes_record_when_fetch_fails(tmp_path):
             end_date=datetime(2026, 2, 10, 23, 59, 59, tzinfo=timezone.utc),
         )
 
-    assert "press_releases" in data
-    obj = data["press_releases"][0]
+    assert "statements" in data
+    obj = data["statements"][0]
 
     assert obj["content"] in ("RSS SUMMARY TEXT", "")  # depending on rss parsing field
     assert obj["metadata"]["fetch_error"] is not None
@@ -308,7 +308,7 @@ def test_export_jsonl_writes_file(tmp_path):
         "metadata": {},
     }]
 
-    path = collector.export_jsonl(fake_data, "press_releases")
+    path = collector.export_jsonl(fake_data, "statements")
 
     assert path.exists()
     obj = json.loads(path.read_text().splitlines()[0])
@@ -319,7 +319,7 @@ def test_export_all_to_jsonl_writes_multiple_files(tmp_path):
     collector = BoECollector(output_dir=tmp_path)
 
     fake = {
-        "press_releases": [{
+        "statements": [{
             "source": "BoE",
             "timestamp_collected": "x",
             "timestamp_published": "x",
@@ -345,10 +345,41 @@ def test_export_all_to_jsonl_writes_multiple_files(tmp_path):
 
     paths = collector.export_all(data=fake)
 
-    assert "press_releases" in paths
+    assert "statements" in paths
     assert "speeches" in paths
-    assert paths["press_releases"].exists()
+    assert paths["statements"].exists()
     assert paths["speeches"].exists()
+
+def test_export_jsonl_writes_file(tmp_path):
+    collector = BoECollector(output_dir=tmp_path)
+
+    fake_data = [{
+        "source": "BoE",
+        "timestamp_collected": "2026-02-11T00:00:00+00:00",
+        "timestamp_published": "2026-02-10T16:30:00+00:00",
+        "url": "http://test",
+        "title": "Test",
+        "content": "Hello",
+        "document_type": "press_release",
+        "speaker": None,
+        "metadata": {},
+    }]
+
+    path = collector.export_jsonl(fake_data, "statements")
+
+    assert path.exists()
+    obj = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert obj["title"] == "Test"
+
+def test_document_type_classification_mpc_by_title():
+    collector = BoECollector()
+    url = "https://www.bankofengland.co.uk/news/2025/november/test"
+    bucket, doc_type = collector._classify_document_type(url, "Remit for the Monetary Policy Committee - November 2025")
+    assert bucket == "mpc"
+    assert doc_type == "mpc_statement"
+
+
+
 
 
 

@@ -120,11 +120,16 @@ class BoECollector(DocumentCollector):
            return "summaries", "monetary_policy_summary"
 
     # MPC
-        if "/monetary-policy-committee/" in u or "/mpc/" in u or t.startswith("mpc"):
+        if (
+            "/monetary-policy-committee/" in u
+            or "/mpc/" in u
+            or t.startswith("mpc")
+            or "monetary policy committee" in t
+        ):
             return "mpc", "mpc_statement"
 
     # Default
-        return "press_releases", "press_release" 
+        return "statements", "press_release" 
 
     def _fetch_article_text(self, url: str) -> str:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -138,9 +143,8 @@ class BoECollector(DocumentCollector):
 
 
         resp.encoding = resp.apparent_encoding
-        soup = BeautifulSoup(resp.text, "html.parser")
-        main = soup.find("main") or soup
-        return main.get_text("\n", strip=True)
+
+        return resp.text
 
 
 
