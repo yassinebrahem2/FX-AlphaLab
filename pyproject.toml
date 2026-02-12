@@ -3,8 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src"]
-exclude = ["tests*", "docs*", "notebooks*", "frontend*", "datasets*"]
+where = ["."]
+include = ["src*"]
+exclude = ["tests*", "docs*", "notebooks*", "frontend*", "datasets*", "scripts*"]
 
 [tool.setuptools]
 py-modules = []
@@ -23,14 +24,18 @@ dependencies = [
     "pandas",
     "numpy",
     "python-dotenv",
+    "psycopg2-binary>=2.9",
     "requests",
     "beautifulsoup4",
+    "feedparser",
     "fredapi",
+    "feedparser",
     "sqlalchemy",
-    "psycopg2-binary",
     "pytz",
     "pyarrow",
+    "db-dtypes",
 ]
+
 
 [project.optional-dependencies]
 dev = [
@@ -41,6 +46,7 @@ dev = [
     "mypy",
     "pre-commit",
     "ipykernel",
+    "google-cloud-bigquery>=3.17.0",
     "types-pytz",
 ]
 

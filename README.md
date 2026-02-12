@@ -66,7 +66,13 @@ Built with production-grade code quality, comprehensive testing, and continuous 
    - Daily data updates
    - Scripts: [scripts/collect_ecb_data.py](scripts/collect_ecb_data.py)
 
-4. **Economic Calendar**
+4. **ECB News**
+   - Press releases, speeches, monetary policy statements
+   - Economic bulletins and reports
+   - Real-time sentiment analysis source (highest priority for EUR)
+   - Scripts: [scripts/collect_ecb_news_data.py](scripts/collect_ecb_news_data.py)
+
+5. **Economic Calendar**
    - High-impact economic events
    - Event timestamps and expectations
    - Country-specific event filtering
@@ -247,6 +253,9 @@ python scripts/collect_fred_data.py
 
 # Collect ECB exchange rates
 python scripts/collect_ecb_data.py
+
+# Collect ECB news, speeches, and policy statements
+python scripts/collect_ecb_news_data.py
 
 # Collect economic calendar events
 python scripts/collect_calendar_data.py

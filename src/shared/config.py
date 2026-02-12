@@ -27,6 +27,9 @@ class Config:
     # API Keys
     FRED_API_KEY: str | None = os.getenv("FRED_API_KEY")
 
+    # Google Cloud (BigQuery for GDELT)
+    GOOGLE_APPLICATION_CREDENTIALS: str | None = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
     # MT5 Configuration
     MT5_LOGIN: int | None = (
         int(os.getenv("MT5_LOGIN", "0"))
