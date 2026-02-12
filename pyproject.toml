@@ -33,6 +33,7 @@ dependencies = [
     "sqlalchemy",
     "pytz",
     "pyarrow",
+    "db-dtypes",
 ]
 
 
@@ -45,6 +46,7 @@ dev = [
     "mypy",
     "pre-commit",
     "ipykernel",
+    "google-cloud-bigquery>=3.17.0",
     "types-pytz",
 ]
 

@@ -41,7 +41,7 @@ Collected items are categorized into the following buckets:
   `statements`   General BoE press releases / news    `press_release`
 
   `mpc`          Monetary Policy Committee related    `mpc_statement`
-                 communications                       
+                 communications
 
   `speeches`     Official speeches                    `boe_speech`
 
