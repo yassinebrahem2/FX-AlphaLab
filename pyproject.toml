@@ -23,14 +23,15 @@ dependencies = [
     "pandas",
     "numpy",
     "python-dotenv",
+    "psycopg2-binary>=2.9",
     "requests",
     "beautifulsoup4",
     "fredapi",
     "sqlalchemy",
-    "psycopg2-binary",
     "pytz",
     "pyarrow",
 ]
+
 
 [project.optional-dependencies]
 dev = [
