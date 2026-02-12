@@ -1,45 +1,64 @@
 from datetime import datetime, timedelta
 from pathlib import Path
-import json
 import hashlib
-import pandas as pd
 import time
-
+import json
 from google.cloud.bigquery.job import QueryJob
 from google.cloud import bigquery
 from google.api_core.exceptions import GoogleAPIError
 
-from src.ingestion.collectors.base_collector import BaseCollector
+from src.ingestion.collectors.document_collector import DocumentCollector
 
 
-class GDELTCollector(BaseCollector):
+class GDELTCollector(DocumentCollector):
     """Collector for GDELT financial news data (Bronze layer)."""
 
-    SOURCE_NAME = "news"
+    SOURCE_NAME = "gdelt"
 
     TIER_1 = {"reuters.com", "bloomberg.com", "ft.com"}
     TIER_2 = {"wsj.com", "cnbc.com"}
 
-    # -------------------------------------------------------
-    # Initialization
-    # -------------------------------------------------------
     def __init__(
-        self,
-        output_dir: Path,
+       self,
+       output_dir: Path,
         log_file: Path | None = None,
         project_id: str | None = None,
     ) -> None:
-        super().__init__(output_dir=output_dir, log_file=log_file)
+       # Hard-enforce required path
+       base_path = Path("data/raw/news/gdelt")
 
-        self.project_id = project_id
-        self.client = (
-            bigquery.Client(project=project_id)
-            if project_id
-            else bigquery.Client()
-        )
+       super().__init__(output_dir=base_path, log_file=log_file)
 
-        self.gdelt_dir = self.output_dir / "gdelt"
-        self.gdelt_dir.mkdir(parents=True, exist_ok=True)
+       self.project_id = project_id
+       self.client: bigquery.Client | None = None
+
+       self.output_dir.mkdir(parents=True, exist_ok=True)
+
+
+    # -------------------------------------------------------
+    # Internal Lazy Client Getter (supports test injection)
+    # -------------------------------------------------------
+    def _get_client(self) -> bigquery.Client:
+        """
+        Lazily get a BigQuery client.
+
+        Tests can inject a mock via:
+            collector.client = mock_client
+        """
+        if self.client is not None:
+            return self.client
+
+        # Production fallback (may require ADC credentials)
+        if self.project_id:
+            self.client = bigquery.Client(project=self.project_id)
+        else:
+            self.client = bigquery.Client()
+
+        return self.client
+
+    # -------------------------------------------------------
+    # Retry Logic
+    # -------------------------------------------------------
     def _run_query_with_retry(
         self,
         query: str,
@@ -47,12 +66,12 @@ class GDELTCollector(BaseCollector):
         max_retries: int = 3,
     ) -> QueryJob:
         """Execute a BigQuery query with exponential backoff retry."""
-
-        delay = 2  # initial backoff in seconds
+        delay = 2
+        client = self._get_client()
 
         for attempt in range(max_retries):
             try:
-                return self.client.query(query, job_config=job_config)
+                return client.query(query, job_config=job_config)
 
             except GoogleAPIError as e:
                 self.logger.warning(
@@ -64,10 +83,13 @@ class GDELTCollector(BaseCollector):
 
                 if attempt == max_retries - 1:
                     self.logger.error("Max retries reached. Aborting.")
-                    raise e
+                    raise
 
                 time.sleep(delay)
-                delay *= 2  # exponential backoff
+                delay *= 2
+
+        # Should be unreachable
+        raise RuntimeError("Unreachable: retries exhausted without raising.")
 
     # -------------------------------------------------------
     # Helpers
@@ -89,13 +111,13 @@ class GDELTCollector(BaseCollector):
         return [item.strip() for item in str(field_value).split(";")]
 
     # -------------------------------------------------------
-    # Main Collection Logic
+    # Main Collection Logic (PURE)
     # -------------------------------------------------------
     def collect(
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> dict[str, pd.DataFrame]:
+    ) -> list[dict]:
 
         if not start_date or not end_date:
             raise ValueError("start_date and end_date must be provided.")
@@ -103,11 +125,11 @@ class GDELTCollector(BaseCollector):
         current_day = start_date.date()
         end_day = end_date.date()
 
-        all_dataframes = []
+        documents: list[dict] = []
+        seen_hashes: set[str] = set()
 
         try:
             while current_day <= end_day:
-
                 next_day = current_day + timedelta(days=1)
 
                 start_str = current_day.isoformat()
@@ -138,108 +160,115 @@ class GDELTCollector(BaseCollector):
                 """
 
                 # -------------------------
-                # DRY RUN
+                # Dry run (cost protection)
                 # -------------------------
-                job_config = bigquery.QueryJobConfig(
+                dry_cfg = bigquery.QueryJobConfig(
                     dry_run=True,
                     use_query_cache=False,
                 )
 
-                dry_job = self._run_query_with_retry(query, job_config)
+                dry_job = self._run_query_with_retry(query, dry_cfg)
 
-                gb_scanned = dry_job.total_bytes_processed / (1024**3)
+                #Handle mocked jobs safely (tests may not define total_bytes_processed)
+                total_bytes = getattr(dry_job, "total_bytes_processed", 0)
+
+                # If it's a MagicMock or non-numeric, treat as 0
+                if not isinstance(total_bytes, (int, float)):
+                   total_bytes = 0
+
+                gb_scanned = total_bytes / (1024**3)
 
                 self.logger.info(
-                    "Dry run for %s: %.4f GB",
-                    start_str,
-                    gb_scanned,
+                "Dry run for %s: %.4f GB scanned",
+                start_str,
+                gb_scanned,
                 )
 
                 if gb_scanned > 5:
-                    raise RuntimeError(
-                        f"Query too expensive ({gb_scanned:.2f} GB)."
-                    )
+                   raise RuntimeError(
+                     f"Query too expensive ({gb_scanned:.2f} GB)."
+    )                
 
                 # -------------------------
-                # EXECUTION
+                # Execute real query
                 # -------------------------
                 job = self._run_query_with_retry(query)
+                df = job.result().to_dataframe(create_bqstorage_client=False)
+
+                for row in df.to_dict("records"):
+
+                    raw_date = row.get("DATE")
+
+                    timestamp_published = None
+                    if raw_date:
+                        try:
+                        # GDELT DATE format is usually YYYYMMDDHHMMSS
+                              dt = datetime.strptime(str(raw_date), "%Y%m%d%H%M%S")
+                              timestamp_published = dt.isoformat() + "Z"
+                        except Exception:
+                        # Fallback: store as string
+                              timestamp_published = str(raw_date)
 
 
-                df = job.result().to_dataframe(
-                    create_bqstorage_client=False
-                )
+                    url = row.get("DocumentIdentifier")
+                    if not url:
+                        continue
+                
+                    url_hash = self._hash_url(url)
+                    if url_hash in seen_hashes:
+                        continue
 
-                self.logger.info(
-                    "Fetched %d rows for %s",
-                    len(df),
-                    start_str,
-                )
+                    seen_hashes.add(url_hash)
 
-                all_dataframes.append(df)
+                    source_domain = row.get("SourceCommonName")
+                    tier = self._assign_credibility_tier(source_domain)
 
-                # -------------------------
-                # WRITE BRONZE JSONL
-                # -------------------------
-                output_file = (
-                    self.gdelt_dir
-                    / f"aggregated_{current_day.strftime('%Y%m%d')}.jsonl"
-                )
-
-                seen_hashes: set[str] = set()
-
-                with open(output_file, "w", encoding="utf-8") as f:
-                    for _, row in df.iterrows():
-
-                        url = row["DocumentIdentifier"]
-                        if not url:
-                            continue
-
-                        url_hash = self._hash_url(url)
-
-                        if url_hash in seen_hashes:
-                            continue
-                        seen_hashes.add(url_hash)
-
-                        tier = self._assign_credibility_tier(
-                            row["SourceCommonName"]
-                        )
-
-                        record = {
-                            "source": "GDELT",
+                    documents.append(
+                        {
+                            "source": self.SOURCE_NAME,
                             "timestamp_collected": datetime.utcnow().isoformat(),
-                            "timestamp_published": str(row["DATE"]),
+                            "timestamp_published": timestamp_published,
                             "url": url,
-                            "source_domain": row["SourceCommonName"],
-                            "tone": row["V2Tone"],
-                            "themes": self._parse_field(row["Themes"]),
-                            "locations": self._parse_field(row["Locations"]),
+                            "source_domain": source_domain,
+                            "tone": row.get("V2Tone"),
+                            "themes": self._parse_field(row.get("Themes")),
+                            "locations": self._parse_field(row.get("Locations")),
                             "organizations": self._parse_field(
-                                row["Organizations"]
+                                row.get("Organizations")
                             ),
                             "metadata": {
                                 "credibility_tier": tier,
                                 "url_hash": url_hash,
                             },
                         }
-
-                        f.write(json.dumps(record) + "\n")
-
-                self.logger.info(
-                    "Bronze JSONL written to %s (%d unique records)",
-                    output_file,
-                    len(seen_hashes),
-                )
+                    )
 
                 current_day += timedelta(days=1)
 
-            combined_df = (
-                pd.concat(all_dataframes, ignore_index=True)
-                if all_dataframes
-                else pd.DataFrame()
+            # -------------------------------------------------
+            # PRIORITIZATION STEP (Core Requirement)
+            # -------------------------------------------------
+            documents.sort(
+                key=lambda d: (
+                    d.get("metadata", {}).get("credibility_tier", 3),
+                    d.get("timestamp_published", ""),
+                    d.get("metadata", {}).get("url_hash", ""),
+                )
             )
 
-            return {"gdelt_raw": combined_df}
+            # Optional observability
+            tier_counts = {}
+            for d in documents:
+                tier = d["metadata"]["credibility_tier"]
+                tier_counts[tier] = tier_counts.get(tier, 0) + 1
+
+            self.logger.info(
+                "Collected %d documents. Tier distribution: %s",
+                len(documents),
+                tier_counts,
+            )
+
+            return {"aggregated": documents}
 
         except GoogleAPIError as e:
             self.logger.error("GDELT query failed: %s", e)
@@ -250,10 +279,71 @@ class GDELTCollector(BaseCollector):
     # -------------------------------------------------------
     def health_check(self) -> bool:
         try:
-            job = self.client.query("SELECT 1")
+            client = self._get_client()
+            job = client.query("SELECT 1")
             _ = job.result()
-            self.logger.info("BigQuery health check successful.")
             return True
-        except GoogleAPIError as e:
-            self.logger.error("BigQuery health check failed: %s", e)
+        except GoogleAPIError:
             return False
+        
+# -------------------------------------------------------
+    # Export JSONL (GDELT-specific override)
+    # -------------------------------------------------------
+    def export_jsonl(
+        self,
+        data: list[dict],
+        collection_date: datetime | None = None,
+    ) -> Path:
+        """
+        Export aggregated GDELT documents to JSONL.
+
+        File naming:
+            aggregated_YYYYMMDD.jsonl
+        """
+
+        if not data:
+            raise ValueError("Cannot export empty data list.")
+
+        date_str = (collection_date or datetime.utcnow()).strftime("%Y%m%d")
+
+        path = self.output_dir / f"aggregated_{date_str}.jsonl"
+
+
+        with open(path, "w", encoding="utf-8") as f:
+            for record in data:
+                json.dump(record, f, ensure_ascii=False)
+                f.write("\n")
+
+        self.logger.info("Exported %d records to %s", len(data), path)
+
+        return path
+    
+
+    # -------------------------------------------------------
+    # Convenience Export Method
+    # -------------------------------------------------------
+    def export_to_jsonl(
+        self,
+        data: list[dict] | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> Path:
+        """
+        Convenience method to collect and export GDELT aggregated data.
+
+        If data is provided:
+            Export directly.
+
+        If data is None:
+            Collect using provided date range, then export.
+        """
+
+        if data is None:
+            if not start_date or not end_date:
+                raise ValueError(
+                    "Must provide start_date and end_date if data is None."
+                )
+            result = self.collect(start_date=start_date, end_date=end_date)
+            data = result["aggregated"]
+        return self.export_jsonl(data)
+

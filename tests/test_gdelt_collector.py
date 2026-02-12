@@ -1,6 +1,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
+from datetime import datetime
 
 from google.api_core.exceptions import GoogleAPIError
 
@@ -13,9 +14,12 @@ from ingestion.collectors.gdelt_collector import GDELTCollector
 def test_collector_initialization(tmp_path):
     collector = GDELTCollector(output_dir=tmp_path)
 
-    assert collector.output_dir == tmp_path
-    assert collector.gdelt_dir.exists()
-    assert collector.gdelt_dir.name == "gdelt"
+    expected_path = Path("data/raw/news/gdelt")
+
+    assert collector.output_dir == expected_path
+    assert collector.output_dir.exists()
+    assert collector.output_dir.name == "gdelt"
+
 
 
 # -------------------------------------------------------
@@ -92,11 +96,139 @@ def test_retry_logic():
     mock_client = MagicMock()
     collector.client = mock_client
 
-    # Always fail with correct exception type
     mock_client.query.side_effect = GoogleAPIError("Temporary failure")
 
     with pytest.raises(GoogleAPIError):
         collector._run_query_with_retry("SELECT 1", max_retries=3)
 
-    # Ensure it retried the correct number of times
     assert mock_client.query.call_count == 3
+
+
+# -------------------------------------------------------
+# Prioritization by Credibility
+# -------------------------------------------------------
+def test_prioritizes_by_credibility(tmp_path):
+    collector = GDELTCollector(output_dir=tmp_path)
+
+    mock_client = MagicMock()
+    mock_job = MagicMock()
+    mock_result = MagicMock()
+
+    mock_rows = [
+        {
+            "DATE": "2024-01-01",
+            "SourceCommonName": "random.com",
+            "DocumentIdentifier": "url_1",
+            "V2Tone": 0,
+            "Themes": "",
+            "Locations": "",
+            "Organizations": "",
+        },
+        {
+            "DATE": "2024-01-01",
+            "SourceCommonName": "reuters.com",
+            "DocumentIdentifier": "url_2",
+            "V2Tone": 0,
+            "Themes": "",
+            "Locations": "",
+            "Organizations": "",
+        },
+        {
+            "DATE": "2024-01-01",
+            "SourceCommonName": "wsj.com",
+            "DocumentIdentifier": "url_3",
+            "V2Tone": 0,
+            "Themes": "",
+            "Locations": "",
+            "Organizations": "",
+        },
+    ]
+
+    # Mock dry-run + real query safely
+    mock_job.total_bytes_processed = 0
+    mock_result.to_dataframe.return_value.to_dict.return_value = mock_rows
+    mock_job.result.return_value = mock_result
+    mock_client.query.return_value = mock_job
+
+    collector.client = mock_client
+
+    result = collector.collect(
+    start_date=datetime(2024, 1, 1),
+    end_date=datetime(2024, 1, 1),
+)
+
+    docs = result["aggregated"]
+
+    tiers = [d["metadata"]["credibility_tier"] for d in docs]
+
+    assert tiers == sorted(tiers)
+
+# -------------------------------------------------------
+# Export JSONL
+# -------------------------------------------------------
+def test_export_jsonl_success(tmp_path):
+    collector = GDELTCollector(output_dir=tmp_path)
+
+    data = [
+        {"url": "a", "metadata": {"credibility_tier": 1}},
+        {"url": "b", "metadata": {"credibility_tier": 2}},
+    ]
+
+    path = collector.export_jsonl(data)
+
+    assert path.exists()
+
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    assert len(lines) == 2
+
+
+def test_export_jsonl_empty_raises(tmp_path):
+    collector = GDELTCollector(output_dir=tmp_path)
+
+    with pytest.raises(ValueError):
+        collector.export_jsonl([])
+
+def test_export_to_jsonl_with_data(tmp_path):
+    collector = GDELTCollector(output_dir=tmp_path)
+
+    data = [
+        {"url": "a", "metadata": {"credibility_tier": 1}},
+        {"url": "b", "metadata": {"credibility_tier": 2}},
+    ]
+
+    path = collector.export_to_jsonl(data=data)
+
+    assert path.exists()
+
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    assert len(lines) == 2
+def test_export_to_jsonl_calls_collect(tmp_path):
+    collector = GDELTCollector(output_dir=tmp_path)
+
+    mock_data = [
+        {"url": "x", "metadata": {"credibility_tier": 1}},
+    ]
+
+    collector.collect = MagicMock(
+    return_value={"aggregated": mock_data}
+)
+
+    path = collector.export_to_jsonl(
+        start_date=datetime(2024, 1, 1),
+        end_date=datetime(2024, 1, 1),
+    )
+
+    collector.collect.assert_called_once()
+
+    assert path.exists()
+
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    assert len(lines) == 1
+
+
