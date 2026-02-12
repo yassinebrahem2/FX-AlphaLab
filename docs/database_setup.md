@@ -54,21 +54,26 @@ Exit with:
 
 🧠 Using the Database in Python
 
-All helper functions are located in:
+All helper functions and ORM models are located in:
 
-src/shared/db/storage.py
+src/shared/db/
 
-Connect to Database
-from src.shared.db.storage import get_connection
+The system uses **SQLAlchemy ORM** for type-safe, production-grade database access.
 
-conn = get_connection()
-print("Connected:", conn is not None)
-conn.close()
+Connect to Database (Using ORM)
+from src.shared.db import get_db, FXPrice
 
-Insert FX Prices
-from src.shared.db.storage import insert_fx_prices
+# Query using ORM
+with get_db() as session:
+    prices = session.query(FXPrice).filter(FXPrice.pair == "EURUSD").limit(10).all()
+    for price in prices:
+        print(f"{price.timestamp_utc}: {price.close}")
 
-insert_fx_prices([
+Insert FX Prices (High-Level API)
+from src.shared.db import insert_fx_prices
+
+# Returns number of records inserted (duplicates are skipped)
+inserted = insert_fx_prices([
     {
         "timestamp_utc": "2024-01-01 12:00:00",
         "pair": "EURUSD",
@@ -78,17 +83,69 @@ insert_fx_prices([
         "low": 1.09,
         "close": 1.105,
         "volume": 1234,
-        "source": "test"
+        "source": "mt5"
     }
 ])
+print(f"Inserted {inserted} records")
+
+Insert Using ORM Models Directly
+from src.shared.db import get_db, FXPrice
+from datetime import datetime
+
+with get_db() as session:
+    price = FXPrice(
+        timestamp_utc=datetime(2024, 1, 1, 12, 0, 0),
+        pair="EURUSD",
+        timeframe="H1",
+        open=1.10,
+        high=1.11,
+        low=1.09,
+        close=1.105,
+        volume=1234,
+        source="mt5"
+    )
+    session.add(price)
+    # Automatically committed by context manager
+
+Query with ORM
+from src.shared.db import get_db, FXPrice, EconomicEvent
+from datetime import datetime, timedelta
+
+with get_db() as session:
+    # Get recent prices
+    recent = session.query(FXPrice)\
+        .filter(FXPrice.timestamp_utc >= datetime.now() - timedelta(days=7))\
+        .order_by(FXPrice.timestamp_utc.desc())\
+        .limit(100)\
+        .all()
+
+    # High-impact events
+    events = session.query(EconomicEvent)\
+        .filter(EconomicEvent.impact == "High")\
+        .all()
 
 Export Table to CSV (For Week 6 Deliverable)
-from src.shared.db.storage import export_to_csv
+from src.shared.db import export_to_csv, ALLOWED_TABLES
 
+# SQL injection protected - only whitelisted tables allowed
 export_to_csv("fx_prices", "fx_prices_export.csv")
 
+# View allowed tables
+print(f"Allowed tables: {ALLOWED_TABLES}")
+# {'fx_prices', 'economic_events', 'ecb_policy_rates', 'ecb_exchange_rates', 'macro_indicators'}
 
-This creates a CSV file containing all rows from the table.
+Available ORM Models
+
+- **FXPrice** - OHLCV price data
+- **EconomicEvent** - Calendar events
+- **ECBPolicyRate** - ECB interest rates
+- **ECBExchangeRate** - ECB FX rates
+- **MacroIndicator** - FRED macro data
+
+All models include:
+- Automatic timestamp indexing
+- Uniqueness constraints (prevents duplicates)
+- Type safety via SQLAlchemy ORM
 
 🧪 Run Unit Tests
 
