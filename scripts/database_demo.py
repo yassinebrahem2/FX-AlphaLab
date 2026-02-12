@@ -9,7 +9,7 @@ Requirements:
     - Database schema must be applied (see docs/database_setup.md)
 
 Run:
-    python examples/database_demo.py
+    python scripts/database_demo.py
 """
 
 from datetime import datetime, timedelta
