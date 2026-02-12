@@ -29,11 +29,11 @@ The collector:
 
 - Inherits from `DocumentCollector`
 - `collect()` is pure (no file I/O)
-- Returns `list[dict]`
+- Returns `dict[str, list[dict]]` with key `"aggregated"` (consistent with DocumentCollector interface)
 - `export_jsonl()` handles file writing
 - `export_to_jsonl()` is a convenience wrapper
 - No preprocessing inside the collector
-- Domain credibility prioritization applied before return
+- Domain credibility prioritization applied before return (sorted by tier, timestamp, hash)
 - Deduplication handled via SHA256 URL hashing
 
 ---
@@ -59,45 +59,66 @@ Create a service account in Google Cloud Console with:
 
 Download the JSON key file.
 
-Set the environment variable:
+Configure the credentials:
 
-#### macOS / Linux
+#### Option 1: .env File (Recommended)
 
+Add to your `.env` file:
+
+```env
+GOOGLE_APPLICATION_CREDENTIALS=path/to/your/service_account.json
+```
+
+#### Option 2: Environment Variable
+
+Set the environment variable directly:
+
+**macOS / Linux:**
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service_account.json"
-Windows (PowerShell)
-$env:GOOGLE_APPLICATION_CREDENTIALS="C:\path\to\service_account.json"
-Query Logic
-Table Used
-gdelt-bq.gdeltv2.gkg_partitioned
+```
 
-Date Filtering
+**Windows (PowerShell):**
+```powershell
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\path\to\service_account.json"
+```
+
+---
+
+## Query Logic
+
+### Table Used
+
+`gdelt-bq.gdeltv2.gkg_partitioned`
+
+### Date Filtering
 
 Queries are executed per-day:
 
+```sql
 DATE(_PARTITIONTIME) >= start_date
 DATE(_PARTITIONTIME) < next_day
-FX Theme Filters
+```
+
+### FX Theme Filters
 
 Only articles containing:
 
-ECON_CURRENCY
+- `ECON_CURRENCY`
+- `ECON_CENTRAL_BANK`
 
-ECON_CENTRAL_BANK
-
-Currency Filters
+### Currency Filters
 
 Only articles referencing:
 
-EUR
+- EUR
+- USD
+- GBP
+- JPY
 
-USD
+### Example Query
 
-GBP
-
-JPY
-
-Example Query
+```sql
 SELECT
     DATE,
     SourceCommonName,
@@ -119,183 +140,206 @@ WHERE DATE(_PARTITIONTIME) >= "2024-01-01"
       OR V2Themes LIKE '%GBP%'
       OR V2Themes LIKE '%JPY%'
   )
+```
 
-Domain Credibility Prioritization
+### Domain Credibility Prioritization
 
-Based on SourceCommonName.
+Based on `SourceCommonName`.
 
-Tier 1
+**Tier 1:**
+- reuters.com
+- bloomberg.com
+- ft.com
 
-reuters.com
+**Tier 2:**
+- wsj.com
+- cnbc.com
 
-bloomberg.com
+**Tier 3:**
+- All other domains
 
-ft.com
+Documents are sorted (not filtered) by:
+1. `credibility_tier` (ascending)
+2. `timestamp_published` (chronological)
+3. `url_hash` (deterministic tie-breaker)
 
-Tier 2
-
-wsj.com
-
-cnbc.com
-
-Tier 3
-
-All other domains
-
-Documents are sorted, not filtered:
-
-credibility_tier (ascending)
-
-publication timestamp
-
-url_hash (deterministic tie-breaker)
-
-Cost Guard
+### Cost Guard
 
 Each query is first executed as a dry-run:
 
+```python
 QueryJobConfig(dry_run=True)
-
+```
 
 If estimated scan exceeds 5 GB, execution aborts:
 
+```python
 RuntimeError("Query too expensive")
-
+```
 
 This prevents unexpected BigQuery charges.
 
-Data Schema
+## Data Schema
 
-Each document returned by collect():
+Each document returned by `collect()` (within the `"aggregated"` key):
 
+```json
 {
   "source": "gdelt",
-  "timestamp_collected": "2024-02-12T12:34:56Z",
-  "timestamp_published": "2024-02-01T09:30:00Z",
+  "timestamp_collected": "2026-02-12T14:09:07.317700",
+  "timestamp_published": "2026-02-10T00:00:00Z",
   "url": "https://example.com/article",
   "source_domain": "reuters.com",
-  "tone": -2.4,
-  "themes": ["ECON_CURRENCY", "USD"],
-  "locations": ["United States"],
-  "organizations": ["Federal Reserve"],
+  "tone": "1.60427807486631,2.94117647058824,1.33689839572193,...",
+  "themes": [
+    "ECON_CURRENCY_EXCHANGE_RATE,2256",
+    "ECON_WORLDCURRENCIES_EURO,2272",
+    "ECON_CENTRAL_BANK,1234"
+  ],
+  "locations": [
+    "1#United States#US#US##38#-97#US#1234",
+    "1#Switzerland#SZ#SZ##47#8#SZ#3047"
+  ],
+  "organizations": [
+    "Federal Reserve,154",
+    "European Central Bank,892"
+  ],
   "metadata": {
     "credibility_tier": 1,
-    "url_hash": "sha256_hash_here"
+    "url_hash": "11bbeec9eb5f9af1313240eaaf8bb983c51de2058f5838256e3c9e2a258fad8b"
   }
 }
+```
 
-Field Notes
+### Field Notes
 
-tone ranges approximately from -10 (very negative) to +10 (very positive)
+- **tone**: Full V2Tone string (comma-separated values). First value is primary tone score (-10 to +10)
+- **timestamp_collected**: UTC ISO 8601 at collection time
+- **timestamp_published**: Parsed from GDELT DATE field to UTC ISO 8601
+- **url_hash**: SHA256 hash for deduplication
+- **themes/locations/organizations**: Include position offsets from GDELT (e.g., `"theme,offset"`)
 
-timestamp_collected is UTC at collection time
+## Export Behavior
 
-timestamp_published parsed to UTC ISO format
-
-url_hash ensures deduplication
-
-Export Behavior
-export_jsonl(data, collection_date=None) -> Path
+### `export_jsonl(data, collection_date=None) -> Path`
 
 Exports to:
 
+```
 data/raw/news/gdelt/aggregated_YYYYMMDD.jsonl
+```
 
+**Behavior:**
+- One JSON object per line (JSONL format)
+- UTF-8 encoding
+- Raises `ValueError` if data list is empty
+- Returns file path
 
-Behavior:
+### `export_to_jsonl(...) -> Path`
 
-One JSON object per line (JSONL format)
+Convenience wrapper:
+- If `data` provided → exports directly
+- If `data is None` → calls `collect()` then exports (unwraps `"aggregated"` key automatically)
+- Raises `ValueError` if neither data nor date range provided
 
-UTF-8 encoding
+## Error Handling
 
-Raises ValueError if data list is empty
+### Retry Logic
 
-Returns file path
+- Up to 3 attempts
+- Exponential backoff (2s → 4s → 8s)
+- Raises final `GoogleAPIError` if all retries fail
 
-export_to_jsonl(...) -> Path
+### Health Check
 
-Convenience wrapper.
-
-If:
-
-data provided → exports directly
-
-data is None → calls collect() then exports
-
-Raises ValueError if neither data nor date range provided.
-
-Error Handling
-Retry Logic
-
-Up to 3 attempts
-
-Exponential backoff (2s → 4s → 8s)
-
-Raises final GoogleAPIError
-
-Health Check
+```python
 collector.health_check()
-
+```
 
 Executes:
-
+```sql
 SELECT 1
-
+```
 
 Returns:
+- `True` on success
+- `False` on failure
 
-True on success
+## Example Usage
 
-False on failure
+### Basic Collection and Export
 
-Example Usage
+```python
 from pathlib import Path
 from datetime import datetime
-from ingestion.collectors.gdelt_collector import GDELTCollector
+from src.ingestion.collectors.gdelt_collector import GDELTCollector
 
 collector = GDELTCollector(
     output_dir=Path("data/raw/news/gdelt")
 )
 
-data = collector.collect(
-    start_date=datetime(2024, 2, 1),
-    end_date=datetime(2024, 2, 3),
+# Check connectivity
+if not collector.health_check():
+    raise RuntimeError("BigQuery not accessible")
+
+# Collect data
+result = collector.collect(
+    start_date=datetime(2026, 2, 10),
+    end_date=datetime(2026, 2, 11),
 )
 
-path = collector.export_to_jsonl(data=data)
+# result is: {"aggregated": [...]}
+documents = result["aggregated"]
+print(f"Collected {len(documents)} documents")
 
+# Export
+path = collector.export_jsonl(documents)
 print(f"Exported to {path}")
+```
 
-Design Guarantees
+### Quick Test
 
-Pure data collection
+Run the test script:
 
-Deterministic sorting
+```bash
+python scripts/test_gdelt_collector_output.py
+```
 
-Deduplication via SHA256
+This will:
+- Load credentials from `.env`
+- Run health check
+- Collect last 2 days of data
+- Show document samples and statistics
+- Export to JSONL
 
-Cost-safe batching
+### Using Convenience Method
 
-Domain credibility prioritization
+```python
+# Collect and export in one call
+path = collector.export_to_jsonl(
+    start_date=datetime(2026, 2, 10),
+    end_date=datetime(2026, 2, 11)
+)
+```
 
-JSONL output
+## Design Guarantees
 
-Fully unit tested
-
-Separation of concerns (collect vs export)
-
+- ✅ Pure data collection (no file I/O in `collect()`)
+- ✅ Deterministic sorting (tier → timestamp → hash)
+- ✅ Deduplication via SHA256 URL hashing
+- ✅ Cost-safe batching (dry-run + 5GB limit)
+- ✅ Domain credibility prioritization
+- ✅ JSONL output format
+- ✅ Fully unit tested with mocked BigQuery
+- ✅ Separation of concerns (collect vs export)
+- ✅ Retry logic with exponential backoff
+- ✅ Follows Bronze layer contract
 
 ---
 
-This version:
+## Notes
 
-✔ Meets ticket requirement  
-✔ Includes setup instructions  
-✔ Includes credentials instructions  
-✔ Includes query example  
-✔ Includes schema  
-✔ Includes export behavior  
-✔ Includes example usage  
-✔ Does NOT expose personal paths  
-
-You are now compliant.
+- **BigQuery Costs:** ~0.5-1GB per day scanned. Free tier covers ~1TB/month.
+- **Tier Distribution:** Tier 1/2 sources may not appear in every date range.
+- **Date Format:** GDELT uses `YYYYMMDDHHMMSS` format, converted to ISO 8601.
+- **Testing:** Use narrow date ranges (1-2 days) when testing to minimize costs.
