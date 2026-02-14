@@ -56,3 +56,23 @@ CREATE INDEX IF NOT EXISTS idx_economic_events_time ON economic_events(timestamp
 CREATE INDEX IF NOT EXISTS idx_ecb_policy_rates_time ON ecb_policy_rates(timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_ecb_exchange_rates_time ON ecb_exchange_rates(timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_macro_indicators_time ON macro_indicators(timestamp_utc);
+
+ALTER TABLE fx_prices
+ADD CONSTRAINT uq_fx_prices_timestamp_pair_timeframe
+UNIQUE (timestamp_utc, pair, timeframe);
+
+ALTER TABLE economic_events
+ADD CONSTRAINT uq_economic_events_timestamp_event
+UNIQUE (timestamp_utc, event_name);
+
+ALTER TABLE ecb_policy_rates
+ADD CONSTRAINT uq_ecb_policy_rates_timestamp_type
+UNIQUE (timestamp_utc, rate_type);
+
+ALTER TABLE ecb_exchange_rates
+ADD CONSTRAINT uq_ecb_exchange_rates_timestamp_pair
+UNIQUE (timestamp_utc, currency_pair);
+
+ALTER TABLE macro_indicators
+ADD CONSTRAINT uq_macro_indicators_timestamp_series
+UNIQUE (timestamp_utc, series_id);

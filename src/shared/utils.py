@@ -7,10 +7,27 @@ from pathlib import Path
 import pytz
 
 
-def setup_logger(name: str, log_file: Path | None = None, level=logging.INFO) -> logging.Logger:
-    """Set up logger with console and file handlers."""
+def setup_logger(
+    name: str, log_file: Path | None = None, level: int | str = logging.INFO
+) -> logging.Logger:
+    """Set up logger with console and file handlers.
+
+    Args:
+        name: Logger name
+        log_file: Optional path to log file
+        level: Logging level (int constant or string name like 'DEBUG', 'INFO')
+
+    Returns:
+        Configured logger instance
+    """
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+
+    # Convert string level to int if needed
+    if isinstance(level, str):
+        numeric_level = getattr(logging, level.upper(), logging.INFO)
+        logger.setLevel(numeric_level)
+    else:
+        logger.setLevel(level)
 
     formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
