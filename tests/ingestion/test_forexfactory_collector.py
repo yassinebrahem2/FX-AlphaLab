@@ -38,13 +38,13 @@ class TestForexFactoryCalendarCollector:
 
     @pytest.fixture
     def sample_html_response(self):
-        """Sample HTML response matching Forex Factory calendar layout."""
+        """Sample HTML response matching Forex Factory calendar layout (10-cell structure)."""
         return """
         <html>
         <body>
             <table class="calendar__table">
                 <tr class="calendar__row calendar__row--date">
-                    <td colspan="8">
+                    <td colspan="10">
                         <span class="date">Monday, February 12, 2024</span>
                     </td>
                 </tr>
@@ -54,13 +54,13 @@ class TestForexFactoryCalendarCollector:
                     <td class="calendar__impact high">
                         <span title="High Impact">High</span>
                     </td>
-                    <td class="calendar__event">
-                        <a href="/news/1234">CPI m/m</a>
-                    </td>
+                    <td class="calendar__event">CPI m/m</td>
+                    <td class="calendar__sub"></td>
+                    <td class="calendar__detail"><a href="/news/1234"></a></td>
                     <td class="calendar__actual">0.3%</td>
                     <td class="calendar__forecast">0.3%</td>
                     <td class="calendar__previous">0.4%</td>
-                    <td class="calendar__detail"></td>
+                    <td></td>
                 </tr>
                 <tr class="calendar__row calendar__row--event">
                     <td class="calendar__time">10:00am</td>
@@ -68,13 +68,13 @@ class TestForexFactoryCalendarCollector:
                     <td class="calendar__impact medium">
                         <span title="Medium Impact">Medium</span>
                     </td>
-                    <td class="calendar__event">
-                        <a href="/news/5678">ECB Interest Rate</a>
-                    </td>
+                    <td class="calendar__event">ECB Interest Rate</td>
+                    <td class="calendar__sub"></td>
+                    <td class="calendar__detail"><a href="/news/5678"></a></td>
                     <td class="calendar__actual">4.50%</td>
                     <td class="calendar__forecast">4.50%</td>
                     <td class="calendar__previous">4.50%</td>
-                    <td class="calendar__detail"></td>
+                    <td></td>
                 </tr>
                 <tr class="calendar__row calendar__row--event">
                     <td class="calendar__time">2:00pm</td>
@@ -82,13 +82,13 @@ class TestForexFactoryCalendarCollector:
                     <td class="calendar__impact low">
                         <span title="Low Impact">Low</span>
                     </td>
-                    <td class="calendar__event">
-                        <a href="/news/9012">GDP Estimate</a>
-                    </td>
+                    <td class="calendar__event">GDP Estimate</td>
+                    <td class="calendar__sub"></td>
+                    <td class="calendar__detail"><a href="/news/9012"></a></td>
                     <td class="calendar__actual">-</td>
                     <td class="calendar__forecast">0.2%</td>
                     <td class="calendar__previous">0.1%</td>
-                    <td class="calendar__detail"></td>
+                    <td></td>
                 </tr>
                 <tr class="calendar__row calendar__row--event">
                     <td class="calendar__time">4:30pm</td>
@@ -96,13 +96,13 @@ class TestForexFactoryCalendarCollector:
                     <td class="calendar__impact high">
                         <span title="High Impact">High</span>
                     </td>
-                    <td class="calendar__event">
-                        <a href="/news/3456">BOJ Policy Rate</a>
-                    </td>
+                    <td class="calendar__event">BOJ Policy Rate</td>
+                    <td class="calendar__sub"></td>
+                    <td class="calendar__detail"><a href="/news/3456"></a></td>
                     <td class="calendar__actual"></td>
                     <td class="calendar__forecast">-0.1%</td>
                     <td class="calendar__previous">-0.1%</td>
-                    <td class="calendar__detail"></td>
+                    <td></td>
                 </tr>
             </table>
         </body>
@@ -117,7 +117,7 @@ class TestForexFactoryCalendarCollector:
         <body>
             <table class="calendar__table">
                 <tr class="calendar__row calendar__row--date">
-                    <td colspan="8">
+                    <td colspan="10">
                         <span class="date">Monday, February 12, 2024</span>
                     </td>
                 </tr>
@@ -201,7 +201,7 @@ class TestForexFactoryCalendarCollector:
         assert collector._clean_value(None) is None
 
     def test_parse_calendar_row(self, collector):
-        """Test parsing of individual calendar rows."""
+        """Test parsing of individual calendar rows (10-cell structure)."""
         html_row = """
         <tr class="calendar__row calendar__row--event">
             <td class="calendar__time">8:30am</td>
@@ -209,13 +209,13 @@ class TestForexFactoryCalendarCollector:
             <td class="calendar__impact high">
                 <span title="High Impact">High</span>
             </td>
-            <td class="calendar__event">
-                <a href="/news/1234">CPI m/m</a>
-            </td>
+            <td class="calendar__event">CPI m/m</td>
+            <td class="calendar__sub"></td>
+            <td class="calendar__detail"><a href="/news/1234"></a></td>
             <td class="calendar__actual">0.3%</td>
             <td class="calendar__forecast">0.3%</td>
             <td class="calendar__previous">0.4%</td>
-            <td class="calendar__detail"></td>
+            <td></td>
         </tr>
         """
         soup = BeautifulSoup(html_row, "html.parser")
@@ -237,7 +237,7 @@ class TestForexFactoryCalendarCollector:
         assert "scraped_at" in event_data
 
     def test_parse_calendar_row_missing_values(self, collector):
-        """Test parsing calendar rows with missing values."""
+        """Test parsing calendar rows with missing values (10-cell structure)."""
         html_row = """
         <tr class="calendar__row calendar__row--event">
             <td class="calendar__time">4:30pm</td>
@@ -245,13 +245,13 @@ class TestForexFactoryCalendarCollector:
             <td class="calendar__impact high">
                 <span title="High Impact">High</span>
             </td>
-            <td class="calendar__event">
-                <a href="/news/3456">BOJ Policy Rate</a>
-            </td>
-            <td class="calendar__actual">-</td>
+            <td class="calendar__event">BOJ Policy Rate</td>
+            <td class="calendar__sub"></td>
+            <td class="calendar__detail"><a href="/news/3456"></a></td>
+            <td class="calendar__actual"></td>
             <td class="calendar__forecast">-0.1%</td>
-            <td class="calendar__previous">-0.1%</td>
-            <td class="calendar__detail"></td>
+            <td class="calendar__previous">0.4%</td>
+            <td></td>
         </tr>
         """
         soup = BeautifulSoup(html_row, "html.parser")
@@ -262,7 +262,7 @@ class TestForexFactoryCalendarCollector:
         assert event_data is not None
         assert event_data["actual"] is None  # "-" cleaned to None
         assert event_data["forecast"] == "-0.1%"
-        assert event_data["previous"] == "-0.1%"
+        assert event_data["previous"] == "0.4%"
 
     def test_parse_calendar_row_invalid_structure(self, collector):
         """Test parsing rows with invalid structure."""
@@ -296,12 +296,10 @@ class TestForexFactoryCalendarCollector:
         event_data = collector._parse_calendar_row(row)
         assert event_data is None
 
-    @patch.object(ForexFactoryCalendarCollector, "_make_request")
-    def test_fetch_calendar_for_date_success(self, mock_request, collector, sample_html_response):
+    @patch.object(ForexFactoryCalendarCollector, "_fetch_page_with_selenium")
+    def test_fetch_calendar_for_date_success(self, mock_fetch, collector, sample_html_response):
         """Test successful calendar data fetching."""
-        mock_response = Mock()
-        mock_response.content = sample_html_response.encode("utf-8")
-        mock_request.return_value = mock_response
+        mock_fetch.return_value = sample_html_response
 
         events, date = collector._fetch_calendar_for_date("2024-02-12")
 
@@ -322,21 +320,19 @@ class TestForexFactoryCalendarCollector:
         assert third_event["currency"] == "GBP"
         assert third_event["actual"] is None  # "-" converted to None
 
-    @patch.object(ForexFactoryCalendarCollector, "_make_request")
-    def test_fetch_calendar_for_date_no_table(self, mock_request, collector, empty_html_response):
+    @patch.object(ForexFactoryCalendarCollector, "_fetch_page_with_selenium")
+    def test_fetch_calendar_for_date_no_table(self, mock_fetch, collector, empty_html_response):
         """Test fetching when no calendar table is found."""
-        mock_response = Mock()
-        mock_response.content = empty_html_response.encode("utf-8")
-        mock_request.return_value = mock_response
+        mock_fetch.return_value = empty_html_response
 
         events, date = collector._fetch_calendar_for_date("2024-02-12")
 
         assert events == []
 
-    @patch.object(ForexFactoryCalendarCollector, "_make_request")
-    def test_fetch_calendar_for_date_request_failure(self, mock_request, collector):
+    @patch.object(ForexFactoryCalendarCollector, "_fetch_page_with_selenium")
+    def test_fetch_calendar_for_date_request_failure(self, mock_fetch, collector):
         """Test fetching when request fails."""
-        mock_request.return_value = None
+        mock_fetch.return_value = None
 
         events, date = collector._fetch_calendar_for_date("2024-02-12")
 
@@ -616,33 +612,33 @@ class TestForexFactoryCalendarCollector:
         assert len(errors) == 1
         assert "Invalid date format" in errors[0]
 
-    @patch("requests.head")
-    def test_health_check_success(self, mock_head, collector):
+    @patch.object(ForexFactoryCalendarCollector, "_init_driver")
+    def test_health_check_success(self, mock_init_driver, collector):
         """Test successful health check."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_head.return_value = mock_response
+        mock_driver = Mock()
+        mock_driver.title = "Forex Factory - Economic Calendar"
+        mock_init_driver.return_value = mock_driver
 
         result = collector.health_check()
 
         assert result is True
-        mock_head.assert_called_once()
+        mock_driver.get.assert_called_once()
 
-    @patch("requests.head")
-    def test_health_check_failure(self, mock_head, collector):
-        """Test failed health check."""
-        mock_response = Mock()
-        mock_response.status_code = 503
-        mock_head.return_value = mock_response
+    @patch.object(ForexFactoryCalendarCollector, "_init_driver")
+    def test_health_check_failure(self, mock_init_driver, collector):
+        """Test health check when site returns error."""
+        mock_driver = Mock()
+        mock_driver.title = "Error - 503 Service Unavailable"
+        mock_init_driver.return_value = mock_driver
 
         result = collector.health_check()
 
         assert result is False
 
-    @patch("requests.head")
-    def test_health_check_exception(self, mock_head, collector):
-        """Test health check with exception."""
-        mock_head.side_effect = Exception("Connection error")
+    @patch.object(ForexFactoryCalendarCollector, "_init_driver")
+    def test_health_check_exception(self, mock_init_driver, collector):
+        """Test health check when request raises exception."""
+        mock_init_driver.side_effect = Exception("Connection error")
 
         result = collector.health_check()
 
@@ -696,16 +692,17 @@ class TestRateLimiting:
 
     def test_rate_limit_respects_minimum(self, collector):
         """Test that rate limit respects minimum delay."""
-        collector._last_request_time = 0  # Reset to force wait
-
         import time
+
+        # Set last request time to now, forcing a wait on next call
+        collector._last_request_time = time.time()
 
         start = time.time()
         collector._apply_rate_limit()
         elapsed = time.time() - start
 
-        # Should wait at least min_delay
-        assert elapsed >= collector.min_delay - 0.05
+        # Should wait at least min_delay (allowing small tolerance for random jitter)
+        assert elapsed >= collector.min_delay - 0.01
 
 
 class TestRobotsTxtCompliance:
@@ -852,15 +849,15 @@ class TestErrorHandling:
 class TestIntegration:
     """Integration tests for the Forex Factory Calendar Collector."""
 
-    @patch.object(ForexFactoryCalendarCollector, "_make_request")
-    def test_full_collection_workflow(self, mock_request, tmp_path):
+    @patch.object(ForexFactoryCalendarCollector, "_fetch_page_with_selenium")
+    def test_full_collection_workflow(self, mock_fetch, tmp_path):
         """Test the complete event collection workflow."""
         sample_html = """
         <html>
         <body>
             <table class="calendar__table">
                 <tr class="calendar__row calendar__row--date">
-                    <td colspan="8">
+                    <td colspan="10">
                         <span class="date">Monday, February 12, 2024</span>
                     </td>
                 </tr>
@@ -870,22 +867,20 @@ class TestIntegration:
                     <td class="calendar__impact high">
                         <span title="High Impact">High</span>
                     </td>
-                    <td class="calendar__event">
-                        <a href="/news/1234">Test Event</a>
-                    </td>
+                    <td class="calendar__event">Test Event</td>
+                    <td class="calendar__sub"></td>
+                    <td class="calendar__detail"><a href="/news/1234"></a></td>
                     <td class="calendar__actual">100</td>
                     <td class="calendar__forecast">110</td>
                     <td class="calendar__previous">90</td>
-                    <td class="calendar__detail"></td>
+                    <td></td>
                 </tr>
             </table>
         </body>
         </html>
         """
 
-        mock_response = Mock()
-        mock_response.content = sample_html.encode("utf-8")
-        mock_request.return_value = mock_response
+        mock_fetch.return_value = sample_html
 
         collector = ForexFactoryCalendarCollector(
             min_delay=0.1,
@@ -909,8 +904,8 @@ class TestIntegration:
             assert "Test Event" in content
             assert "100" in content
 
-    @patch.object(ForexFactoryCalendarCollector, "_make_request")
-    def test_collection_with_robots_txt_blocking(self, mock_request, tmp_path):
+    @patch.object(ForexFactoryCalendarCollector, "_fetch_page_with_selenium")
+    def test_collection_with_robots_txt_blocking(self, mock_fetch, tmp_path):
         """Test collection when robots.txt blocks access."""
         collector = ForexFactoryCalendarCollector(
             min_delay=0.1,

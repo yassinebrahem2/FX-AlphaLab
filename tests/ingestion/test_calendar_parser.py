@@ -37,7 +37,7 @@ class TestCalendarPreprocessor:
         input_dir = tmp_path / "raw" / "calendar"
         input_dir.mkdir(parents=True, exist_ok=True)
 
-        csv_path = input_dir / "investing_economic_events_20240208.csv"
+        csv_path = input_dir / "forexfactory_calendar_2024-02-08.csv"
 
         # Write sample Bronze data
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -439,7 +439,7 @@ class TestIntegration:
         bronze_dir.mkdir(parents=True)
         silver_dir.mkdir(parents=True)
 
-        bronze_csv = bronze_dir / "investing_economic_events_20240208.csv"
+        bronze_csv = bronze_dir / "forexfactory_calendar_2024-02-08.csv"
 
         with open(bronze_csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(

@@ -125,7 +125,8 @@ class BasePreprocessor(ABC):
 
         start_str = start_date.strftime("%Y-%m-%d")
         end_str = end_date.strftime("%Y-%m-%d")
-        filename = f"{self.CATEGORY}_{identifier}_{start_str}_{end_str}.{format}"
+        parts = [self.CATEGORY] + ([identifier] if identifier else []) + [start_str, end_str]
+        filename = f"{'_'.join(parts)}.{format}"
         path = self.output_dir / filename
 
         if format == "csv":

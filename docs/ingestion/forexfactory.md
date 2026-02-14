@@ -15,6 +15,10 @@ Economic calendar data from Forex Factory providing scheduled macroeconomic even
 - **Comprehensive Coverage**: All major currencies (USD, EUR, GBP, JPY, CHF, AUD, CAD, NZD, CNY)
 - **Impact Levels**: High, Medium, Low impact classification
 - **Complete Data**: Event name, time, forecast, actual, and previous values
+- **Efficient Collection**: Month-view strategy reduces API requests by ~30x
+- **Lazy Loading Support**: Human-like scrolling behavior triggers dynamic content loading
+- **Cloudflare Bypass**: Undetected ChromeDriver for seamless data access
+- **GMT Timezone**: Automated timezone configuration via UI interaction
 - **Ethical Scraping**: Respects robots.txt with conservative rate limiting
 - **Error Resilient**: Comprehensive error handling and validation
 
@@ -202,6 +206,9 @@ The collector implements responsible scraping practices:
 - **Exponential backoff**: On 503 errors
 - **No aggressive retries**: Max 2 retries to avoid IP bans
 - **429 handling**: Exits gracefully on rate limiting
+- **Human-like scrolling**: Random scroll distances (60-100% viewport) with pauses (0.3-0.8s)
+- **Natural behavior**: 15% chance of small backwards scrolls to mimic reading
+- **Smooth scrolling**: CSS smooth scroll enabled for realistic page navigation
 
 ### User-Agent Rotation
 Rotates between legitimate browser user agents:
@@ -215,6 +222,107 @@ Rotates between legitimate browser user agents:
 - Proper error handling without hammering
 - Connection pooling via session reuse
 - Timeout handling (30 seconds default)
+
+## Technical Implementation
+
+### Month-View Optimization
+
+The collector uses an intelligent fetching strategy to minimize requests:
+
+**Single Day** (1 request):
+```
+?day=feb12.2026
+```
+
+**Same Week** (1 request):
+```
+?week=feb12.2026
+```
+
+**Same Month** (1 request):
+```
+?month=feb.2026
+```
+
+**Multiple Months** (N requests):
+```
+?month=jan.2026
+?month=feb.2026
+```
+
+**Performance Impact**:
+- 31-day month: 1 request vs 31 requests (97% reduction)
+- 2-month range: 2 requests vs 60+ requests (96% reduction)
+
+### Human-Like Scrolling for Lazy Loading
+
+Forex Factory uses virtual scrolling/lazy loading to reduce initial page load. The collector simulates human browsing behavior:
+
+**Scroll Characteristics**:
+- **Distance**: Random 60-100% of viewport height per scroll
+- **Timing**: 0.3-0.8 second pauses (human reading speed)
+- **Backtracking**: 15% chance of small backwards scroll (5-15% viewport)
+- **Smoothness**: CSS `scrollBehavior: 'smooth'` enabled
+- **Movement**: Relative scrolling via `scrollBy()` for natural motion
+
+**Algorithm**:
+```javascript
+// Enable smooth scrolling
+document.documentElement.style.scrollBehavior = 'smooth';
+
+while (current_position < total_height) {
+    // Random scroll distance
+    scroll_distance = viewport_height * random(0.6, 1.0);
+    window.scrollBy(0, scroll_distance);
+
+    // Human reading pause
+    sleep(random(0.3, 0.8));
+
+    // Occasional backwards scroll (15% probability)
+    if (random() < 0.15) {
+        window.scrollBy(0, -viewport_height * random(0.05, 0.15));
+    }
+
+    // Check for new content loaded
+    if (document.body.scrollHeight > total_height) {
+        total_height = document.body.scrollHeight;
+    }
+}
+```
+
+**Results**:
+- 97-99% capture rate (426/430 events on typical month)
+- Skipped rows are legitimate (weekends marked with `calendar__row--no-event`)
+- 16-22 scroll actions per month (~12 seconds)
+
+### Timezone Configuration
+
+Events are automatically configured to GMT timezone via UI interaction:
+
+**Method**: Simulates user clicking timezone dropdown
+**Target**: Settings > Timezone preference
+**Fallback**: GMT parameter in URL (`?timezone=GMT`)
+**Session**: Once per WebDriver session
+**Verification**: Checks dropdown value after interaction
+
+This ensures consistent UTC timestamps across all collected events.
+
+### Cloudflare Bypass
+
+Uses `undetected-chromedriver` to bypass Cloudflare protection:
+
+**Primary Method**: Undetected ChromeDriver (v3+)
+**Fallback**: Standard Selenium WebDriver + longer waits
+**Detection Avoidance**:
+- Random user agents
+- Real Chrome binary (not headless)
+- Human-like scrolling patterns
+- Natural timing variations
+
+**Challenge Handling**:
+- Waits for "Just a moment..." page to clear
+- Max 30 seconds for challenge completion
+- Retries with fresh driver instance if needed
 
 ## Error Handling
 
@@ -453,24 +561,30 @@ If scraping fails due to website changes:
 ```python
 ForexFactoryCalendarCollector(BaseCollector)
 ├── SOURCE_NAME = "forexfactory"
-├── __init__()                    # Initialize with rate limiting
-├── _load_robots_txt()           # Fetch robots.txt
-├── _get_random_delay()          # Rate limiting jitter
-├── _get_random_user_agent()     # User agent rotation
-├── _apply_rate_limit()          # Enforce delays
-├── _is_calendar_access_allowed() # robots.txt check
-├── _make_request()              # HTTP with retry logic
-├── _parse_impact_level()        # Parse impact from HTML
-├── _clean_value()               # Clean scraped values
-├── _parse_calendar_row()        # Parse event row
-├── _fetch_calendar_for_date()   # Fetch single date
-├── _fetch_calendar_data()       # Fetch date range
-├── collect_events()             # Public collection method
-├── save_to_csv()                # Export to Bronze
-├── get_events_dataframe()       # Convert to DataFrame
-├── validate_scraped_data()      # Data quality check
-├── collect()                    # BaseCollector interface
-└── health_check()               # BaseCollector interface
+├── __init__()                       # Initialize with rate limiting
+├── _load_robots_txt()              # Fetch robots.txt
+├── _get_random_delay()             # Rate limiting jitter
+├── _get_random_user_agent()        # User agent rotation
+├── _apply_rate_limit()             # Enforce delays
+├── _is_calendar_access_allowed()   # robots.txt check
+├── _init_driver()                  # Initialize Selenium WebDriver
+├── _set_timezone_to_gmt()          # Configure timezone via UI
+├── _fetch_page_with_selenium()     # Selenium with human scrolling
+├── _make_request()                 # HTTP with retry logic (fallback)
+├── _parse_impact_level()           # Parse impact from HTML
+├── _clean_value()                  # Clean scraped values
+├── _parse_calendar_row()           # Parse event row (10/11 cell formats)
+├── _parse_calendar_page()          # Parse full calendar page
+├── _is_event_in_range()            # Filter events by date range
+├── _fetch_calendar_by_url()        # Fetch day/week/month view
+├── _fetch_calendar_data()          # Fetch date range (smart strategy)
+├── collect_events()                # Public collection method
+├── save_to_csv()                   # Export to Bronze
+├── get_events_dataframe()          # Convert to DataFrame
+├── validate_scraped_data()         # Data quality check
+├── collect()                       # BaseCollector interface
+├── health_check()                  # BaseCollector interface
+└── close()                         # Cleanup Selenium resources
 ```
 
 ### Rate Limiting Flow
