@@ -9,7 +9,9 @@ FX-AlphaLab is a multi-agent AI framework for FX market analysis. The project is
 **Current Status**:
 - Branch: `dev` (all PRs target here, never `main` directly)
 - Phase: W3-W6 Data Acquisition & Understanding
-- Collectors implemented: MT5, FRED, ECB, Calendar
+- Collectors implemented:
+  - Tabular: MT5, FRED, ECB, ForexFactory Calendar
+  - Document: Fed, ECB News, GDELT, BoE
 - Next milestone: W6 presentation + report + notebooks + datasets
 
 ## Core Principles
@@ -91,9 +93,13 @@ Business-ready analysis results (W7+):
 - `outputs/alpha/` - Alpha recommendations (W9+)
 - `outputs/reports/` - LLM-generated explanations (W12+)
 
-## BaseCollector Pattern
+## Collector Patterns
 
-All data collectors inherit from `BaseCollector` (src/ingestion/collectors/base_collector.py):
+The project uses two collector types based on data characteristics:
+
+### BaseCollector (Tabular Data)
+
+For numeric/structured data sources (FRED, ECB, MT5, economic calendars):
 
 ```python
 from abc import ABC, abstractmethod
@@ -123,7 +129,7 @@ class BaseCollector(ABC):
         pass
 ```
 
-**When implementing new collectors**:
+**When implementing tabular collectors**:
 1. Inherit from `BaseCollector`
 2. Set `SOURCE_NAME` class attribute
 3. Implement `collect()` returning dict of DataFrames

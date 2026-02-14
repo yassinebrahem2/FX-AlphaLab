@@ -36,6 +36,9 @@ All collectors and preprocessors are **pure Python libraries**:
 | **FRED** | Macroeconomic indicators | Daily | API key (free) |
 | **ECB** | Exchange rates & policy rates | Daily | None |
 | **ECB News** | Press releases, speeches, policy statements | Real-time | None |
+| **Fed** | FOMC statements, speeches, testimony | Real-time | None |
+| **GDELT** | Global news events | Real-time | None |
+| **BoE** | Bank of England speeches & reports | Real-time | None |
 | **MT5** | FX price data (OHLCV) | Real-time | Windows + MT5 terminal |
 | **Calendar** | Economic events | Real-time | None |
 
@@ -101,11 +104,21 @@ data/
 ## Schema Standards
 
 ### Bronze Layer (Raw)
+
+**Tabular Data** (FRED, ECB rates, MT5, calendar):
 - Preserve all source fields
 - Snake_case column names
 - UTF-8 encoding
 - CSV format
 - Filename: `{source}_{dataset}_{YYYYMMDD}.csv`
+
+**Document Data** (Fed news, ECB news, GDELT):
+- Preserve all source fields and metadata
+- JSON objects with nested structures
+- UTF-8 encoding
+- JSONL format (one JSON object per line)
+- Filename: `{document_type}_{YYYYMMDD}.jsonl`
+- Location: `data/raw/news/{source}/`
 
 ### Silver Layer (Normalized)
 - Standard columns: `timestamp_utc`, `series_id`/`pair`, `value`/`open`/`high`/`low`/`close`
@@ -135,18 +148,38 @@ python -m scripts.collect_fred_data --start 2023-01-01 --end 2023-12-31 --prepro
 
 ### Programmatic Usage
 
-Import collectors as libraries:
+**Tabular collectors** (BaseCollector):
 ```python
 from src.ingestion.collectors.fred_collector import FREDCollector
 from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer
 
 # Bronze collection
 collector = FREDCollector()
-data = collector.collect()
+data = collector.collect()  # Returns dict[str, pd.DataFrame]
+
+# Export to CSV
+for dataset_name, df in data.items():
+    collector.export_csv(df, dataset_name)
 
 # Silver preprocessing
 normalizer = MacroNormalizer()
 silver_data = normalizer.preprocess()
+```
+
+**Document collectors** (DocumentCollector):
+```python
+from src.ingestion.collectors.fed_collector import FedCollector
+
+# Bronze collection
+collector = FedCollector(output_dir=Path("data/raw/news/fed"))
+data = collector.collect()  # Returns dict[str, list[dict]]
+
+# Export to JSONL
+for doc_type, documents in data.items():
+    collector.export_jsonl(documents, doc_type)
+
+# Or use convenience method
+paths = collector.export_all()
 ```
 
 ## Testing
