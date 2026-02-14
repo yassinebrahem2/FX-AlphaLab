@@ -341,52 +341,53 @@ class TestForexFactoryCalendarCollector:
 
     def test_fetch_calendar_data_single_day(self, collector):
         """Test collecting events for a single day."""
-        with patch.object(collector, "_fetch_calendar_for_date") as mock_fetch:
-            mock_fetch.return_value = (
-                [
-                    {
-                        "date": "2024-02-12",
-                        "time": "8:30am",
-                        "currency": "USD",
-                        "event": "CPI m/m",
-                        "impact": "High",
-                        "actual": "0.3%",
-                        "forecast": "0.3%",
-                        "previous": "0.4%",
-                    }
-                ],
-                "2024-02-12",
-            )
+        with patch.object(collector, "_fetch_calendar_by_url") as mock_fetch:
+            mock_fetch.return_value = [
+                {
+                    "date": "2024-02-12",
+                    "time": "8:30am",
+                    "currency": "USD",
+                    "event": "CPI m/m",
+                    "impact": "High",
+                    "actual": "0.3%",
+                    "forecast": "0.3%",
+                    "previous": "0.4%",
+                }
+            ]
 
             events = collector._fetch_calendar_data("2024-02-12", "2024-02-12")
 
             assert len(events) == 1
-            mock_fetch.assert_called_once_with("2024-02-12")
+            # For single day, should use day view
+            mock_fetch.assert_called_once()
+            call_args = mock_fetch.call_args[0]
+            assert call_args[1] == "day"  # view_type
 
     def test_fetch_calendar_data_date_range(self, collector):
-        """Test collecting events for a date range."""
-        with patch.object(collector, "_fetch_calendar_for_date") as mock_fetch:
-            mock_fetch.return_value = (
-                [
-                    {
-                        "date": "2024-02-12",
-                        "time": "8:30am",
-                        "currency": "USD",
-                        "event": "CPI m/m",
-                        "impact": "High",
-                        "actual": "0.3%",
-                        "forecast": "0.3%",
-                        "previous": "0.4%",
-                    }
-                ],
-                "2024-02-12",
-            )
+        """Test collecting events for a date range (same week)."""
+        mock_event = {
+            "date": "2024-02-12",
+            "time": "8:30am",
+            "currency": "USD",
+            "event": "CPI m/m",
+            "impact": "High",
+            "actual": "0.3%",
+            "forecast": "0.3%",
+            "previous": "0.4%",
+        }
 
-            events = collector._fetch_calendar_data("2024-02-12", "2024-02-14")
+        with patch.object(collector, "_fetch_calendar_by_url") as mock_fetch:
+            # Return same event for all days in the week view
+            mock_fetch.return_value = [mock_event] * 7
+            with patch.object(collector, "_is_event_in_range") as mock_range:
+                # Only accept first 3 events
+                mock_range.side_effect = [True, True, True] + [False] * 4
 
-            # Should be called for 3 days
-            assert mock_fetch.call_count == 3
-            assert len(events) == 3  # Same event returned 3 times
+                events = collector._fetch_calendar_data("2024-02-12", "2024-02-14")
+
+            # Should use week view (1 request) for 3 days in same week
+            assert mock_fetch.call_count == 1
+            assert len(events) == 3
 
     def test_fetch_calendar_data_invalid_date(self, collector):
         """Test collecting events with invalid date format."""

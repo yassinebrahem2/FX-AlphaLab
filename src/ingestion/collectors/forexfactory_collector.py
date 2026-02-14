@@ -1088,7 +1088,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
             self.logger.debug(f"Error parsing event date '{event_date_str}': {e}")
             return False
 
-    def _fetch_calendar_by_url(self, dt: datetime, view_type: str) -> list[dict[str, Any]]:
+    def _fetch_calendar_by_url(self, dt: datetime, view_type: str) -> list[dict[str, Any]] | None:
         """
         Fetch calendar data using specified view type (day/week/month).
 
@@ -1097,7 +1097,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
             view_type: 'day', 'week', or 'month'
 
         Returns:
-            List of event dictionaries
+            List of event dictionaries, or None if fetch completely failed
         """
         # Construct URL based on view type
         if view_type == "day":
@@ -1111,14 +1111,14 @@ class ForexFactoryCalendarCollector(BaseCollector):
             url = f"{self.CALENDAR_URL}?month={month_param}"
         else:
             self.logger.error(f"Invalid view type: {view_type}")
-            return []
+            return None
 
         self.logger.debug(f"Fetching {view_type} view: {url}")
 
         # Fetch the page
         page_content = self._fetch_page_with_selenium(url)
         if not page_content:
-            return []
+            return None
 
         # Parse all events from the page
         return self._parse_calendar_page(page_content)
@@ -1131,11 +1131,16 @@ class ForexFactoryCalendarCollector(BaseCollector):
             date_str: Date string in YYYY-MM-DD format
 
         Returns:
-            Tuple of (list of event dictionaries, date string for events)
+            Tuple of (list of event dictionaries, date string for events or None if fetch failed)
         """
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
             events = self._fetch_calendar_by_url(dt, "day")
+
+            # If fetch failed completely, return None for date
+            if events is None:
+                return [], None
+
             return events, date_str
         except ValueError:
             self.logger.warning(f"Invalid date format: {date_str}")
@@ -1308,19 +1313,26 @@ class ForexFactoryCalendarCollector(BaseCollector):
             # Single day - use day view
             self.logger.info("Using day view (1 request)")
             events = self._fetch_calendar_by_url(start_dt, "day")
-            all_events.extend(events)
+            if events is not None:
+                all_events.extend(events)
         elif num_days <= 7 and start_dt.isocalendar()[1] == end_dt.isocalendar()[1]:
             # Same week - use week view
             self.logger.info("Using week view (1 request)")
             events = self._fetch_calendar_by_url(start_dt, "week")
             # Filter to date range
-            all_events.extend([e for e in events if self._is_event_in_range(e, start_dt, end_dt)])
+            if events is not None:
+                all_events.extend(
+                    [e for e in events if self._is_event_in_range(e, start_dt, end_dt)]
+                )
         elif num_days <= 31 and start_dt.month == end_dt.month and start_dt.year == end_dt.year:
             # Same month - use month view
             self.logger.info("Using month view (1 request)")
             events = self._fetch_calendar_by_url(start_dt, "month")
             # Filter to date range
-            all_events.extend([e for e in events if self._is_event_in_range(e, start_dt, end_dt)])
+            if events is not None:
+                all_events.extend(
+                    [e for e in events if self._is_event_in_range(e, start_dt, end_dt)]
+                )
         else:
             # Multiple months - fetch each month separately
             self.logger.info("Using month views (multiple requests)")
@@ -1333,19 +1345,25 @@ class ForexFactoryCalendarCollector(BaseCollector):
                     self.logger.info(f"Fetching month: {current_date.strftime('%B %Y')}")
                     self._debug_count = 0  # Reset debug counter for each month
                     events = self._fetch_calendar_by_url(current_date, "month")
-                    self.logger.info(
-                        f"Fetched {len(events)} events for {current_date.strftime('%B %Y')}"
-                    )
 
-                    # Filter to date range
-                    filtered_events = [
-                        e for e in events if self._is_event_in_range(e, start_dt, end_dt)
-                    ]
-                    self.logger.info(
-                        f"After filtering to {start_dt.date()} - {end_dt.date()}: {len(filtered_events)} events"
-                    )
-                    all_events.extend(filtered_events)
-                    self.logger.info(f"Running total: {len(all_events)} events")
+                    if events is not None:
+                        self.logger.info(
+                            f"Fetched {len(events)} events for {current_date.strftime('%B %Y')}"
+                        )
+
+                        # Filter to date range
+                        filtered_events = [
+                            e for e in events if self._is_event_in_range(e, start_dt, end_dt)
+                        ]
+                        self.logger.info(
+                            f"After filtering to {start_dt.date()} - {end_dt.date()}: {len(filtered_events)} events"
+                        )
+                        all_events.extend(filtered_events)
+                        self.logger.info(f"Running total: {len(all_events)} events")
+                    else:
+                        self.logger.warning(
+                            f"Failed to fetch events for {current_date.strftime('%B %Y')}"
+                        )
                     months_fetched.add(month_key)
 
                 # Move to next month
