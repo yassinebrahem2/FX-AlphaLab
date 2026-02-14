@@ -8,9 +8,9 @@ Production-grade data collection system for FX-AlphaLab with standardized two-st
 - **[FRED](fred.md)** - Federal Reserve macroeconomic data
 - **[ECB Rates](ecb_rates.md)** - European Central Bank exchange rates & policy rates
 - **[ECB News](ecb_news.md)** - European Central Bank press releases & speeches
-- **[ECB News](ecb_news.md)** - ECB press releases, speeches, and policy statements
 - **[MT5](mt5.md)** - MetaTrader 5 FX price data (Windows only)
 - **[Calendar](calendar.md)** - Economic calendar events from Investing.com
+- **[Forex Factory](forexfactory.md)** - Economic calendar events from Forex Factory
 
 ## Quick Start
 
@@ -41,6 +41,9 @@ python -m scripts.collect_mt5_data --preprocess
 
 # Economic calendar events
 python -m scripts.collect_calendar_data --today --preprocess
+
+# Forex Factory calendar events
+python -m scripts.collect_forexfactory_data --today
 ```
 
 ## Data Pipeline
@@ -60,17 +63,16 @@ All collectors support:
 ```
 data/
 ├── raw/                  # Bronze layer
-│   ├── calendar/
-│   └── news/
-│       └── ecb/
+│   ├── calendar/         # Investing.com events
+│   ├── forexfactory/     # Forex Factory events
+│   ├── fred/             # FRED macro data
+│   ├── mt5/              # MT5 price data
+│   └── ecb/              # ECB data
 └── processed/            # Silver layer
-    ├── macro/
-    ├── ohlcv/
-    ├── events/
-    └── sentiment            # Silver layer
-    ├── macro/
-    ├── ohlcv/
-    └── events/
+    ├── macro/            # Normalized macro indicators
+    ├── ohlcv/            # Price data
+    ├── events/           # Economic events
+    └── sentiment/        # Sentiment analysis
 ```
 
 ## Testing

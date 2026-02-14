@@ -1,6 +1,6 @@
 """Economic Calendar Preprocessor (Bronze → Silver).
 
-Transforms raw economic calendar data from data/raw/calendar/
+Transforms raw economic calendar data from data/raw/forexfactory/
 to standardized Silver schema in data/processed/events/.
 
 Silver Schema (§3.2.3):
@@ -27,7 +27,7 @@ from src.shared.config import Config
 class CalendarPreprocessor(BasePreprocessor):
     """Preprocessor for economic calendar data (Bronze → Silver).
 
-    Transforms scraped calendar events from Investing.com into standardized
+    Transforms scraped calendar events from Forex Factory into standardized
     Silver schema following §3.2.3 requirements.
     """
 
@@ -42,12 +42,12 @@ class CalendarPreprocessor(BasePreprocessor):
         """Initialize the calendar preprocessor.
 
         Args:
-            input_dir: Directory containing Bronze calendar data (default: data/raw/calendar/)
+            input_dir: Directory containing Bronze calendar data (default: data/raw/forexfactory/)
             output_dir: Directory for Silver events data (default: data/processed/events/)
             log_file: Optional path for file-based logging
         """
         super().__init__(
-            input_dir=input_dir or Config.DATA_DIR / "raw" / "calendar",
+            input_dir=input_dir or Config.DATA_DIR / "raw" / "forexfactory",
             output_dir=output_dir or Config.DATA_DIR / "processed" / "events",
             log_file=log_file or Config.LOGS_DIR / "preprocessors" / "calendar_preprocessor.log",
         )
@@ -151,8 +151,10 @@ class CalendarPreprocessor(BasePreprocessor):
     def _parse_numeric_to_float(self, value: str | None) -> float | None:
         """Parse a numeric string (with optional suffixes like %, K, M, B, T) to float.
 
+        Handles pipe-separated values (e.g., '4.75|2.7') by taking the first value.
+
         Args:
-            value: Raw string value (e.g., '150K', '4.50%', '1.060T')
+            value: Raw string value (e.g., '150K', '4.50%', '1.060T', '4.75|2.7')
 
         Returns:
             Float value or None if parsing failed
@@ -165,6 +167,11 @@ class CalendarPreprocessor(BasePreprocessor):
             return None
 
         try:
+            # Handle pipe-separated values (e.g., bond auction yield|bid-to-cover)
+            # Take the first value only
+            if "|" in cleaned:
+                cleaned = cleaned.split("|")[0].strip()
+
             # Remove commas
             cleaned = cleaned.replace(",", "")
 
@@ -211,11 +218,19 @@ class CalendarPreprocessor(BasePreprocessor):
 
             # Add time if available (convert to string and check for valid content)
             if time_str is not None and pd.notna(time_str):
-                time_str_clean = str(time_str).strip()
+                time_str_clean = str(time_str).strip().lower()
                 if time_str_clean:
-                    time_match = re.match(r"(\d{1,2}):(\d{2})", time_str_clean)
+                    time_match = re.match(r"(\d{1,2}):(\d{2})\s*(am|pm)?", time_str_clean)
                     if time_match:
-                        hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2))
+                        period = time_match.group(3)
+
+                        if period == "pm" and hour != 12:
+                            hour += 12
+                        elif period == "am" and hour == 12:
+                            hour = 0
+
                         date_part = date_part.replace(hour=hour, minute=minute)
 
             # Set as UTC
@@ -223,6 +238,45 @@ class CalendarPreprocessor(BasePreprocessor):
 
         except (ValueError, TypeError):
             return None
+
+    def _extract_country_from_event_name(self, event_name: str) -> str | None:
+        """Extract country code from event name if it contains country-specific prefix.
+
+        Handles cases like "German WPI m/m" → "DE", "French GDP" → "FR".
+        This overrides currency-based mapping for eurozone country-specific events.
+
+        Args:
+            event_name: Event name string
+
+        Returns:
+            ISO 3166 alpha-2 code if country detected, None otherwise
+        """
+        if not event_name:
+            return None
+
+        # Country name patterns (case-insensitive)
+        country_patterns = {
+            r"\b(german|germany)\b": "DE",
+            r"\b(french|france)\b": "FR",
+            r"\b(italian|italy)\b": "IT",
+            r"\b(spanish|spain)\b": "ES",
+            r"\b(greek|greece)\b": "GR",
+            r"\b(portuguese|portugal)\b": "PT",
+            r"\b(dutch|netherlands)\b": "NL",
+            r"\b(belgian|belgium)\b": "BE",
+            r"\b(austrian|austria)\b": "AT",
+            r"\b(irish|ireland)\b": "IE",
+            r"\b(finnish|finland)\b": "FI",
+            r"\b(british|uk|u\.k\.)\b": "GB",
+            r"\b(us|u\.s\.)\b": "US",
+        }
+
+        event_lower = event_name.lower()
+        for pattern, code in country_patterns.items():
+            if re.search(pattern, event_lower):
+                return code
+
+        return None
 
     def _generate_event_id(self, timestamp: str | None, country: str, event_name: str) -> str:
         """Generate a unique event ID from timestamp, country, and event name.
@@ -252,8 +306,15 @@ class CalendarPreprocessor(BasePreprocessor):
             Normalized event dict
         """
         timestamp_utc = self._build_timestamp_utc(raw_event.get("date"), raw_event.get("time"))
-        country = self._to_country_code(raw_event.get("country"))
         event_name = raw_event.get("event", "")
+
+        # Try to extract country from event name first (e.g., "German WPI" → DE)
+        country = self._extract_country_from_event_name(event_name)
+
+        # Fall back to currency/country field mapping if not found in event name
+        if not country:
+            country_or_currency = raw_event.get("currency") or raw_event.get("country")
+            country = self._to_country_code(country_or_currency)
 
         return {
             "timestamp_utc": timestamp_utc,
@@ -264,7 +325,7 @@ class CalendarPreprocessor(BasePreprocessor):
             "actual": self._parse_numeric_to_float(raw_event.get("actual")),
             "forecast": self._parse_numeric_to_float(raw_event.get("forecast")),
             "previous": self._parse_numeric_to_float(raw_event.get("previous")),
-            "source": raw_event.get("source", "investing.com"),
+            "source": raw_event.get("source", "unknown"),
         }
 
     def preprocess(
@@ -290,8 +351,8 @@ class CalendarPreprocessor(BasePreprocessor):
         Returns:
             Dictionary with single key 'events' containing standardized DataFrame
         """
-        # Find all Bronze CSV files
-        csv_files = list(self.input_dir.glob("investing_*.csv"))
+        # Find all Bronze CSV files (Forex Factory calendar data)
+        csv_files = list(self.input_dir.glob("forexfactory_*.csv"))
 
         if not csv_files:
             self.logger.warning(f"No Bronze calendar CSV files found in {self.input_dir}")
@@ -305,6 +366,10 @@ class CalendarPreprocessor(BasePreprocessor):
             self.logger.info(f"Processing {csv_file.name}")
             try:
                 df = pd.read_csv(csv_file, encoding="utf-8")
+
+                # Forward-fill missing time values (Forex Factory groups events at same time)
+                # Empty time means "same as previous event"
+                df["time"] = df["time"].replace("", None).ffill()
 
                 # Normalize each event
                 for _, row in df.iterrows():
