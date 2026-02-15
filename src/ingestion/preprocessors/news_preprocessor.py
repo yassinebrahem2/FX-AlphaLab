@@ -74,7 +74,7 @@ class NewsPreprocessor(DocumentPreprocessor):
             "sentiment-analysis",
             model="ProsusAI/finbert",
             tokenizer="ProsusAI/finbert",
-            device=-1,  # CPU (-1), use 0 for GPU
+            device=0,  # CPU (-1), use 0 for GPU
         )
         self.logger.info("FinBERT model loaded successfully")
 
@@ -237,13 +237,10 @@ class NewsPreprocessor(DocumentPreprocessor):
         if not text:
             return 0.0, "neutral"
 
-        # Truncate text to FinBERT's max length (512 tokens ~ 2000 chars)
-        # Use first 2000 chars for very long articles
-        text_truncated = text[:2000] if len(text) > 2000 else text
-
         try:
-            # Get FinBERT prediction
-            result = self.sentiment_model(text_truncated)[0]
+            # Get FinBERT prediction with automatic truncation
+            # Pipeline handles tokenization and truncation to 512 tokens
+            result = self.sentiment_model(text, truncation=True, max_length=512)[0]
             label = result["label"].lower()  # "positive", "negative", or "neutral"
             confidence = result["score"]  # Confidence score [0, 1]
 
