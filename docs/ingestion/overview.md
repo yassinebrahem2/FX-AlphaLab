@@ -135,9 +135,9 @@ data/
 - CSV for macro/events, Parquet for OHLCV
 - Filename: `{source}_{identifier}_{start}_{end}.{ext}`
 
-**Document Data (News)**:
+**Document Data (Sentiment)**:
 - Partitioned Parquet with Hive-style structure
-- Location: `data/processed/news/source={source}/year={year}/month={month}/news_cleaned.parquet`
+- Location: `data/processed/sentiment/source={source}/year={year}/month={month}/sentiment_cleaned.parquet`
 - Schema: `[timestamp_utc, article_id, pair, headline, sentiment_score, sentiment_label, document_type, speaker, source, url]`
 - Partitions enable efficient querying by source/date
 

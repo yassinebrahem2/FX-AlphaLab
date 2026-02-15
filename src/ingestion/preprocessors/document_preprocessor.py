@@ -10,7 +10,7 @@ Handles Bronze → Silver transformation for document data:
 - Export to partitioned Parquet (Hive-style: source/year/month)
 
 Preprocessors read from data/raw/news/{source}/ and write to:
-  data/processed/news/source={source}/year={year}/month={month}/news_cleaned.parquet
+  data/processed/sentiment/source={source}/year={year}/month={month}/sentiment_cleaned.parquet
 """
 
 import hashlib
@@ -35,10 +35,10 @@ class DocumentPreprocessor(ABC):
         validate(): ensure data conforms to Silver contract.
 
     The export_partitioned() method handles Hive-style partitioning automatically:
-      Output: data/processed/news/source={source}/year={year}/month={month}/news_cleaned.parquet
+      Output: data/processed/sentiment/source={source}/year={year}/month={month}/sentiment_cleaned.parquet
     """
 
-    # No CATEGORY needed - all document data goes to data/processed/news/
+    # No CATEGORY needed - all document data goes to data/processed/sentiment/
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class DocumentPreprocessor(ABC):
 
         Args:
             input_dir: Directory containing Bronze JSONL data (e.g., data/raw/news/).
-            output_dir: Root directory for Silver exports (e.g., data/processed/news/).
+            output_dir: Root directory for Silver exports (e.g., data/processed/sentiment/).
             log_file: Optional path for file-based logging.
         """
         self.input_dir = input_dir
@@ -209,10 +209,10 @@ class DocumentPreprocessor(ABC):
     ) -> dict[str, Path]:
         """Export DataFrame to partitioned Parquet following Hive convention.
 
-        Structure: {output_dir}/source={source}/year={year}/month={month}/news_cleaned.parquet
+        Structure: {output_dir}/source={source}/year={year}/month={month}/sentiment_cleaned.parquet
 
         Example:
-            data/processed/news/source=fed/year=2026/month=02/news_cleaned.parquet
+            data/processed/sentiment/source=fed/year=2026/month=02/sentiment_cleaned.parquet
 
         Args:
             df: DataFrame to export. Must contain 'source' and 'timestamp_utc' columns.
@@ -264,8 +264,8 @@ class DocumentPreprocessor(ABC):
 
             partition_path.mkdir(parents=True, exist_ok=True)
 
-            # File name: news_cleaned.parquet (consistent across all partitions)
-            file_path = partition_path / "news_cleaned.parquet"
+            # File name: sentiment_cleaned.parquet (consistent across all partitions)
+            file_path = partition_path / "sentiment_cleaned.parquet"
 
             # Drop only year/month columns (temporary partitioning helpers)
             # Keep source column - it's part of the schema and needed for queries

@@ -6,7 +6,7 @@ Handles news from all DocumentCollector sources (Fed, ECB News, GDELT, BoE):
 - Extract currency pairs (regex)
 - Generate article IDs
 - Map to Silver sentiment schema
-- Export to data/processed/news/ (partitioned by source/year/month)
+- Export to data/processed/sentiment/ (partitioned by source/year/month)
 
 Silver Schema (10 fields):
     - timestamp_utc: Publication timestamp in UTC (ISO 8601)
@@ -65,7 +65,7 @@ class NewsPreprocessor(DocumentPreprocessor):
 
         Args:
             input_dir: Directory containing Bronze JSONL files (data/raw/news/).
-            output_dir: Directory for Silver Parquet output (data/processed/news/).
+            output_dir: Directory for Silver Parquet output (data/processed/sentiment/).
             log_file: Optional path for file-based logging.
         """
         super().__init__(input_dir, output_dir, log_file)

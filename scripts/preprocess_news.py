@@ -45,7 +45,7 @@ def main():
 
     # Setup directories
     input_dir = Config.DATA_DIR / "raw" / "news"
-    output_dir = Config.DATA_DIR / "processed" / "news"
+    output_dir = Config.DATA_DIR / "processed" / "sentiment"
     log_file = Config.LOGS_DIR / "preprocessors" / f"news_{datetime.now():%Y%m%d_%H%M%S}.log"
 
     print("News Preprocessor")
