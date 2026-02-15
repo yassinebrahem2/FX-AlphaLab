@@ -44,6 +44,7 @@ Example:
 
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 from src.ingestion.collectors.boe_collector import BoECollector
@@ -212,6 +213,27 @@ def collect_from_source(
     except Exception as e:
         logger.error("Failed to collect from %s: %s", source, e, exc_info=True)
         return 0
+
+
+def collect_source_wrapper(source: str, start_date: datetime, end_date: datetime, logger):
+    """Wrapper function for parallel collection.
+
+    Args:
+        source: Source name (fed, ecb, boe)
+        start_date: Start of date range
+        end_date: End of date range
+        logger: Logger instance
+
+    Returns:
+        Tuple of (source, document_count)
+    """
+    try:
+        collector = get_collector(source, logger)
+        count = collect_from_source(collector, source, start_date, end_date, logger)
+        return (source, count)
+    except Exception as e:
+        logger.error("Failed to initialize %s collector: %s", source, e, exc_info=True)
+        return (source, 0)
 
 
 def preprocess_news(sources: list[str], logger) -> bool:
@@ -397,16 +419,33 @@ def main() -> int:
         logger.info("=" * 60)
         logger.info("Stage 1: Bronze Layer Collection (Raw Data)")
         logger.info("=" * 60)
+        logger.info("Running parallel collection from %d source(s)...", len(sources))
 
+        # Run collections in parallel using ThreadPoolExecutor
         total_collected = 0
-        for source in sources:
-            try:
-                collector = get_collector(source, logger)
-                count = collect_from_source(collector, source, start_date, end_date, logger)
-                total_collected += count
-            except Exception as e:
-                logger.error("Failed to initialize %s collector: %s", source, e, exc_info=True)
-                continue
+        collection_results = {}
+
+        with ThreadPoolExecutor(max_workers=len(sources)) as executor:
+            # Submit all collection tasks
+            future_to_source = {
+                executor.submit(
+                    collect_source_wrapper, source, start_date, end_date, logger
+                ): source
+                for source in sources
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_source):
+                source = future_to_source[future]
+                try:
+                    source_name, count = future.result()
+                    collection_results[source_name] = count
+                    total_collected += count
+                except Exception as e:
+                    logger.error(
+                        "Unexpected error collecting from %s: %s", source, e, exc_info=True
+                    )
+                    collection_results[source] = 0
 
         if total_collected == 0:
             logger.warning("No documents collected from any source")
@@ -417,6 +456,8 @@ def main() -> int:
         logger.info("Collection Summary")
         logger.info("=" * 60)
         logger.info("Total documents collected: %d", total_collected)
+        for source, count in collection_results.items():
+            logger.info("  • %s: %d documents", source.upper(), count)
         logger.info("Bronze layer location: %s", Config.DATA_DIR / "raw" / "news")
 
         # Optional preprocessing
