@@ -267,8 +267,10 @@ class DocumentPreprocessor(ABC):
             # File name: news_cleaned.parquet (consistent across all partitions)
             file_path = partition_path / "news_cleaned.parquet"
 
-            # Drop partition columns from DataFrame (encoded in path)
-            output_df = group_df.drop(columns=partition_cols)
+            # Drop only year/month columns (temporary partitioning helpers)
+            # Keep source column - it's part of the schema and needed for queries
+            cols_to_drop = [col for col in ["year", "month"] if col in group_df.columns]
+            output_df = group_df.drop(columns=cols_to_drop)
 
             # Write Parquet
             output_df.to_parquet(file_path, index=False, engine="pyarrow", compression="snappy")
