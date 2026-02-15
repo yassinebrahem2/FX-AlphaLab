@@ -287,9 +287,24 @@ def preprocess_news(sources: list[str], logger) -> bool:
     )
 
     try:
-        # Preprocess Bronze data (returns dict of source -> DataFrame)
+        # Preprocess Bronze data - process each source separately
         logger.info("Processing Bronze JSONL files...")
-        result = preprocessor.preprocess(sources=sources)
+        result = {}
+
+        for source in sources:
+            source_dir = input_dir / source
+            if source_dir.exists() and list(source_dir.glob("*.jsonl")):
+                try:
+                    logger.info("  Processing %s...", source.upper())
+                    df = preprocessor.preprocess(source=source)
+                    if not df.empty:
+                        result[source] = df
+                        logger.info("    ✓ %d articles processed", len(df))
+                    else:
+                        logger.warning("    ⚠ No articles processed from %s", source)
+                except Exception as e:
+                    logger.error("    ✗ Failed to process %s: %s", source, e)
+                    continue
 
         if not result or all(df.empty for df in result.values()):
             logger.warning("No data to preprocess")
