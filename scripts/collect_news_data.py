@@ -49,6 +49,7 @@ from datetime import datetime, timedelta
 
 from src.ingestion.collectors.boe_collector import BoECollector
 from src.ingestion.collectors.ecb_news_collector import ECBNewsCollector
+from src.ingestion.collectors.ecb_scraper_collector import ECBScraperCollector
 from src.ingestion.collectors.fed_collector import FedCollector
 from src.ingestion.preprocessors.news_preprocessor import NewsPreprocessor
 from src.shared.config import Config
@@ -119,6 +120,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--no-headless",
+        action="store_true",
+        help="Run ECB scraper with visible browser window (default: headless)",
+    )
+
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -128,12 +135,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def get_collector(source: str, logger):
+# ECB uses RSS for short ranges, Selenium scraper for historical backfill
+ECB_RSS_THRESHOLD_DAYS = 14
+
+
+def get_collector(
+    source: str,
+    logger,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    *,
+    headless: bool = True,
+):
     """Initialize collector for given source.
+
+    For ECB, intelligently routes to RSS (≤14 days) or scraper (>14 days)
+    based on the requested date range.
 
     Args:
         source: Source name (fed, ecb, boe)
         logger: Logger instance
+        start_date: Optional start date (used for ECB routing)
+        end_date: Optional end date (used for ECB routing)
 
     Returns:
         Collector instance
@@ -141,19 +164,32 @@ def get_collector(source: str, logger):
     Raises:
         ValueError: If source is not supported
     """
+    if source not in AVAILABLE_SOURCES:
+        raise ValueError(f"Unknown source: {source}. Available: {', '.join(AVAILABLE_SOURCES)}")
+
+    output_dir = Config.DATA_DIR / "raw" / "news" / source
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Intelligent ECB routing based on date range
+    if source == "ecb" and start_date and end_date:
+        date_range_days = (end_date - start_date).days
+        if date_range_days > ECB_RSS_THRESHOLD_DAYS:
+            logger.info(
+                "ECB: date range %d days > %d threshold, using Selenium scraper",
+                date_range_days,
+                ECB_RSS_THRESHOLD_DAYS,
+            )
+            return ECBScraperCollector(output_dir=output_dir, headless=headless)
+        else:
+            logger.info("ECB: date range %d days, using RSS collector", date_range_days)
+
     collectors = {
         "fed": FedCollector,
         "ecb": ECBNewsCollector,
         "boe": BoECollector,
     }
 
-    if source not in collectors:
-        raise ValueError(f"Unknown source: {source}. Available: {', '.join(AVAILABLE_SOURCES)}")
-
     collector_class = collectors[source]
-    output_dir = Config.DATA_DIR / "raw" / "news" / source
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     logger.info("Initializing %s collector", source.upper())
     return collector_class(output_dir=output_dir)
 
@@ -215,7 +251,14 @@ def collect_from_source(
         return 0
 
 
-def collect_source_wrapper(source: str, start_date: datetime, end_date: datetime, logger):
+def collect_source_wrapper(
+    source: str,
+    start_date: datetime,
+    end_date: datetime,
+    logger,
+    *,
+    headless: bool = True,
+):
     """Wrapper function for parallel collection.
 
     Args:
@@ -223,12 +266,13 @@ def collect_source_wrapper(source: str, start_date: datetime, end_date: datetime
         start_date: Start of date range
         end_date: End of date range
         logger: Logger instance
+        headless: Run browser in headless mode (ECB scraper only)
 
     Returns:
         Tuple of (source, document_count)
     """
     try:
-        collector = get_collector(source, logger)
+        collector = get_collector(source, logger, start_date, end_date, headless=headless)
         count = collect_from_source(collector, source, start_date, end_date, logger)
         return (source, count)
     except Exception as e:
@@ -442,9 +486,15 @@ def main() -> int:
 
         with ThreadPoolExecutor(max_workers=len(sources)) as executor:
             # Submit all collection tasks
+            headless = not args.no_headless
             future_to_source = {
                 executor.submit(
-                    collect_source_wrapper, source, start_date, end_date, logger
+                    collect_source_wrapper,
+                    source,
+                    start_date,
+                    end_date,
+                    logger,
+                    headless=headless,
                 ): source
                 for source in sources
             }
