@@ -38,6 +38,8 @@ dependencies = [
     "selenium>=4.0",
     "undetected-chromedriver>=3.5",
     "webdriver-manager>=4.0",
+    "transformers>=4.30",
+    "torch>=2.0",
 ]
 
 

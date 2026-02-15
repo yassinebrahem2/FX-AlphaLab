@@ -84,8 +84,9 @@ Normalized, validated data with standardized schemas:
   - Schema: `[timestamp_utc, series_id, value, source, frequency, units]`
 - **Events**: `data/processed/events/events_{START}_{END}.csv`
   - Schema: `[timestamp_utc, event_id, country, event_name, impact, actual, forecast, previous, source]`
-- **Sentiment**: `data/processed/sentiment/sentiment_{START}_{END}.parquet`
+- **News** (Partitioned Parquet): `data/processed/news/source={SOURCE}/year={YYYY}/month={MM}/news_cleaned.parquet`
   - Schema: `[timestamp_utc, article_id, pair, headline, sentiment_score, sentiment_label, document_type, speaker, source, url]`
+  - Partitioned by source (fed, ecb, boe, gdelt), year, and month for efficient querying
 
 ### Gold (Outputs) - outputs/
 Business-ready analysis results (W7+):

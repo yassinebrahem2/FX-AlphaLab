@@ -88,17 +88,23 @@ python -m scripts.collect_calendar_data --today --preprocess
 data/
 ├── raw/                    # Bronze layer (source format)
 │   ├── calendar/          # Calendar CSV files
-│   └── news/              # News content
-│       └── ecb/           # ECB JSONL files
+│   └── news/              # News content (JSONL)
+│       ├── ecb/           # ECB JSONL files
+│       ├── fed/           # Fed JSONL files
+│       ├── boe/           # BoE JSONL files
+│       └── gdelt/         # GDELT JSONL files
 │
 └── processed/             # Silver layer (normalized)
     ├── macro/             # Macroeconomic indicators (CSV)
     ├── ohlcv/             # Price data (Parquet)
     ├── events/            # Economic events (CSV)
-    └── sentiment/         # Sentiment scores (futureized)
-    ├── macro/             # Macroeconomic indicators (CSV)
-    ├── ohlcv/             # Price data (Parquet)
-    └── events/            # Economic events (CSV)
+    └── news/              # News with sentiment (Partitioned Parquet)
+        ├── source=ecb/
+        │   └── year=2026/
+        │       └── month=02/
+        │           └── news_cleaned.parquet
+        ├── source=fed/
+        └── source=boe/
 ```
 
 ## Schema Standards
@@ -121,11 +127,19 @@ data/
 - Location: `data/raw/news/{source}/`
 
 ### Silver Layer (Normalized)
+
+**Tabular Data**:
 - Standard columns: `timestamp_utc`, `series_id`/`pair`, `value`/`open`/`high`/`low`/`close`
 - ISO 8601 timestamps (UTC)
 - Lowercase snake_case
 - CSV for macro/events, Parquet for OHLCV
 - Filename: `{source}_{identifier}_{start}_{end}.{ext}`
+
+**Document Data (News)**:
+- Partitioned Parquet with Hive-style structure
+- Location: `data/processed/news/source={source}/year={year}/month={month}/news_cleaned.parquet`
+- Schema: `[timestamp_utc, article_id, pair, headline, sentiment_score, sentiment_label, document_type, speaker, source, url]`
+- Partitions enable efficient querying by source/date
 
 ## Common Operations
 
