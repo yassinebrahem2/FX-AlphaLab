@@ -199,7 +199,7 @@ class NewsPreprocessor(DocumentPreprocessor):
         """
         title = doc["title"]
         timestamp_raw = doc.get("timestamp_published") or doc["timestamp_collected"]
-        source = doc["source"]
+        source = doc["source"].lower()  # Normalize to lowercase (BoE → boe)
         url = doc.get("url", "")
         document_type = doc.get("document_type", "article")
         speaker = doc.get("speaker") or doc.get("metadata", {}).get("author")

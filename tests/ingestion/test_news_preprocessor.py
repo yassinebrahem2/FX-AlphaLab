@@ -209,8 +209,19 @@ class TestNewsPreprocessor:
         """Test source → currency mapping for all sources."""
         for doc in sample_documents:
             record = preprocessor._extract_metadata(doc)
-            expected = preprocessor.SOURCE_CURRENCY_MAP.get(doc["source"], "OTHER")
+            expected = preprocessor.SOURCE_CURRENCY_MAP.get(doc["source"].lower(), "OTHER")
             assert record["currency"] == expected
+
+    def test_source_case_normalization(self, preprocessor: NewsPreprocessor):
+        """Test that mixed-case source names are normalized to lowercase."""
+        doc = {
+            "source": "BoE",
+            "timestamp_collected": "2026-02-12T10:00:00Z",
+            "title": "Bank of England statement",
+        }
+        record = preprocessor._extract_metadata(doc)
+        assert record["source"] == "boe"
+        assert record["currency"] == "GBP"
 
     def test_preprocess_full_pipeline(
         self,
