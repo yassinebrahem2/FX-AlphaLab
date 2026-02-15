@@ -204,8 +204,8 @@ def collect_from_source(
                 logger.info("  • %s: %d documents", doc_type, len(docs))
 
         logger.info("  • Exported to: %s", collector.output_dir)
-        for path in exported_paths:
-            logger.info("    - %s", path.name)
+        for doc_type, path in exported_paths.items():
+            logger.info("    - %s: %s", doc_type, path.name)
 
         return total_docs
 
