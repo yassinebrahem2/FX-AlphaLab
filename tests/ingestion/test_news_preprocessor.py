@@ -23,7 +23,7 @@ class TestNewsPreprocessor:
                 "timestamp_published": "2026-02-12T09:00:00Z",
                 "url": "https://www.federalreserve.gov/newsevents/pressreleases/statement.htm",
                 "title": "Federal Reserve announces rate decision",
-                "content": "The Federal Reserve decided to maintain interest rates at current levels. The economy shows moderate growth with inflation approaching target.",
+                "content": "The Federal Reserve decided to maintain interest rates.",
                 "document_type": "statement",
                 "speaker": "Jerome Powell",
                 "metadata": {"category": "monetary_policy"},
@@ -33,19 +33,19 @@ class TestNewsPreprocessor:
                 "timestamp_collected": "2026-02-12T14:00:00Z",
                 "timestamp_published": "2026-02-12T13:00:00Z",
                 "url": "https://www.ecb.europa.eu/press/pr/date/2026/html/speech.en.html",
-                "title": "ECB President discusses EURUSD and monetary policy outlook",
-                "content": "Christine Lagarde addressed concerns about the euro's strength against the dollar. Policy remains accommodative to support recovery.",
+                "title": "ECB President discusses monetary policy outlook",
+                "content": "Christine Lagarde addressed concerns about policy.",
                 "document_type": "speech",
                 "speaker": "Christine Lagarde",
                 "metadata": {"author": "Christine Lagarde"},
             },
             {
-                "source": "gdelt",
+                "source": "boe",
                 "timestamp_collected": "2026-02-12T16:00:00Z",
                 "timestamp_published": "2026-02-12T15:30:00Z",
-                "url": "https://example.com/news/gbp-rallies",
+                "url": "https://www.bankofengland.co.uk/news/2026/statement",
                 "title": "Sterling rallies on positive GDP data",
-                "content": "The British pound rose sharply against the US dollar following better-than-expected economic growth figures.",
+                "content": "The British pound rose sharply.",
                 "document_type": "article",
                 "speaker": None,
                 "metadata": {},
@@ -53,19 +53,30 @@ class TestNewsPreprocessor:
         ]
 
     @pytest.fixture
+    def mock_sentiment_results(self) -> list[dict]:
+        """Default mock sentiment results for 3 documents."""
+        return [
+            {"label": "neutral", "score": 0.82},
+            {"label": "positive", "score": 0.75},
+            {"label": "positive", "score": 0.91},
+        ]
+
+    @pytest.fixture
     def preprocessor(self, tmp_path: Path) -> NewsPreprocessor:
         """NewsPreprocessor instance with temp directories."""
         input_dir = tmp_path / "raw" / "news"
-        output_dir = tmp_path / "processed" / "news"
+        output_dir = tmp_path / "processed" / "sentiment"
         input_dir.mkdir(parents=True)
         output_dir.mkdir(parents=True)
 
-        # Mock FinBERT model loading to avoid downloading model in tests
-        with patch("src.ingestion.preprocessors.news_preprocessor.pipeline") as mock_pipeline:
+        with (
+            patch("src.ingestion.preprocessors.news_preprocessor.pipeline") as mock_pipeline,
+            patch("src.ingestion.preprocessors.news_preprocessor.torch") as mock_torch,
+        ):
+            mock_torch.cuda.is_available.return_value = False
             mock_model = Mock()
             mock_pipeline.return_value = mock_model
             preprocessor = NewsPreprocessor(input_dir=input_dir, output_dir=output_dir)
-            # Keep the mock model for tests to configure
             preprocessor._mock_model = mock_model
             return preprocessor
 
@@ -86,7 +97,7 @@ class TestNewsPreprocessor:
 
     def test_initialization(self, preprocessor: NewsPreprocessor):
         """Test NewsPreprocessor initializes correctly."""
-        assert preprocessor.CATEGORY == "news"
+        assert preprocessor.SOURCE_CURRENCY_MAP == {"fed": "USD", "ecb": "EUR", "boe": "GBP"}
         assert preprocessor.sentiment_model is not None
         assert preprocessor.input_dir.exists()
         assert preprocessor.output_dir.exists()
@@ -139,74 +150,77 @@ class TestNewsPreprocessor:
         )
         assert id1 == id3
 
-    def test_analyze_sentiment(self, preprocessor: NewsPreprocessor):
-        """Test FinBERT sentiment analysis."""
-        # Configure mock to return positive sentiment
-        preprocessor._mock_model.return_value = [{"label": "positive", "score": 0.95}]
-        score, label = preprocessor._analyze_sentiment(
-            "The economy is performing fantastically well with strong growth!"
-        )
-        assert score > 0
-        assert label == "positive"
+    def test_analyze_sentiment_batch(self, preprocessor: NewsPreprocessor):
+        """Test FinBERT batch sentiment analysis."""
+        # Configure mock to return batch results
+        preprocessor._mock_model.return_value = [
+            {"label": "positive", "score": 0.95},
+            {"label": "negative", "score": 0.88},
+            {"label": "neutral", "score": 0.75},
+        ]
 
-        # Configure mock to return negative sentiment
-        preprocessor._mock_model.return_value = [{"label": "negative", "score": 0.88}]
-        score, label = preprocessor._analyze_sentiment(
-            "The economy is terrible and recession risks are increasing."
-        )
-        assert score < 0
-        assert label == "negative"
+        texts = [
+            "The economy is performing fantastically well!",
+            "Recession risks are increasing sharply.",
+            "The central bank announced a meeting date.",
+        ]
+        scores, labels = preprocessor._analyze_sentiment_batch(texts)
 
-        # Configure mock to return neutral sentiment
-        preprocessor._mock_model.return_value = [{"label": "neutral", "score": 0.75}]
-        score, label = preprocessor._analyze_sentiment("The central bank announced a meeting date.")
-        assert score == 0.0
-        assert label == "neutral"
+        assert len(scores) == 3
+        assert len(labels) == 3
+        assert scores[0] == 0.95
+        assert labels[0] == "positive"
+        assert scores[1] == -0.88
+        assert labels[1] == "negative"
+        assert scores[2] == 0.0
+        assert labels[2] == "neutral"
 
-        # Empty text
-        score, label = preprocessor._analyze_sentiment("")
-        assert score == 0.0
-        assert label == "neutral"
+    def test_analyze_sentiment_batch_empty_texts(self, preprocessor: NewsPreprocessor):
+        """Test batch sentiment handles empty strings."""
+        preprocessor._mock_model.return_value = [
+            {"label": "positive", "score": 0.9},
+        ]
 
-    def test_extract_currency_pairs(self, preprocessor: NewsPreprocessor):
-        """Test currency pair extraction."""
-        # Specific pairs mentioned
-        pairs = preprocessor._extract_currency_pairs(
-            title="EURUSD and GBPUSD analysis",
-            content="The EUR/USD pair rose while GBP/USD fell.",
-        )
-        assert "EURUSD" in pairs
-        assert "GBPUSD" in pairs
+        scores, labels = preprocessor._analyze_sentiment_batch(["", "Some headline", ""])
 
-        # No specific pairs
-        pairs = preprocessor._extract_currency_pairs(
-            title="General forex market update",
-            content="Currency markets were volatile today.",
-        )
-        assert pairs == "ALL"
+        assert scores[0] == 0.0
+        assert labels[0] == "neutral"
+        assert scores[1] == 0.9
+        assert labels[1] == "positive"
+        assert scores[2] == 0.0
+        assert labels[2] == "neutral"
 
-    def test_transform_document(self, preprocessor: NewsPreprocessor, sample_documents: list[dict]):
-        """Test transforming single Bronze document to Silver record."""
+    def test_extract_metadata(self, preprocessor: NewsPreprocessor, sample_documents: list[dict]):
+        """Test extracting metadata from a Bronze document."""
         doc = sample_documents[0]
-        record = preprocessor._transform_document(doc)
+        record = preprocessor._extract_metadata(doc)
 
         assert record["timestamp_utc"] == "2026-02-12T09:00:00Z"
         assert isinstance(record["article_id"], str)
         assert len(record["article_id"]) == 16
         assert record["headline"] == "Federal Reserve announces rate decision"
-        assert isinstance(record["sentiment_score"], float)
-        assert record["sentiment_label"] in ["positive", "neutral", "negative"]
+        assert record["currency"] == "USD"
         assert record["document_type"] == "statement"
         assert record["speaker"] == "Jerome Powell"
         assert record["source"] == "fed"
-        assert (
-            record["url"] == "https://www.federalreserve.gov/newsevents/pressreleases/statement.htm"
-        )
+        assert "sentiment_score" not in record
+
+    def test_currency_mapping(self, preprocessor: NewsPreprocessor, sample_documents: list[dict]):
+        """Test source → currency mapping for all sources."""
+        for doc in sample_documents:
+            record = preprocessor._extract_metadata(doc)
+            expected = preprocessor.SOURCE_CURRENCY_MAP.get(doc["source"], "OTHER")
+            assert record["currency"] == expected
 
     def test_preprocess_full_pipeline(
-        self, preprocessor: NewsPreprocessor, setup_bronze_data: Path
+        self,
+        preprocessor: NewsPreprocessor,
+        setup_bronze_data: Path,
+        mock_sentiment_results: list[dict],
     ):
         """Test full preprocessing pipeline."""
+        preprocessor._mock_model.return_value = mock_sentiment_results
+
         df = preprocessor.preprocess()
 
         assert isinstance(df, pd.DataFrame)
@@ -216,7 +230,7 @@ class TestNewsPreprocessor:
         required_columns = [
             "timestamp_utc",
             "article_id",
-            "pair",
+            "currency",
             "headline",
             "sentiment_score",
             "sentiment_label",
@@ -233,13 +247,12 @@ class TestNewsPreprocessor:
 
     def test_validate_schema(self, preprocessor: NewsPreprocessor):
         """Test schema validation."""
-        # Valid DataFrame
         df = pd.DataFrame(
             [
                 {
                     "timestamp_utc": "2026-02-12T10:00:00Z",
                     "article_id": "abc123def4567890",
-                    "pair": "EURUSD",
+                    "currency": "USD",
                     "headline": "Test headline",
                     "sentiment_score": 0.5,
                     "sentiment_label": "positive",
@@ -263,9 +276,9 @@ class TestNewsPreprocessor:
         df = pd.DataFrame(
             [
                 {
-                    "timestamp_utc": None,  # Null in critical field
+                    "timestamp_utc": None,
                     "article_id": "abc123def4567890",
-                    "pair": "EURUSD",
+                    "currency": "USD",
                     "headline": "Test",
                     "sentiment_score": 0.5,
                     "sentiment_label": "positive",
@@ -286,9 +299,9 @@ class TestNewsPreprocessor:
                 {
                     "timestamp_utc": "2026-02-12T10:00:00Z",
                     "article_id": "abc123def4567890",
-                    "pair": "EURUSD",
+                    "currency": "USD",
                     "headline": "Test",
-                    "sentiment_score": 1.5,  # Invalid: outside [-1.0, 1.0]
+                    "sentiment_score": 1.5,
                     "sentiment_label": "positive",
                     "document_type": "statement",
                     "speaker": "Jerome Powell",
@@ -307,10 +320,10 @@ class TestNewsPreprocessor:
                 {
                     "timestamp_utc": "2026-02-12T10:00:00Z",
                     "article_id": "abc123def4567890",
-                    "pair": "EURUSD",
+                    "currency": "USD",
                     "headline": "Test",
                     "sentiment_score": 0.5,
-                    "sentiment_label": "very_positive",  # Invalid label
+                    "sentiment_label": "very_positive",
                     "document_type": "statement",
                     "speaker": "Jerome Powell",
                     "source": "fed",
@@ -328,7 +341,7 @@ class TestNewsPreprocessor:
                 {
                     "timestamp_utc": "2026-02-12T10:00:00Z",
                     "article_id": "abc123def4567890",
-                    "pair": "EURUSD",
+                    "currency": "USD",
                     "headline": "Test 1",
                     "sentiment_score": 0.5,
                     "sentiment_label": "positive",
@@ -339,8 +352,8 @@ class TestNewsPreprocessor:
                 },
                 {
                     "timestamp_utc": "2026-02-12T11:00:00Z",
-                    "article_id": "abc123def4567890",  # Duplicate
-                    "pair": "GBPUSD",
+                    "article_id": "abc123def4567890",
+                    "currency": "GBP",
                     "headline": "Test 2",
                     "sentiment_score": -0.3,
                     "sentiment_label": "negative",
@@ -361,7 +374,7 @@ class TestNewsPreprocessor:
                 {
                     "timestamp_utc": "2026-02-12T10:00:00Z",
                     "article_id": "abc123def4567890",
-                    "pair": "EURUSD",
+                    "currency": "USD",
                     "headline": "Test headline",
                     "sentiment_score": 0.5,
                     "sentiment_label": "positive",
@@ -379,11 +392,11 @@ class TestNewsPreprocessor:
         partition_key = list(output_paths.keys())[0]
         assert "source=fed" in partition_key
         assert "year=2026" in partition_key
-        assert "month=2" in partition_key
+        assert "month=02" in partition_key
 
         path = output_paths[partition_key]
         assert path.exists()
-        assert path.name == "news_cleaned.parquet"
+        assert path.name == "sentiment_cleaned.parquet"
 
         # Read back and verify
         df_read = pd.read_parquet(path)

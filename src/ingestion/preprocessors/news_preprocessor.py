@@ -1,9 +1,9 @@
 """News preprocessor for transforming Bronze news documents to Silver sentiment data.
 
-Handles news from all DocumentCollector sources (Fed, ECB News, GDELT, BoE):
+Handles news from all DocumentCollector sources (Fed, ECB News, BoE):
 - Read JSONL from data/raw/news/{source}/
 - Apply sentiment analysis (FinBERT - BERT fine-tuned on financial text)
-- Extract currency pairs (regex)
+- Map source to primary currency affected
 - Generate article IDs
 - Map to Silver sentiment schema
 - Export to data/processed/sentiment/ (partitioned by source/year/month)
@@ -11,17 +11,16 @@ Handles news from all DocumentCollector sources (Fed, ECB News, GDELT, BoE):
 Silver Schema (10 fields):
     - timestamp_utc: Publication timestamp in UTC (ISO 8601)
     - article_id: Unique 16-char hash of URL or title+timestamp
-    - pair: Currency pair(s) mentioned (e.g., "EURUSD", "GBPUSD", "ALL")
+    - currency: Primary currency affected (e.g., "USD", "EUR", "GBP")
     - headline: Article title
     - sentiment_score: Float [-1.0, 1.0] from FinBERT confidence (positive=+, negative=-)
     - sentiment_label: Categorical ["positive", "neutral", "negative"]
     - document_type: Type of document (e.g., "statement", "speech", "press_release")
     - speaker: Speaker/author if applicable (e.g., "Jerome Powell", "Christine Lagarde")
-    - source: Data source identifier (e.g., "fed", "ecb", "gdelt")
+    - source: Data source identifier (e.g., "fed", "ecb", "boe")
     - url: Original article URL
 """
 
-import re
 from datetime import datetime
 from pathlib import Path
 
@@ -36,25 +35,16 @@ class NewsPreprocessor(DocumentPreprocessor):
     """Preprocessor for news articles from all document sources.
 
     Uses FinBERT for sentiment analysis (BERT fine-tuned on financial text).
-    Extracts currency pairs using regex patterns.
+    Maps source to primary currency affected (fed→USD, ecb→EUR, boe→GBP).
     Maps to standardized Silver sentiment schema.
     """
 
-    CATEGORY = "news"
-
-    # Major currency pairs for extraction
-    CURRENCY_PAIRS = [
-        "EURUSD",
-        "GBPUSD",
-        "USDJPY",
-        "USDCHF",
-        "AUDUSD",
-        "USDCAD",
-        "NZDUSD",
-        "EURGBP",
-        "EURJPY",
-        "GBPJPY",
-    ]
+    # Source → primary currency mapping
+    SOURCE_CURRENCY_MAP: dict[str, str] = {
+        "fed": "USD",
+        "ecb": "EUR",
+        "boe": "GBP",
+    }
 
     def __init__(
         self,
@@ -157,7 +147,10 @@ class NewsPreprocessor(DocumentPreprocessor):
         return df
 
     def _process_documents(self, documents: list[dict]) -> list[dict]:
-        """Process list of Bronze documents to Silver records.
+        """Process list of Bronze documents to Silver records with batch sentiment.
+
+        Extracts metadata first, then scores all headlines in a single batch
+        for efficient GPU/CPU utilization.
 
         Args:
             documents: List of document dictionaries from JSONL.
@@ -165,36 +158,46 @@ class NewsPreprocessor(DocumentPreprocessor):
         Returns:
             List of Silver sentiment records.
         """
-        records = []
+        # Phase 1: Extract metadata and clean headlines
+        prepared = []
         for doc in documents:
             try:
-                record = self._transform_document(doc)
-                records.append(record)
+                prepared.append(self._extract_metadata(doc))
             except Exception as e:
                 self.logger.warning(
-                    "Failed to transform document '%s': %s",
+                    "Failed to extract metadata from '%s': %s",
                     doc.get("title", "unknown"),
                     e,
                 )
                 continue
 
-        return records
+        if not prepared:
+            return []
 
-    def _transform_document(self, doc: dict) -> dict:
-        """Transform single Bronze document to Silver sentiment record.
+        # Phase 2: Batch sentiment scoring on all headlines
+        headlines = [rec["headline"] for rec in prepared]
+        scores, labels = self._analyze_sentiment_batch(headlines)
+
+        # Phase 3: Merge sentiment results into records
+        for rec, score, label in zip(prepared, scores, labels):
+            rec["sentiment_score"] = score
+            rec["sentiment_label"] = label
+
+        return prepared
+
+    def _extract_metadata(self, doc: dict) -> dict:
+        """Extract and normalize metadata from a Bronze document.
 
         Args:
             doc: Bronze document dictionary.
 
         Returns:
-            Silver sentiment record dictionary.
+            Partial Silver record (without sentiment fields).
 
         Raises:
             KeyError: If required Bronze fields are missing.
         """
-        # Extract required fields
         title = doc["title"]
-        content = doc.get("content", "")
         timestamp_raw = doc.get("timestamp_published") or doc["timestamp_collected"]
         source = doc["source"]
         url = doc.get("url", "")
@@ -206,92 +209,75 @@ class NewsPreprocessor(DocumentPreprocessor):
 
         # Clean text
         title_clean = self.clean_text(title)
-        content_clean = self.clean_text(content)
 
         # Generate article ID
         article_id = self.generate_article_id(url, title_clean, timestamp, source)
 
-        # Sentiment analysis - use headline only (FinBERT training distribution)
-        # Headlines are information-dense and avoid truncation of long documents
-        sentiment_score, sentiment_label = self._analyze_sentiment(title_clean)
+        # Map source to primary currency affected
+        currency = self.SOURCE_CURRENCY_MAP.get(source, "OTHER")
 
-        # Extract currency pairs
-        pair = self._extract_currency_pairs(title_clean, content_clean)
-
-        # Build Silver record
         return {
             "timestamp_utc": timestamp,
             "article_id": article_id,
-            "pair": pair,
+            "currency": currency,
             "headline": title_clean,
-            "sentiment_score": sentiment_score,
-            "sentiment_label": sentiment_label,
             "document_type": document_type,
             "speaker": speaker if speaker else None,
             "source": source,
             "url": url if url else None,
         }
 
-    def _analyze_sentiment(self, text: str) -> tuple[float, str]:
-        """Analyze sentiment using FinBERT.
+    def _analyze_sentiment_batch(self, texts: list[str]) -> tuple[list[float], list[str]]:
+        """Analyze sentiment for a batch of texts using FinBERT.
+
+        Processes all texts in a single model call for efficient GPU/CPU utilization.
 
         Args:
-            text: Text to analyze.
+            texts: List of headline strings to analyze.
 
         Returns:
-            Tuple of (sentiment_score, sentiment_label).
-            - sentiment_score: Float in [-1.0, 1.0] (normalized from FinBERT confidence)
-            - sentiment_label: "positive", "neutral", or "negative"
+            Tuple of (scores, labels) lists, parallel to input texts.
+            - scores: Float in [-1.0, 1.0] (normalized from FinBERT confidence)
+            - labels: "positive", "neutral", or "negative"
         """
-        if not text:
-            return 0.0, "neutral"
+        scores = []
+        labels = []
+
+        # Separate empty texts (skip model) from non-empty (batch score)
+        non_empty_indices = [i for i, t in enumerate(texts) if t]
+        non_empty_texts = [texts[i] for i in non_empty_indices]
+
+        # Initialize all as neutral
+        for _ in texts:
+            scores.append(0.0)
+            labels.append("neutral")
+
+        if not non_empty_texts:
+            return scores, labels
 
         try:
-            # Get FinBERT prediction with automatic truncation
-            # Pipeline handles tokenization and truncation to 512 tokens
-            result = self.sentiment_model(text, truncation=True, max_length=512)[0]
-            label = result["label"].lower()  # "positive", "negative", or "neutral"
-            confidence = result["score"]  # Confidence score [0, 1]
+            results = self.sentiment_model(
+                non_empty_texts, truncation=True, max_length=512, batch_size=32
+            )
 
-            # Convert to normalized score [-1, 1]
-            if label == "positive":
-                score = confidence
-            elif label == "negative":
-                score = -confidence
-            else:  # neutral
-                score = 0.0
+            for idx, result in zip(non_empty_indices, results):
+                label = result["label"].lower()
+                confidence = result["score"]
 
-            return round(score, 4), label
+                if label == "positive":
+                    score = confidence
+                elif label == "negative":
+                    score = -confidence
+                else:
+                    score = 0.0
+
+                scores[idx] = round(score, 4)
+                labels[idx] = label
 
         except Exception as e:
-            self.logger.warning("Sentiment analysis failed for text: %s", e)
-            return 0.0, "neutral"
+            self.logger.warning("Batch sentiment analysis failed: %s", e)
 
-    def _extract_currency_pairs(self, title: str, content: str) -> str:
-        """Extract currency pairs mentioned in text.
-
-        Args:
-            title: Article title.
-            content: Article content.
-
-        Returns:
-            Comma-separated currency pairs (e.g., "EURUSD,GBPUSD") or "ALL" if none found.
-        """
-        text = f"{title} {content}".upper()
-
-        # Find all mentioned pairs
-        found_pairs = []
-        for pair in self.CURRENCY_PAIRS:
-            # Match whole pair or with slash (EUR/USD)
-            pattern = rf"\b{pair[:3]}[/\s]?{pair[3:]}\b"
-            if re.search(pattern, text):
-                found_pairs.append(pair)
-
-        if found_pairs:
-            return ",".join(sorted(set(found_pairs)))
-        else:
-            # No specific pairs mentioned, mark as general FX news
-            return "ALL"
+        return scores, labels
 
     def validate(self, df: pd.DataFrame) -> bool:
         """Validate Silver sentiment schema.
@@ -308,7 +294,7 @@ class NewsPreprocessor(DocumentPreprocessor):
         required_columns = [
             "timestamp_utc",
             "article_id",
-            "pair",
+            "currency",
             "headline",
             "sentiment_score",
             "sentiment_label",
@@ -327,7 +313,7 @@ class NewsPreprocessor(DocumentPreprocessor):
         critical_fields = [
             "timestamp_utc",
             "article_id",
-            "pair",
+            "currency",
             "headline",
             "sentiment_score",
             "sentiment_label",
