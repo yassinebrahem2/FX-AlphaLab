@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import torch
 from transformers import pipeline
 
 from src.ingestion.preprocessors.document_preprocessor import DocumentPreprocessor
@@ -69,14 +70,19 @@ class NewsPreprocessor(DocumentPreprocessor):
             log_file: Optional path for file-based logging.
         """
         super().__init__(input_dir, output_dir, log_file)
-        self.logger.info("Loading FinBERT sentiment model...")
+
+        # Auto-detect GPU availability
+        device = 0 if torch.cuda.is_available() else -1
+        device_name = "GPU" if device == 0 else "CPU"
+        self.logger.info("Loading FinBERT sentiment model on %s...", device_name)
+
         self.sentiment_model = pipeline(
             "sentiment-analysis",
             model="ProsusAI/finbert",
             tokenizer="ProsusAI/finbert",
-            device=0,  # CPU (-1), use 0 for GPU
+            device=device,
         )
-        self.logger.info("FinBERT model loaded successfully")
+        self.logger.info("FinBERT model loaded successfully on %s", device_name)
 
     def preprocess(
         self,
@@ -189,11 +195,14 @@ class NewsPreprocessor(DocumentPreprocessor):
         # Extract required fields
         title = doc["title"]
         content = doc.get("content", "")
-        timestamp = doc.get("timestamp_published") or doc["timestamp_collected"]
+        timestamp_raw = doc.get("timestamp_published") or doc["timestamp_collected"]
         source = doc["source"]
         url = doc.get("url", "")
         document_type = doc.get("document_type", "article")
         speaker = doc.get("speaker") or doc.get("metadata", {}).get("author")
+
+        # Normalize timestamp to UTC ISO 8601 (Silver contract requirement)
+        timestamp = pd.to_datetime(timestamp_raw, utc=True).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Clean text
         title_clean = self.clean_text(title)
@@ -202,9 +211,9 @@ class NewsPreprocessor(DocumentPreprocessor):
         # Generate article ID
         article_id = self.generate_article_id(url, title_clean, timestamp, source)
 
-        # Sentiment analysis (analyze content if available, otherwise title)
-        text_to_analyze = content_clean if content_clean else title_clean
-        sentiment_score, sentiment_label = self._analyze_sentiment(text_to_analyze)
+        # Sentiment analysis - use headline only (FinBERT training distribution)
+        # Headlines are information-dense and avoid truncation of long documents
+        sentiment_score, sentiment_label = self._analyze_sentiment(title_clean)
 
         # Extract currency pairs
         pair = self._extract_currency_pairs(title_clean, content_clean)

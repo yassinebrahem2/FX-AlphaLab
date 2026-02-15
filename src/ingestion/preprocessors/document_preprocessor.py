@@ -63,6 +63,7 @@ class DocumentPreprocessor(ABC):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        source: str | None = None,
     ) -> pd.DataFrame:
         """Transform Bronze JSONL documents to Silver DataFrame.
 
@@ -77,6 +78,7 @@ class DocumentPreprocessor(ABC):
         Args:
             start_date: Start of the processing window.
             end_date: End of the processing window.
+            source: Specific source to process (e.g., "fed", "ecb"). If None, all sources.
 
         Returns:
             Standardized DataFrame with all processed documents.
@@ -242,7 +244,8 @@ class DocumentPreprocessor(ABC):
         if "year" not in df.columns:
             df["year"] = df["_temp_timestamp"].dt.year
         if "month" not in df.columns:
-            df["month"] = df["_temp_timestamp"].dt.month
+            # Use zero-padded month format (MM) for Hive-style partitioning convention
+            df["month"] = df["_temp_timestamp"].dt.strftime("%m")
         df = df.drop(columns=["_temp_timestamp"])
 
         # Validate partition columns exist
