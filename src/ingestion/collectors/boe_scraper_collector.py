@@ -128,9 +128,10 @@ class BoEScraperCollector(DocumentCollector):
         collected_count = 0
         total_urls = len(urls)
 
-        self.logger.info(
-            "Fetching %d documents (ETA: %d-%d min)", total_urls, total_urls // 2, total_urls
-        )
+        # ETA: ~1 doc/sec (0.5-1s delay + fetch time)
+        eta_min = total_urls // 60  # Optimistic: 60 docs/min
+        eta_max = total_urls // 30  # Conservative: 30 docs/min
+        self.logger.info("Fetching %d documents (ETA: %d-%d min)", total_urls, eta_min, eta_max)
 
         for idx, url_info in enumerate(urls, 1):
             url = url_info["url"]
