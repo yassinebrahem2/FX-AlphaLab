@@ -105,29 +105,21 @@ class BoECollector(DocumentCollector):
 
     def _classify_document_type(self, url: str, title: str | None = None) -> tuple[str, str]:
         u = (url or "").lower()
-        t = (title or "").lower()
 
         # Speeches
         if "/speech/" in u or "/speeches/" in u:
             return "speeches", "boe_speech"
 
-        # Monetary Policy Summary
+        # Monetary Policy Summary (includes MPC minutes)
         if "monetary-policy-summary" in u or "monetary-policy-summary-and-minutes" in u:
             return "summaries", "monetary_policy_summary"
 
-        # MPC
-        if (
-            "/monetary-policy-committee/" in u
-            or "/mpc/" in u
-            or t.startswith("mpc")
-            or "monetary policy committee" in t
-        ):
-            return "mpc", "mpc_statement"
-
-        # Default
+        # Default to statements (press releases)
         return "statements", "press_release"
 
     def _fetch_article_text(self, url: str) -> str:
+        from bs4 import BeautifulSoup
+
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = self._session.get(
             url, headers=headers, timeout=self.DEFAULT_TIMEOUT, allow_redirects=True
@@ -141,7 +133,57 @@ class BoECollector(DocumentCollector):
 
         resp.encoding = resp.apparent_encoding
 
-        return resp.text
+        # Parse HTML and extract clean text
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Remove unwanted elements
+        for element in soup(
+            ["script", "style", "nav", "header", "footer", "aside", "form", "button"]
+        ):
+            element.decompose()
+
+        # Remove cookie notice, navigation bypass, and other BoE-specific noise
+        for noise_class in [
+            "cookie-notice",
+            "nav-bypass",
+            "global-header",
+            "global-footer",
+            "page-survey",
+            "accordion",
+            "pdf-button",
+            "footer-social-bank",
+            "footer-topics",
+        ]:
+            for element in soup.find_all(class_=noise_class):
+                element.decompose()
+
+        # Try BoE-specific content selectors (in priority order)
+        content_selectors = [
+            "div.page-content",  # Primary content div
+            "section.page-section",  # Section container
+            "div.accordion-content",  # Sometimes in accordion
+            "article",  # Semantic HTML5
+            "main#main-content",  # Main content area
+            "body",  # Last resort
+        ]
+
+        text_content = ""
+        for selector in content_selectors:
+            content_div = soup.select_one(selector)
+            if content_div:
+                # Get text but skip if it's too short (likely just nav/header)
+                temp_text = content_div.get_text(separator="\n", strip=True)
+                if len(temp_text) > 200:  # Minimum threshold
+                    text_content = temp_text
+                    break
+
+        # If still empty, get all text from body
+        if not text_content or len(text_content) < 200:
+            body = soup.find("body")
+            if body:
+                text_content = body.get_text(separator="\n", strip=True)
+
+        return text_content if text_content else resp.text
 
     def collect(
         self,

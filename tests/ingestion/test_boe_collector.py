@@ -355,11 +355,12 @@ def test_export_all_to_jsonl_writes_multiple_files(tmp_path):
     assert paths["speeches"].exists()
 
 
-def test_document_type_classification_mpc_by_title():
+def test_document_type_classification_default_statement():
+    """Test that non-matching documents default to statements."""
     collector = BoECollector()
     url = "https://www.bankofengland.co.uk/news/2025/november/test"
     bucket, doc_type = collector._classify_document_type(
         url, "Remit for the Monetary Policy Committee - November 2025"
     )
-    assert bucket == "mpc"
-    assert doc_type == "mpc_statement"
+    assert bucket == "statements"
+    assert doc_type == "press_release"

@@ -31,50 +31,20 @@ Example:
     >>> paths = collector.export_all(data)
 """
 
-import re
 import time
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import feedparser
-import requests
-from bs4 import BeautifulSoup
 
+from src.ingestion.collectors import ecb_utils
 from src.ingestion.collectors.document_collector import DocumentCollector
+from src.ingestion.collectors.ecb_utils import ECBNewsDocument
 from src.shared.config import Config
 
-
-@dataclass
-class ECBNewsDocument:
-    """Immutable descriptor for an ECB news document."""
-
-    source: str
-    timestamp_collected: str
-    timestamp_published: str
-    url: str
-    title: str
-    content: str
-    document_type: str
-    speaker: str | None
-    language: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "source": self.source,
-            "timestamp_collected": self.timestamp_collected,
-            "timestamp_published": self.timestamp_published,
-            "url": self.url,
-            "title": self.title,
-            "content": self.content,
-            "document_type": self.document_type,
-            "speaker": self.speaker,
-            "language": self.language,
-            "metadata": self.metadata,
-        }
+# Re-export for backward compatibility
+__all__ = ["ECBNewsCollector", "ECBNewsDocument"]
 
 
 class ECBNewsCollector(DocumentCollector):
@@ -105,16 +75,10 @@ class ECBNewsCollector(DocumentCollector):
 
     SOURCE_NAME = "ecb"
 
-    # Valid document types for validation
-    VALID_DOCUMENT_TYPES = {"pressreleases", "speeches", "policy", "bulletins"}
-
-    # Mapping from internal category to document_type field value
-    DOCUMENT_TYPE_FIELD_MAP = {
-        "pressreleases": "press_release",
-        "speeches": "speech",
-        "policy": "policy_decision",
-        "bulletins": "bulletin",
-    }
+    # Delegate constants to ecb_utils (class-level aliases for backward compat)
+    VALID_DOCUMENT_TYPES = ecb_utils.VALID_DOCUMENT_TYPES
+    DOCUMENT_TYPE_FIELD_MAP = ecb_utils.DOCUMENT_TYPE_FIELD_MAP
+    DOCUMENT_TYPE_PATTERNS = ecb_utils.DOCUMENT_TYPE_PATTERNS
 
     # RSS feed URLs
     RSS_FEED_URL = "https://www.ecb.europa.eu/rss/press.html"
@@ -124,32 +88,6 @@ class ECBNewsCollector(DocumentCollector):
     MIN_REQUEST_INTERVAL = 1.0  # seconds between requests
     MAX_RETRIES = 3
     RETRY_BACKOFF = 2.0
-
-    # Document type classification patterns
-    DOCUMENT_TYPE_PATTERNS = {
-        "policy": [
-            r"monetary policy decisions?",
-            r"governing council",
-            r"interest rate",
-            r"key ecb interest rates",
-            r"policy decision",
-        ],
-        "speeches": [
-            r"speech by",
-            r"remarks by",
-            r"keynote",
-            r"interview with",
-            r"statement by",
-        ],
-        "bulletins": [
-            r"economic bulletin",
-            r"monthly bulletin",
-            r"quarterly bulletin",
-        ],
-        "pressreleases": [
-            # Default catch-all
-        ],
-    }
 
     def __init__(
         self,
@@ -168,7 +106,7 @@ class ECBNewsCollector(DocumentCollector):
 
         super().__init__(output_dir=final_output_dir, log_file=final_log_file)
         self._last_request_time: float = 0.0
-        self._session = self._create_session()
+        self._session = ecb_utils.create_ecb_session(self.MAX_RETRIES, self.RETRY_BACKOFF)
 
         self.logger.info(
             "ECBNewsCollector initialized, output_dir=%s",
@@ -327,23 +265,6 @@ class ECBNewsCollector(DocumentCollector):
     # Private: RSS feed parsing
     # ------------------------------------------------------------------
 
-    def _create_session(self) -> requests.Session:
-        """Create requests session with retry logic."""
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-
-        session = requests.Session()
-        retry = Retry(
-            total=self.MAX_RETRIES,
-            backoff_factor=self.RETRY_BACKOFF,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET", "HEAD"],
-        )
-        adapter = HTTPAdapter(max_retries=retry)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        return session
-
     def _throttle_request(self) -> None:
         """Ensure minimum interval between requests to be polite to ECB servers."""
         elapsed = time.time() - self._last_request_time
@@ -422,103 +343,25 @@ class ECBNewsCollector(DocumentCollector):
     def _classify_document_type(self, title: str, summary: str = "") -> str:
         """Classify document type based on title and summary patterns.
 
-        Args:
-            title: Document title.
-            summary: Document summary/description.
-
-        Returns:
-            One of: "policy", "speeches", "bulletins", "pressreleases"
+        Delegates to :func:`ecb_utils.classify_document_type`.
         """
-        text = (title + " " + summary).lower()
-
-        # Check patterns in priority order
-        for doc_type, patterns in self.DOCUMENT_TYPE_PATTERNS.items():
-            if doc_type == "pressreleases":
-                continue  # Skip default catch-all
-
-            for pattern in patterns:
-                if re.search(pattern, text, re.IGNORECASE):
-                    return doc_type
-
-        # Default to press releases
-        return "pressreleases"
+        return ecb_utils.classify_document_type(title, summary)
 
     def _extract_speaker_name(self, title: str, content: str = "") -> str | None:
         """Extract speaker name from title or content (for speeches).
 
-        Args:
-            title: Document title.
-            content: Document content.
-
-        Returns:
-            Speaker name or None.
+        Delegates to :func:`ecb_utils.extract_speaker_name`.
         """
-        # Pattern: "Speech by [Name]" or "Remarks by [Name]"
-        patterns = [
-            r"(?:speech|remarks|interview|statement)\s+by\s+([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+at|\s+in|\s+to|\s+for|\s+on|,|$)",
-            r"([A-Z][a-z]+\s+[A-Z][a-z]+)(?:\s*,\s*(?:President|Vice-President|Member|Chief))",
-        ]
-
-        text = title + " " + content[:500]  # First 500 chars
-
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                name = match.group(1).strip()
-                # Clean up whitespace
-                name = re.sub(r"\s+", " ", name)
-                if len(name) > 3 and len(name) < 50:  # Sanity check
-                    return name
-
-        return None
+        return ecb_utils.extract_speaker_name(title, content)
 
     def _fetch_full_content(self, url: str) -> str:
         """Fetch full text content from document URL.
 
-        Args:
-            url: Document URL.
-
-        Returns:
-            Full text content or empty string if fetch fails.
+        Delegates to :func:`ecb_utils.fetch_full_content`.
         """
-        if not url:
-            return ""
-
-        try:
-            self._throttle_request()
-            response = self._session.get(url, timeout=Config.REQUEST_TIMEOUT)
-            response.raise_for_status()
-
-            soup = BeautifulSoup(response.content, "html.parser")
-
-            # Remove script, style, and navigation elements
-            for element in soup(["script", "style", "nav", "header", "footer"]):
-                element.decompose()
-
-            # Try to find main content area
-            content_areas = [
-                soup.find("div", class_=re.compile(r"content|article|body")),
-                soup.find("article"),
-                soup.find("main"),
-                soup.find("div", id=re.compile(r"content|article")),
-            ]
-
-            for area in content_areas:
-                if area:
-                    text = area.get_text(separator="\n", strip=True)
-                    if len(text) > 100:  # Minimum content threshold
-                        return text
-
-            # Fallback: get all body text
-            body = soup.find("body")
-            if body:
-                return body.get_text(separator="\n", strip=True)
-
-            return ""
-
-        except Exception as e:
-            self.logger.warning("Failed to fetch content from %s: %s", url, e)
-            return ""
+        return ecb_utils.fetch_full_content(
+            self._session, url, self.logger, self._throttle_request, Config.REQUEST_TIMEOUT
+        )
 
     def _extract_document(self, entry: dict[str, Any], pub_date: datetime) -> dict[str, Any] | None:
         """Extract structured document from RSS entry.
@@ -572,7 +415,7 @@ class ECBNewsCollector(DocumentCollector):
                 "url": url,
                 "title": title,
                 "content": content,
-                "document_type": self.DOCUMENT_TYPE_FIELD_MAP[doc_category],
+                "document_type": ecb_utils.DOCUMENT_TYPE_FIELD_MAP[doc_category],
                 "speaker": speaker,
                 "language": language,
                 "metadata": metadata,
@@ -609,10 +452,10 @@ class ECBNewsCollector(DocumentCollector):
         if not documents:
             raise ValueError(f"Cannot export empty data for '{document_type}'")
 
-        if document_type not in self.VALID_DOCUMENT_TYPES:
+        if document_type not in ecb_utils.VALID_DOCUMENT_TYPES:
             raise ValueError(
                 f"Invalid document_type '{document_type}'. "
-                f"Must be one of: {', '.join(sorted(self.VALID_DOCUMENT_TYPES))}"
+                f"Must be one of: {', '.join(sorted(ecb_utils.VALID_DOCUMENT_TYPES))}"
             )
 
         return super().export_jsonl(documents, document_type, collection_date)

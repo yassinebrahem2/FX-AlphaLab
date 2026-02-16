@@ -1,46 +1,47 @@
-"""Economic Calendar data collection and preprocessing script.
+"""Forex Factory Calendar data collection script.
 
 Two-stage pipeline:
-1. Collection (Bronze): Fetch raw data from Investing.com → data/raw/calendar/
-2. Preprocessing (Silver): Transform to standardized schema → data/processed/events/
+1. Collection (Bronze): Fetch raw data from Forex Factory → data/raw/forexfactory/
+2. Optional Preprocessing (Silver): Transform to standardized schema → data/processed/events/
 
 Usage:
     # Collect Bronze (raw) data only
-    python scripts/collect_calendar_data.py
+    python scripts/collect_forexfactory_data.py
 
     # Collect and preprocess to Silver
-    python scripts/collect_calendar_data.py --preprocess
+    python scripts/collect_forexfactory_data.py --preprocess
+
+    # Preprocess existing Bronze data only (no collection)
+    python scripts/collect_forexfactory_data.py --preprocess-only
 
     # Custom date range
-    python scripts/collect_calendar_data.py --start 2023-01-01 --end 2023-12-31 --preprocess
-
-    # Filter by countries
-    python scripts/collect_calendar_data.py --countries us,eu,uk,jp --preprocess
+    python scripts/collect_forexfactory_data.py --start 2023-01-01 --end 2023-12-31 --preprocess
 
     # Today's events only
-    python scripts/collect_calendar_data.py --today --preprocess
+    python scripts/collect_forexfactory_data.py --today
 
     # Health check only
-    python scripts/collect_calendar_data.py --health-check
+    python scripts/collect_forexfactory_data.py --health-check
+
+    # Validate collected data
+    python scripts/collect_forexfactory_data.py --today --validate
 
 Example:
-    $ python scripts/collect_calendar_data.py --today --countries us,eu,uk --preprocess
-    [INFO] EconomicCalendarCollector initialized
+    $ python scripts/collect_forexfactory_data.py --today
+    [INFO] ForexFactoryCalendarCollector initialized
     [INFO] Health check: PASSED
-    [INFO] Collecting events for 2026-02-10
-    [INFO] Countries: us, eu, uk
-    [INFO] Collected 45 events
-    [INFO] Exported to data/raw/calendar/ (Bronze)
-    [INFO] Starting Silver preprocessing...
-    [INFO] Processed 45 events to data/processed/events/ (Silver)
-    [SUCCESS] Collection and preprocessing complete
+    [INFO] Collecting events for 2026-02-12
+    [INFO] Total events collected: 45
+    [INFO] Exported to data/raw/forexfactory/ (Bronze)
+    [SUCCESS] Collection complete
 """
 
 import argparse
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
+from pathlib import Path
 
-from src.ingestion.collectors.calendar_collector import EconomicCalendarCollector
+from src.ingestion.collectors.forexfactory_collector import ForexFactoryCalendarCollector
 from src.ingestion.preprocessors.calendar_parser import CalendarPreprocessor
 from src.shared.config import Config
 from src.shared.utils import setup_logger
@@ -49,7 +50,7 @@ from src.shared.utils import setup_logger
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Collect economic calendar events from Investing.com",
+        description="Collect economic calendar events from Forex Factory",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -64,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--end",
         type=str,
-        help="End date (YYYY-MM-DD). Default: 7 days from start",
+        help="End date (YYYY-MM-DD). Default: same as start",
         metavar="DATE",
     )
 
@@ -72,13 +73,6 @@ def parse_args() -> argparse.Namespace:
         "--today",
         action="store_true",
         help="Collect today's events only (overrides --start and --end)",
-    )
-
-    parser.add_argument(
-        "--countries",
-        type=str,
-        help="Comma-separated country codes (e.g., us,eu,uk,jp). Default: us,eu,uk,jp,ch",
-        metavar="CODES",
     )
 
     parser.add_argument(
@@ -94,10 +88,35 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--preprocess-only",
+        action="store_true",
+        help="Skip collection and only preprocess existing raw data",
+    )
+
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate scraped data quality after collection",
+    )
+
+    parser.add_argument(
+        "--output",
+        type=str,
+        help="Custom output directory for CSV files",
+        metavar="DIR",
+    )
+
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
         help="Enable verbose logging",
+    )
+
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run in headless mode (hide browser window)",
     )
 
     return parser.parse_args()
@@ -109,20 +128,84 @@ def main() -> int:
 
     # Setup logger
     logger = setup_logger(
-        "collect_calendar",
+        "collect_forexfactory",
         level="DEBUG" if args.verbose else "INFO",
     )
 
     try:
+        # Handle preprocess-only mode
+        if args.preprocess_only:
+            logger.info("Preprocess-only mode: skipping collection")
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("Stage 2: Silver Layer Preprocessing")
+            logger.info("=" * 60)
+
+            # Check if raw data exists
+            raw_dir = Config.DATA_DIR / "raw" / "forexfactory"
+            if not raw_dir.exists() or not list(raw_dir.glob("*.csv")):
+                logger.error("No raw Forex Factory data found in %s", raw_dir)
+                logger.error("Run without --preprocess-only to collect data first")
+                return 1
+
+            logger.info("Processing existing Bronze data from %s", raw_dir)
+
+            preprocessor = CalendarPreprocessor(
+                input_dir=raw_dir,
+                output_dir=Config.DATA_DIR / "processed" / "events",
+            )
+
+            # Preprocess Bronze data
+            result = preprocessor.preprocess()
+
+            if "events" not in result or result["events"].empty:
+                logger.warning("No events to preprocess")
+                return 1
+
+            df = result["events"]
+            logger.info("Preprocessed %d events", len(df))
+
+            # Validate Silver schema
+            try:
+                preprocessor.validate(df)
+                logger.info("✓ Validation passed")
+            except ValueError as e:
+                logger.error("Validation failed: %s", e)
+                return 1
+
+            # Export to Silver layer
+            import pandas as pd
+
+            min_date = pd.to_datetime(df["timestamp_utc"].min()).to_pydatetime()
+            max_date = pd.to_datetime(df["timestamp_utc"].max()).to_pydatetime()
+
+            path = preprocessor.export(
+                df,
+                identifier="",
+                start_date=min_date,
+                end_date=max_date,
+                format="csv",
+            )
+
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("✓ Preprocessing Complete: %d events → %s", len(df), path.name)
+            logger.info("=" * 60)
+            return 0
+
         # Initialize collector
-        collector = EconomicCalendarCollector()
+        output_dir = Path(args.output) if args.output else None
+        collector = ForexFactoryCalendarCollector(
+            output_dir=output_dir,
+            headless=args.headless,
+        )
         logger.info(
-            "EconomicCalendarCollector initialized (Bronze layer: %s)", collector.output_dir
+            "ForexFactoryCalendarCollector initialized (Bronze layer: %s)", collector.output_dir
         )
 
         # Health check
         if not collector.health_check():
-            logger.error("Calendar API health check failed")
+            logger.error("Forex Factory health check failed")
             logger.error("Please check your internet connection")
             return 1
 
@@ -154,30 +237,22 @@ def main() -> int:
                     logger.error("Invalid end date format. Use YYYY-MM-DD")
                     return 1
             else:
-                end_date = start_date + timedelta(days=7)
+                end_date = start_date
 
         # Validate date range
         if start_date > end_date:
             logger.error("Start date must be before end date")
             return 1
 
-        # Parse countries
-        if args.countries:
-            countries = [c.strip().lower() for c in args.countries.split(",")]
-        else:
-            countries = ["us", "eu", "uk", "jp", "ch"]  # Default major economies
-
         logger.info("=" * 60)
         logger.info("Stage 1: Bronze Layer Collection")
         logger.info("=" * 60)
         logger.info("Collecting events from %s to %s", start_date.date(), end_date.date())
-        logger.info("Countries: %s", ", ".join(countries))
 
         # STAGE 1: Collect Bronze (raw) data
         events = collector.collect_events(
             start_date=start_date.strftime("%Y-%m-%d"),
             end_date=end_date.strftime("%Y-%m-%d"),
-            countries=countries,
         )
 
         if not events:
@@ -186,10 +261,23 @@ def main() -> int:
 
         logger.info("Collected %d events", len(events))
 
+        # Validate data if requested
+        if args.validate:
+            logger.info("Validating scraped data...")
+            is_valid, errors = collector.validate_scraped_data(events)
+            if not is_valid:
+                logger.warning("Data validation found %d issues:", len(errors))
+                for error in errors[:10]:  # Show first 10 errors
+                    logger.warning("  - %s", error)
+                if len(errors) > 10:
+                    logger.warning("  ... and %d more", len(errors) - 10)
+            else:
+                logger.info("Data validation passed")
+
         # Save to Bronze layer
-        success = collector.save_to_csv(events)
-        if success:
-            logger.info("✓ Bronze collection complete: saved to %s", collector.output_dir)
+        output_path = collector.save_to_csv(events)
+        if output_path:
+            logger.info("✓ Bronze collection complete: saved to %s", output_path)
         else:
             logger.error("Failed to save Bronze data")
             return 1
@@ -202,7 +290,7 @@ def main() -> int:
             logger.info("=" * 60)
 
             preprocessor = CalendarPreprocessor(
-                input_dir=Config.DATA_DIR / "raw" / "calendar",
+                input_dir=Config.DATA_DIR / "raw" / "forexfactory",
                 output_dir=Config.DATA_DIR / "processed" / "events",
             )
 
@@ -230,10 +318,9 @@ def main() -> int:
             min_date = pd.to_datetime(df["timestamp_utc"].min()).to_pydatetime()
             max_date = pd.to_datetime(df["timestamp_utc"].max()).to_pydatetime()
 
-            identifier = f"{min_date.strftime('%Y-%m-%d')}_{max_date.strftime('%Y-%m-%d')}"
             path = preprocessor.export(
                 df,
-                identifier=identifier,
+                identifier="",
                 start_date=min_date,
                 end_date=max_date,
                 format="csv",

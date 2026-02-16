@@ -11,6 +11,9 @@ Usage:
     # Collect and preprocess to Silver
     python scripts/collect_fred_data.py --preprocess
 
+    # Preprocess existing Bronze data only (no collection)
+    python scripts/collect_fred_data.py --preprocess-only
+
     # Collect specific date range
     python scripts/collect_fred_data.py --start 2023-01-01 --end 2023-12-31
 
@@ -83,6 +86,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--preprocess-only",
+        action="store_true",
+        help="Skip collection and only preprocess existing raw data",
+    )
+
+    parser.add_argument(
         "--clear-cache",
         action="store_true",
         help="Clear all cached data before collecting",
@@ -109,6 +118,65 @@ def main() -> int:
     )
 
     try:
+        # Handle preprocess-only mode
+        if args.preprocess_only:
+            logger.info("Preprocess-only mode: skipping collection")
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("Stage 2: Silver Layer Preprocessing")
+            logger.info("=" * 60)
+
+            # Check if raw data exists
+            raw_dir = Config.DATA_DIR / "raw" / "fred"
+            if not raw_dir.exists() or not list(raw_dir.glob("*.csv")):
+                logger.error("No raw FRED data found in %s", raw_dir)
+                logger.error("Run without --preprocess-only to collect data first")
+                return 1
+
+            logger.info("Processing existing Bronze data from %s", raw_dir)
+
+            # Parse dates if provided
+            if args.start:
+                try:
+                    start_date = datetime.strptime(args.start, "%Y-%m-%d")
+                except ValueError:
+                    logger.error("Invalid start date format. Use YYYY-MM-DD")
+                    return 1
+            else:
+                start_date = datetime.now() - timedelta(days=730)  # 2 years ago
+
+            if args.end:
+                try:
+                    end_date = datetime.strptime(args.end, "%Y-%m-%d")
+                except ValueError:
+                    logger.error("Invalid end date format. Use YYYY-MM-DD")
+                    return 1
+            else:
+                end_date = datetime.now()
+
+            normalizer = MacroNormalizer(
+                input_dir=Config.DATA_DIR / "raw",
+                output_dir=Config.DATA_DIR / "processed" / "macro",
+                sources=["fred"],
+            )
+            silver_paths = normalizer.process_and_export(start_date=start_date, end_date=end_date)
+
+            if not silver_paths:
+                logger.warning("No data preprocessed")
+                return 1
+
+            logger.info(
+                "Exported %d Silver CSV files to %s:", len(silver_paths), normalizer.output_dir
+            )
+            for series_id, path in silver_paths.items():
+                logger.info("  ✓ %s → %s", series_id, path.name)
+
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("✓ Preprocessing Complete!")
+            logger.info("=" * 60)
+            return 0
+
         # Initialize collector
         collector = FREDCollector()
         logger.info("FREDCollector initialized (Bronze layer: %s)", collector.output_dir)

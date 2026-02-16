@@ -170,7 +170,7 @@ class TestECBNewsCollectorInit:
 class TestHealthCheck:
     """Test health_check method."""
 
-    @patch("src.ingestion.collectors.ecb_news_collector.requests.Session.head")
+    @patch("src.ingestion.collectors.ecb_utils.requests.Session.head")
     def test_health_check_success(self, mock_head, collector):
         mock_response = Mock()
         mock_response.ok = True
@@ -179,7 +179,7 @@ class TestHealthCheck:
         assert collector.health_check() is True
         mock_head.assert_called_once()
 
-    @patch("src.ingestion.collectors.ecb_news_collector.requests.Session.head")
+    @patch("src.ingestion.collectors.ecb_utils.requests.Session.head")
     def test_health_check_failure(self, mock_head, collector):
         mock_head.side_effect = Exception("Network error")
 
@@ -291,7 +291,7 @@ class TestSpeakerExtraction:
 class TestContentFetching:
     """Test _fetch_full_content method."""
 
-    @patch("src.ingestion.collectors.ecb_news_collector.requests.Session.get")
+    @patch("src.ingestion.collectors.ecb_utils.requests.Session.get")
     def test_fetch_content_success(self, mock_get, collector):
         mock_response = Mock()
         mock_response.content = SAMPLE_HTML_CONTENT.encode("utf-8")
@@ -303,7 +303,7 @@ class TestContentFetching:
         assert "Navigation menu" not in content  # Should be removed
         assert "console.log" not in content  # Script should be removed
 
-    @patch("src.ingestion.collectors.ecb_news_collector.requests.Session.get")
+    @patch("src.ingestion.collectors.ecb_utils.requests.Session.get")
     def test_fetch_content_failure(self, mock_get, collector):
         mock_get.side_effect = Exception("Network error")
 

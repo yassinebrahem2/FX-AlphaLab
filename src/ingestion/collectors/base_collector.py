@@ -1,4 +1,8 @@
-"""Abstract base class for all data source collectors.
+"""Abstract base class for tabular data source collectors.
+
+Use this for numeric/structured data sources (FRED, ECB, MT5, economic calendars).
+For text-heavy, document-oriented sources (news, speeches, articles),
+use DocumentCollector instead.
 
 Enforces the §3.1 Bronze (Raw) Data Contract:
 - Preserve all source fields (no transformation)

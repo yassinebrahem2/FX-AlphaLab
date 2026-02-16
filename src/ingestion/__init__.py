@@ -3,7 +3,7 @@
 from src.ingestion.collectors import (
     BaseCollector,
     ECBCollector,
-    EconomicCalendarCollector,
+    ForexFactoryCalendarCollector,
     FREDCollector,
     MT5Collector,
 )
@@ -11,7 +11,7 @@ from src.ingestion.collectors import (
 __all__ = [
     "BaseCollector",
     "ECBCollector",
-    "EconomicCalendarCollector",
+    "ForexFactoryCalendarCollector",
     "FREDCollector",
     "MT5Collector",
 ]
