@@ -7,7 +7,7 @@ Architecture:
 1. Fetch sitemap from /_api/sitemap/getsitemap (1 request)
 2. Filter URLs by pattern and date range
 3. Direct HTTP requests to each URL (static HTML)
-4. Classify by URL pattern (speeches, mpc, summaries, statements)
+4. Classify by URL pattern (speeches, summaries, statements)
 
 Performance:
 - Sitemap fetch: <1 second
@@ -155,13 +155,12 @@ class BoEScraperCollector(DocumentCollector):
                 # Progress logging every 50 documents
                 if idx % 50 == 0 or idx == total_urls:
                     self.logger.info(
-                        "Progress: %d/%d (%.1f%%) | Collected: %d | speeches=%d mpc=%d summaries=%d statements=%d",
+                        "Progress: %d/%d (%.1f%%) | Collected: %d | speeches=%d summaries=%d statements=%d",
                         idx,
                         total_urls,
                         (idx / total_urls) * 100,
                         collected_count,
                         len(results["speeches"]),
-                        len(results["mpc"]),
                         len(results["summaries"]),
                         len(results["statements"]),
                     )
@@ -287,7 +286,7 @@ class BoEScraperCollector(DocumentCollector):
         Args:
             html: Raw HTML content
             url: Document URL
-            bucket: Document bucket (speeches, mpc, summaries, statements)
+            bucket: Document bucket (speeches, summaries, statements)
             doc_type: Specific document type
             lastmod: Last modified timestamp from sitemap
             collected_at: Collection timestamp
@@ -529,15 +528,11 @@ class BoEScraperCollector(DocumentCollector):
         if "/speech/" in u or "/speeches/" in u:
             return "speeches", "boe_speech"
 
-        # Monetary Policy Summary
+        # Monetary Policy Summary (includes MPC minutes)
         if "monetary-policy-summary" in u or "monetary-policy-summary-and-minutes" in u:
             return "summaries", "monetary_policy_summary"
 
-        # MPC
-        if "/monetary-policy-committee/" in u or "/mpc/" in u:
-            return "mpc", "mpc_statement"
-
-        # Default to statements
+        # Default to statements (press releases)
         return "statements", "press_release"
 
     def health_check(self) -> bool:

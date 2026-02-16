@@ -9,7 +9,7 @@ The `BoEScraperCollector` provides efficient historical backfill for BoE documen
 **Key Features:**
 - Sitemap-based discovery (1 request for all URLs)
 - Simple HTTP requests + BeautifulSoup4 (no Selenium)
-- Supports speeches, MPC minutes, summaries, and press releases
+- Supports speeches, policy summaries (incl. MPC minutes), and press releases
 - Date range filtering via sitemap lastmod
 - Automatic document type classification
 - Full content extraction
@@ -71,7 +71,6 @@ The `BoEScraperCollector` provides efficient historical backfill for BoE documen
         ┌────────────────────────────────────────┐
         │  Categorize by URL pattern:            │
         │  - speeches → boe_speech               │
-        │  - mpc → mpc_statement                 │
         │  - summaries → monetary_policy_summary │
         │  - statements → press_release          │
         └────────────────────────────────────────┘
@@ -80,7 +79,6 @@ The `BoEScraperCollector` provides efficient historical backfill for BoE documen
         ┌────────────────────────────────────────┐
         │  Export to JSONL:                      │
         │  - data/raw/news/boe/speeches_YYYYMMDD │
-        │  - data/raw/news/boe/mpc_YYYYMMDD      │
         │  - data/raw/news/boe/summaries_YYYYMMDD│
         │  - data/raw/news/boe/statements_YYYYMMDD│
         └────────────────────────────────────────┘
@@ -110,7 +108,6 @@ paths = collector.export_all(data=data)
 # Output:
 # {
 #     'speeches': Path('data/raw/news/boe/speeches_20260216.jsonl'),
-#     'mpc': Path('data/raw/news/boe/mpc_20260216.jsonl'),
 #     'summaries': Path('data/raw/news/boe/summaries_20260216.jsonl'),
 #     'statements': Path('data/raw/news/boe/statements_20260216.jsonl')
 # }
@@ -163,9 +160,8 @@ The collector maps URL patterns to standardized document types:
 | URL Pattern | Document Type | Bucket | Description |
 |-------------|---------------|--------|-------------|
 | `/speech/` | `boe_speech` | `speeches` | Official speeches by BoE officials |
-| `/monetary-policy-summary` | `monetary_policy_summary` | `summaries` | MPC policy summaries |
-| `/monetary-policy-committee/`, `/mpc/` | `mpc_statement` | `mpc` | MPC minutes and statements |
-| `/news/`, `/minutes/` (other) | `press_release` | `statements` | Press releases and announcements |
+| `/monetary-policy-summary` | `monetary_policy_summary` | `summaries` | MPC policy summaries (includes MPC minutes) |
+| Default (other URLs) | `press_release` | `statements` | Press releases and announcements |
 
 ## HTML Parsing Details
 

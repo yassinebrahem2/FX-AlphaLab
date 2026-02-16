@@ -168,14 +168,14 @@ class TestDocumentClassification:
         assert bucket == "statements"
         assert doc_type == "press_release"
 
-    def test_classify_mpc(self, tmp_path):
-        """Should classify MPC URLs."""
+    def test_classify_default_statement(self, tmp_path):
+        """Should classify non-matching URLs as statements."""
         collector = BoEScraperCollector(output_dir=tmp_path)
         bucket, doc_type = collector._classify_document_type(
             "https://www.bankofengland.co.uk/monetary-policy-committee/2024/test"
         )
-        assert bucket == "mpc"
-        assert doc_type == "mpc_statement"
+        assert bucket == "statements"
+        assert doc_type == "press_release"
 
     def test_classify_summary(self, tmp_path):
         """Should classify monetary policy summary URLs."""
