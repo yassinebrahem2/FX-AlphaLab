@@ -126,8 +126,13 @@ class BoEScraperCollector(DocumentCollector):
         # Step 2: Fetch and parse each document
         results: dict[str, list[dict]] = defaultdict(list)
         collected_count = 0
+        total_urls = len(urls)
 
-        for url_info in urls:
+        self.logger.info(
+            "Fetching %d documents (ETA: %d-%d min)", total_urls, total_urls // 2, total_urls
+        )
+
+        for idx, url_info in enumerate(urls, 1):
             url = url_info["url"]
             lastmod = url_info["lastmod"]
 
@@ -145,6 +150,20 @@ class BoEScraperCollector(DocumentCollector):
                 if doc:
                     results[bucket].append(doc)
                     collected_count += 1
+
+                # Progress logging every 50 documents
+                if idx % 50 == 0 or idx == total_urls:
+                    self.logger.info(
+                        "Progress: %d/%d (%.1f%%) | Collected: %d | speeches=%d mpc=%d summaries=%d statements=%d",
+                        idx,
+                        total_urls,
+                        (idx / total_urls) * 100,
+                        collected_count,
+                        len(results["speeches"]),
+                        len(results["mpc"]),
+                        len(results["summaries"]),
+                        len(results["statements"]),
+                    )
 
                 # Polite crawling delay
                 time.sleep(random.uniform(self.REQUEST_DELAY_MIN, self.REQUEST_DELAY_MAX))
