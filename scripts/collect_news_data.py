@@ -48,6 +48,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 from src.ingestion.collectors.boe_collector import BoECollector
+from src.ingestion.collectors.boe_scraper_collector import BoEScraperCollector
 from src.ingestion.collectors.ecb_news_collector import ECBNewsCollector
 from src.ingestion.collectors.ecb_scraper_collector import ECBScraperCollector
 from src.ingestion.collectors.fed_scraper_collector import FedScraperCollector
@@ -140,6 +141,7 @@ def parse_args() -> argparse.Namespace:
 # RSS feed thresholds for intelligent routing
 # RSS feeds only contain recent data (~10-14 days), use scrapers for historical backfill
 ECB_RSS_THRESHOLD_DAYS = 14
+BOE_RSS_THRESHOLD_DAYS = 90
 
 
 def get_collector(
@@ -155,7 +157,7 @@ def get_collector(
     Intelligently routes to RSS or scraper based on date range:
     - Fed: Always uses year-based scraper (RSS deprecated)
     - ECB: RSS (≤14 days) or Selenium scraper (>14 days)
-    - BoE: RSS only
+    - BoE: RSS (≤14 days) or sitemap scraper (>14 days)
 
     Args:
         source: Source name (fed, ecb, boe)
@@ -198,7 +200,23 @@ def get_collector(
                 ECB_RSS_THRESHOLD_DAYS,
             )
 
-    # Default collectors (Fed handled above)
+    # Intelligent BoE routing based on date range
+    if source == "boe" and start_date and end_date:
+        date_range_days = (end_date - start_date).days
+        if date_range_days > BOE_RSS_THRESHOLD_DAYS:
+            logger.info(
+                "BoE: date range %d days > %d threshold, using sitemap scraper",
+                date_range_days,
+                BOE_RSS_THRESHOLD_DAYS,
+            )
+            return BoEScraperCollector(output_dir=output_dir)
+        else:
+            logger.info(
+                "BoE: date range %d days ≤ %d threshold, using RSS collector",
+                date_range_days,
+                BOE_RSS_THRESHOLD_DAYS,
+            )
+
     collectors = {
         "ecb": ECBNewsCollector,
         "boe": BoECollector,

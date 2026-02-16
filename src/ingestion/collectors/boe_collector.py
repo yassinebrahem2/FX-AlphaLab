@@ -105,26 +105,16 @@ class BoECollector(DocumentCollector):
 
     def _classify_document_type(self, url: str, title: str | None = None) -> tuple[str, str]:
         u = (url or "").lower()
-        t = (title or "").lower()
 
         # Speeches
         if "/speech/" in u or "/speeches/" in u:
             return "speeches", "boe_speech"
 
-        # Monetary Policy Summary
+        # Monetary Policy Summary (includes MPC minutes)
         if "monetary-policy-summary" in u or "monetary-policy-summary-and-minutes" in u:
             return "summaries", "monetary_policy_summary"
 
-        # MPC
-        if (
-            "/monetary-policy-committee/" in u
-            or "/mpc/" in u
-            or t.startswith("mpc")
-            or "monetary policy committee" in t
-        ):
-            return "mpc", "mpc_statement"
-
-        # Default
+        # Default to statements (press releases)
         return "statements", "press_release"
 
     def _fetch_article_text(self, url: str) -> str:
