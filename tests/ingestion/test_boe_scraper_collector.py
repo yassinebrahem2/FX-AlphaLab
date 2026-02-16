@@ -138,12 +138,59 @@ class TestURLPatternMatching:
             is False
         )
 
-    def test_does_not_match_old_years(self, tmp_path):
-        """Should not match years before 2020."""
+    def test_matches_any_year_without_range(self, tmp_path):
+        """Should match URLs from any year when no year range specified."""
         collector = BoEScraperCollector(output_dir=tmp_path)
+        # Without year range, all years match
         assert (
             collector._matches_url_pattern("https://www.bankofengland.co.uk/speech/2019/test")
+            is True
+        )
+        assert (
+            collector._matches_url_pattern("https://www.bankofengland.co.uk/speech/2015/test")
+            is True
+        )
+
+    def test_filters_by_year_range(self, tmp_path):
+        """Should filter URLs by year range when specified."""
+        collector = BoEScraperCollector(output_dir=tmp_path)
+
+        # Request 2021-2025 range
+        assert (
+            collector._matches_url_pattern(
+                "https://www.bankofengland.co.uk/speech/2023/test", start_year=2021, end_year=2025
+            )
+            is True
+        )
+
+        # 2019 is before range
+        assert (
+            collector._matches_url_pattern(
+                "https://www.bankofengland.co.uk/speech/2019/test", start_year=2021, end_year=2025
+            )
             is False
+        )
+
+        # 2026 is after range
+        assert (
+            collector._matches_url_pattern(
+                "https://www.bankofengland.co.uk/speech/2026/test", start_year=2021, end_year=2025
+            )
+            is False
+        )
+
+        # 2021 and 2025 are at boundaries (inclusive)
+        assert (
+            collector._matches_url_pattern(
+                "https://www.bankofengland.co.uk/speech/2021/test", start_year=2021, end_year=2025
+            )
+            is True
+        )
+        assert (
+            collector._matches_url_pattern(
+                "https://www.bankofengland.co.uk/speech/2025/test", start_year=2021, end_year=2025
+            )
+            is True
         )
 
 
@@ -315,6 +362,10 @@ class TestDocumentParsing:
         """
 
         collector = BoEScraperCollector(output_dir=tmp_path)
+        # Set date range for filtering
+        collector._start_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        collector._end_date = datetime(2026, 12, 31, tzinfo=timezone.utc)
+
         doc = collector._parse_document(
             html=html,
             url="https://www.bankofengland.co.uk/speech/2026/test",
@@ -343,6 +394,10 @@ class TestDocumentParsing:
         """
 
         collector = BoEScraperCollector(output_dir=tmp_path)
+        # Set date range for filtering
+        collector._start_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        collector._end_date = datetime(2026, 12, 31, tzinfo=timezone.utc)
+
         doc = collector._parse_document(
             html=html,
             url="https://www.bankofengland.co.uk/speech/2026/test",
@@ -372,6 +427,10 @@ class TestDocumentParsing:
         """
 
         collector = BoEScraperCollector(output_dir=tmp_path)
+        # Set date range for filtering
+        collector._start_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        collector._end_date = datetime(2026, 12, 31, tzinfo=timezone.utc)
+
         doc = collector._parse_document(
             html=html,
             url="https://www.bankofengland.co.uk/speech/2026/test",
@@ -398,6 +457,10 @@ class TestDocumentParsing:
         """
 
         collector = BoEScraperCollector(output_dir=tmp_path)
+        # Set date range for filtering
+        collector._start_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        collector._end_date = datetime(2026, 12, 31, tzinfo=timezone.utc)
+
         doc = collector._parse_document(
             html=html,
             url="https://www.bankofengland.co.uk/speech/2026/test",
@@ -424,6 +487,10 @@ class TestDocumentParsing:
         """
 
         collector = BoEScraperCollector(output_dir=tmp_path)
+        # Set date range for filtering
+        collector._start_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        collector._end_date = datetime(2026, 12, 31, tzinfo=timezone.utc)
+
         doc = collector._parse_document(
             html=html,
             url="https://www.bankofengland.co.uk/speech/2026/test",
