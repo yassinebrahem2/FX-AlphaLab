@@ -51,6 +51,7 @@ from src.ingestion.collectors.boe_collector import BoECollector
 from src.ingestion.collectors.ecb_news_collector import ECBNewsCollector
 from src.ingestion.collectors.ecb_scraper_collector import ECBScraperCollector
 from src.ingestion.collectors.fed_collector import FedCollector
+from src.ingestion.collectors.fed_scraper_collector import FedScraperCollector
 from src.ingestion.preprocessors.news_preprocessor import NewsPreprocessor
 from src.shared.config import Config
 from src.shared.utils import setup_logger
@@ -135,8 +136,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# ECB uses RSS for short ranges, Selenium scraper for historical backfill
+# RSS feed thresholds for intelligent routing
+# RSS feeds only contain recent data (~10-14 days), use scrapers for historical backfill
 ECB_RSS_THRESHOLD_DAYS = 14
+FED_RSS_THRESHOLD_DAYS = 14
 
 
 def get_collector(
@@ -149,14 +152,17 @@ def get_collector(
 ):
     """Initialize collector for given source.
 
-    For ECB, intelligently routes to RSS (≤14 days) or scraper (>14 days)
-    based on the requested date range.
+    Intelligently routes to RSS or scraper based on date range:
+    - Fed: RSS (≤14 days) or year-based scraper (>14 days)
+    - ECB: RSS (≤14 days) or Selenium scraper (>14 days)
+    - BoE: RSS only (no scraper available yet)
 
     Args:
         source: Source name (fed, ecb, boe)
         logger: Logger instance
-        start_date: Optional start date (used for ECB routing)
-        end_date: Optional end date (used for ECB routing)
+        start_date: Optional start date (used for routing)
+        end_date: Optional end date (used for routing)
+        headless: Run browser in headless mode (ECB scraper only)
 
     Returns:
         Collector instance
@@ -170,6 +176,23 @@ def get_collector(
     output_dir = Config.DATA_DIR / "raw" / "news" / source
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Intelligent Fed routing based on date range
+    if source == "fed" and start_date and end_date:
+        date_range_days = (end_date - start_date).days
+        if date_range_days > FED_RSS_THRESHOLD_DAYS:
+            logger.info(
+                "Fed: date range %d days > %d threshold, using year-based scraper",
+                date_range_days,
+                FED_RSS_THRESHOLD_DAYS,
+            )
+            return FedScraperCollector(output_dir=output_dir)
+        else:
+            logger.info(
+                "Fed: date range %d days ≤ %d threshold, using RSS collector",
+                date_range_days,
+                FED_RSS_THRESHOLD_DAYS,
+            )
+
     # Intelligent ECB routing based on date range
     if source == "ecb" and start_date and end_date:
         date_range_days = (end_date - start_date).days
@@ -181,7 +204,11 @@ def get_collector(
             )
             return ECBScraperCollector(output_dir=output_dir, headless=headless)
         else:
-            logger.info("ECB: date range %d days, using RSS collector", date_range_days)
+            logger.info(
+                "ECB: date range %d days ≤ %d threshold, using RSS collector",
+                date_range_days,
+                ECB_RSS_THRESHOLD_DAYS,
+            )
 
     collectors = {
         "fed": FedCollector,
