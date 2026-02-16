@@ -215,10 +215,12 @@ Gracefully handles:
 ## Limitations
 
 1. **Sitemap dependency**: Relies on BoE maintaining sitemap API
-2. **Date resolution**: Publication dates at day-level (no time)
-3. **Static content**: Only works for static HTML pages
-4. **No real-time**: Sitemap updated periodically (not instant)
-5. **URL patterns**: Assumes BoE maintains consistent URL structure
+2. **Bot protection**: Requires complete browser-like headers (not just User-Agent)
+3. **Slow sitemap**: Initial sitemap fetch takes ~20 seconds (2.4MB XML)
+4. **Date resolution**: Publication dates at day-level (no time)
+5. **Static content**: Only works for static HTML pages
+6. **No real-time**: Sitemap updated periodically (not instant)
+7. **URL patterns**: Assumes BoE maintains consistent URL structure
 
 ## Testing
 
@@ -262,6 +264,17 @@ data = collector.collect(
 ### HTTP errors
 
 **Symptoms:** `HTTPError` or timeout exceptions
+
+**Common Issues:**
+
+1. **403 Forbidden**: Missing or incomplete HTTP headers
+   - The BoE sitemap API requires complete browser-like headers
+   - Simple `User-Agent: Mozilla/5.0` is not sufficient
+   - Solution: Already handled in `_create_session()` with full headers
+
+2. **Timeout**: Sitemap fetch takes ~20 seconds
+   - Normal behavior (2.4MB XML file with 14,000+ URLs)
+   - Ensure timeout is set to 30+ seconds
 
 **Solutions:**
 - Check internet connection
