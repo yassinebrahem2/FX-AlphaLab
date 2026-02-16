@@ -109,6 +109,10 @@ class BoEScraperCollector(DocumentCollector):
         if end_date.tzinfo is None:
             end_date = end_date.replace(tzinfo=timezone.utc)
 
+        # Store date range for filtering in _parse_document
+        self._start_date = start_date
+        self._end_date = end_date
+
         self.logger.info(
             "Collecting BoE documents from %s to %s via sitemap",
             start_date.isoformat(),
@@ -201,6 +205,10 @@ class BoEScraperCollector(DocumentCollector):
             self.logger.error("Failed to parse sitemap XML: %s", e)
             return []
 
+        # Extract year range for URL pattern filtering
+        start_year = start_date.year
+        end_year = end_date.year
+
         # Extract URLs matching our patterns and date range
         urls = []
         ns = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
@@ -215,8 +223,8 @@ class BoEScraperCollector(DocumentCollector):
             url = loc.text
             lastmod_str = lastmod.text if lastmod is not None and lastmod.text else None
 
-            # Filter by URL pattern (speeches, news, minutes, summaries)
-            if not self._matches_url_pattern(url):
+            # Filter by URL pattern (speeches, news, minutes, summaries) with year range
+            if not self._matches_url_pattern(url, start_year, end_year):
                 continue
 
             # Filter by lastmod date if available
@@ -234,25 +242,44 @@ class BoEScraperCollector(DocumentCollector):
 
         return urls
 
-    def _matches_url_pattern(self, url: str) -> bool:
-        """Check if URL matches our target document patterns.
+    def _matches_url_pattern(
+        self, url: str, start_year: int | None = None, end_year: int | None = None
+    ) -> bool:
+        """Check if URL matches our target document patterns and year range.
 
         Args:
             url: Full URL to check
+            start_year: Optional start year for filtering (inclusive)
+            end_year: Optional end year for filtering (inclusive)
 
         Returns:
-            True if URL matches speech/news/minutes/summary patterns
+            True if URL matches speech/news/minutes/summary patterns and year range
         """
-        # Match URLs with years 2020-2026 (allowing some buffer)
-        patterns = [
-            r"/speech/202[0-6]/",
-            r"/news/202[0-6]/",
-            r"/minutes/202[0-6]/",
+        # Base patterns for document types
+        base_patterns = [
+            r"/speech/",
+            r"/news/",
+            r"/minutes/",
             r"/monetary-policy-summary",
             r"/monetary-policy-committee/",
         ]
 
-        return any(re.search(pattern, url) for pattern in patterns)
+        # Check if URL matches any base pattern
+        if not any(re.search(pattern, url) for pattern in base_patterns):
+            return False
+
+        # If no year range specified, accept all matching URLs
+        if start_year is None or end_year is None:
+            return True
+
+        # Extract year from URL (match 4-digit year: 2015, 2021, etc.)
+        year_match = re.search(r"/(\d{4})/", url)
+        if not year_match:
+            # If URL doesn't contain year in path, accept it (published date filter will handle)
+            return True
+
+        url_year = int(year_match.group(1))
+        return start_year <= url_year <= end_year
 
     def _fetch_page(self, url: str) -> str:
         """Fetch HTML content from URL.
@@ -322,6 +349,20 @@ class BoEScraperCollector(DocumentCollector):
             if not published_iso:
                 self.logger.warning("No published date found for %s", url)
                 return None
+
+        # Filter by published date against requested date range
+        try:
+            published_dt = datetime.fromisoformat(published_iso.replace("Z", "+00:00"))
+            if published_dt < self._start_date or published_dt > self._end_date:
+                self.logger.debug(
+                    "Skipping document outside date range: %s (published %s)",
+                    url,
+                    published_iso,
+                )
+                return None
+        except (ValueError, AttributeError) as e:
+            self.logger.warning("Failed to parse published date for filtering: %s - %s", url, e)
+            return None
 
         # Extract speaker for speeches
         speaker = None
