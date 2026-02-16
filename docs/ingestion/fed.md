@@ -1,5 +1,17 @@
 # Federal Reserve News Collection
 
+> **⚠️ DEPRECATED**: This RSS-based collector is deprecated. Use [fed_scraper.md](fed_scraper.md) instead.
+>
+> **Reasons for deprecation:**
+> - RSS feed lacks official category metadata (must guess from keywords)
+> - Inconsistent document taxonomy vs scraper (fomc_statement vs policy)
+> - Less accurate classification (keyword matching vs Fed's official categories)
+> - Scraper provides better coverage and accuracy using Fed's HTML metadata
+>
+> **This documentation is preserved for reference only.**
+
+---
+
 Federal Reserve press releases, FOMC statements, speeches, testimony, and meeting minutes from the official RSS feed.
 
 ## Overview

@@ -1,5 +1,18 @@
 """Federal Reserve RSS Feed Collector - Bronze Layer (Raw Data Collection).
 
+**DEPRECATED**: This collector is deprecated in favor of FedScraperCollector.
+
+Deprecation Reasons:
+    1. **Limited metadata**: RSS feed lacks official category information from Fed
+    2. **Keyword guessing**: Must infer document types from title/summary keywords
+    3. **Inconsistent taxonomy**: Produces different types than FedScraperCollector
+    4. **Less accurate**: Scraper uses Fed's official HTML category metadata
+
+Recommended: Use FedScraperCollector for all Fed data collection.
+This code is preserved for reference only.
+
+---
+
 Collects Federal Reserve press releases, speeches, and testimony from official RSS feed:
     - FOMC statements (monetary policy decisions)
     - Press releases (regulation, supervision, operations)
@@ -10,7 +23,7 @@ Collects Federal Reserve press releases, speeches, and testimony from official R
 This collector handles ONLY the Bronze layer (§3.1):
 - Fetches raw publication metadata from Fed RSS feed
 - Extracts full text content from publication URLs
-- Categorizes by document type
+- Categorizes by document type (via keyword matching)
 - Preserves all source fields with standardized schema
 - Adds `source="fed"` field
 - Exports to data/raw/news/fed/ as JSONL (one JSON object per line)
