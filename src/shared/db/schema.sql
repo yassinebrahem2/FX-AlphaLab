@@ -1,0 +1,78 @@
+CREATE TABLE IF NOT EXISTS fx_prices (
+    id SERIAL PRIMARY KEY,
+    timestamp_utc TIMESTAMP NOT NULL,
+    pair VARCHAR(10) NOT NULL,
+    timeframe VARCHAR(10),
+    open DOUBLE PRECISION,
+    high DOUBLE PRECISION,
+    low DOUBLE PRECISION,
+    close DOUBLE PRECISION,
+    volume DOUBLE PRECISION,
+    source VARCHAR(50)
+);
+
+CREATE TABLE IF NOT EXISTS economic_events (
+    id SERIAL PRIMARY KEY,
+    timestamp_utc TIMESTAMP NOT NULL,
+    country VARCHAR(50),
+    event_name VARCHAR(100),
+    impact VARCHAR(20),
+    actual DOUBLE PRECISION,
+    forecast DOUBLE PRECISION,
+    previous DOUBLE PRECISION,
+    source VARCHAR(50)
+);
+
+CREATE TABLE IF NOT EXISTS ecb_policy_rates (
+    id SERIAL PRIMARY KEY,
+    timestamp_utc TIMESTAMP NOT NULL,
+    rate_type VARCHAR(50),
+    rate DOUBLE PRECISION,
+    frequency VARCHAR(20),
+    unit VARCHAR(20),
+    source VARCHAR(50)
+);
+
+CREATE TABLE IF NOT EXISTS ecb_exchange_rates (
+    id SERIAL PRIMARY KEY,
+    timestamp_utc TIMESTAMP NOT NULL,
+    currency_pair VARCHAR(20),
+    rate DOUBLE PRECISION,
+    frequency VARCHAR(20),
+    source VARCHAR(50)
+);
+
+CREATE TABLE IF NOT EXISTS macro_indicators (
+    id SERIAL PRIMARY KEY,
+    timestamp_utc TIMESTAMP NOT NULL,
+    series_id VARCHAR(100),
+    value DOUBLE PRECISION,
+    source VARCHAR(50)
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_fx_prices_time ON fx_prices(timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_economic_events_time ON economic_events(timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_ecb_policy_rates_time ON ecb_policy_rates(timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_ecb_exchange_rates_time ON ecb_exchange_rates(timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_macro_indicators_time ON macro_indicators(timestamp_utc);
+
+ALTER TABLE fx_prices
+ADD CONSTRAINT uq_fx_prices_timestamp_pair_timeframe
+UNIQUE (timestamp_utc, pair, timeframe);
+
+ALTER TABLE economic_events
+ADD CONSTRAINT uq_economic_events_timestamp_event
+UNIQUE (timestamp_utc, event_name);
+
+ALTER TABLE ecb_policy_rates
+ADD CONSTRAINT uq_ecb_policy_rates_timestamp_type
+UNIQUE (timestamp_utc, rate_type);
+
+ALTER TABLE ecb_exchange_rates
+ADD CONSTRAINT uq_ecb_exchange_rates_timestamp_pair
+UNIQUE (timestamp_utc, currency_pair);
+
+ALTER TABLE macro_indicators
+ADD CONSTRAINT uq_macro_indicators_timestamp_series
+UNIQUE (timestamp_utc, series_id);

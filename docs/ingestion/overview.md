@@ -35,6 +35,10 @@ All collectors and preprocessors are **pure Python libraries**:
 |--------|------|------------------|----------------|
 | **FRED** | Macroeconomic indicators | Daily | API key (free) |
 | **ECB** | Exchange rates & policy rates | Daily | None |
+| **ECB News** | Press releases, speeches, policy statements | Real-time | None |
+| **Fed** | FOMC statements, speeches, testimony | Real-time | None |
+| **GDELT** | Global news events | Real-time | None |
+| **BoE** | Bank of England speeches & reports | Real-time | None |
 | **MT5** | FX price data (OHLCV) | Real-time | Windows + MT5 terminal |
 | **Calendar** | Economic events | Real-time | None |
 
@@ -68,6 +72,9 @@ python -m scripts.collect_fred_data --preprocess
 # ECB exchange rates and policy rates
 python -m scripts.collect_ecb_data --preprocess
 
+# ECB news and sentiment data
+python -m scripts.collect_ecb_news_data
+
 # MT5 FX prices (Windows only)
 python -m scripts.collect_mt5_data --preprocess
 
@@ -80,32 +87,59 @@ python -m scripts.collect_calendar_data --today --preprocess
 ```
 data/
 ├── raw/                    # Bronze layer (source format)
-│   ├── fred/              # FRED CSV files
-│   ├── ecb/               # ECB CSV files
-│   ├── mt5/               # MT5 CSV files
-│   └── calendar/          # Calendar CSV files
+│   ├── calendar/          # Calendar CSV files
+│   └── news/              # News content (JSONL)
+│       ├── ecb/           # ECB JSONL files
+│       ├── fed/           # Fed JSONL files
+│       ├── boe/           # BoE JSONL files
+│       └── gdelt/         # GDELT JSONL files
 │
 └── processed/             # Silver layer (normalized)
     ├── macro/             # Macroeconomic indicators (CSV)
     ├── ohlcv/             # Price data (Parquet)
-    └── events/            # Economic events (CSV)
+    ├── events/            # Economic events (CSV)
+    └── news/              # News with sentiment (Partitioned Parquet)
+        ├── source=ecb/
+        │   └── year=2026/
+        │       └── month=02/
+        │           └── news_cleaned.parquet
+        ├── source=fed/
+        └── source=boe/
 ```
 
 ## Schema Standards
 
 ### Bronze Layer (Raw)
+
+**Tabular Data** (FRED, ECB rates, MT5, calendar):
 - Preserve all source fields
 - Snake_case column names
 - UTF-8 encoding
 - CSV format
 - Filename: `{source}_{dataset}_{YYYYMMDD}.csv`
 
+**Document Data** (Fed news, ECB news, GDELT):
+- Preserve all source fields and metadata
+- JSON objects with nested structures
+- UTF-8 encoding
+- JSONL format (one JSON object per line)
+- Filename: `{document_type}_{YYYYMMDD}.jsonl`
+- Location: `data/raw/news/{source}/`
+
 ### Silver Layer (Normalized)
+
+**Tabular Data**:
 - Standard columns: `timestamp_utc`, `series_id`/`pair`, `value`/`open`/`high`/`low`/`close`
 - ISO 8601 timestamps (UTC)
 - Lowercase snake_case
 - CSV for macro/events, Parquet for OHLCV
 - Filename: `{source}_{identifier}_{start}_{end}.{ext}`
+
+**Document Data (Sentiment)**:
+- Partitioned Parquet with Hive-style structure
+- Location: `data/processed/sentiment/source={source}/year={year}/month={month}/sentiment_cleaned.parquet`
+- Schema: `[timestamp_utc, article_id, pair, headline, sentiment_score, sentiment_label, document_type, speaker, source, url]`
+- Partitions enable efficient querying by source/date
 
 ## Common Operations
 
@@ -128,18 +162,38 @@ python -m scripts.collect_fred_data --start 2023-01-01 --end 2023-12-31 --prepro
 
 ### Programmatic Usage
 
-Import collectors as libraries:
+**Tabular collectors** (BaseCollector):
 ```python
 from src.ingestion.collectors.fred_collector import FREDCollector
 from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer
 
 # Bronze collection
 collector = FREDCollector()
-data = collector.collect()
+data = collector.collect()  # Returns dict[str, pd.DataFrame]
+
+# Export to CSV
+for dataset_name, df in data.items():
+    collector.export_csv(df, dataset_name)
 
 # Silver preprocessing
 normalizer = MacroNormalizer()
 silver_data = normalizer.preprocess()
+```
+
+**Document collectors** (DocumentCollector):
+```python
+from src.ingestion.collectors.fed_collector import FedCollector
+
+# Bronze collection
+collector = FedCollector(output_dir=Path("data/raw/news/fed"))
+data = collector.collect()  # Returns dict[str, list[dict]]
+
+# Export to JSONL
+for doc_type, documents in data.items():
+    collector.export_jsonl(documents, doc_type)
+
+# Or use convenience method
+paths = collector.export_all()
 ```
 
 ## Testing
@@ -161,7 +215,8 @@ pytest tests/ingestion/test_calendar_collector.py -v
 
 Detailed guides for each data source:
 - [FRED](fred.md) - Federal Reserve Economic Data
-- [ECB](ecb.md) - European Central Bank
+- [ECB Rates](ecb_rates.md) - European Central Bank exchange rates & policy rates
+- [ECB News](ecb_news.md) - European Central Bank press releases & speeches
 - [MT5](mt5.md) - MetaTrader 5 (FX prices)
 - [Calendar](calendar.md) - Economic calendar events
 

@@ -11,6 +11,9 @@ Usage:
     # Collect and preprocess to Silver
     python scripts/collect_mt5_data.py --preprocess
 
+    # Preprocess existing Bronze data only (no collection)
+    python scripts/collect_mt5_data.py --preprocess-only
+
     # Custom pairs and timeframes
     python scripts/collect_mt5_data.py --pairs EURUSD,GBPUSD --timeframes H1,D1 --preprocess
 
@@ -103,6 +106,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--preprocess-only",
+        action="store_true",
+        help="Skip collection and only preprocess existing raw data",
+    )
+
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -126,6 +135,69 @@ def main() -> int:
         # Parse pairs and timeframes
         pairs = args.pairs.split(",") if args.pairs else None
         timeframes = args.timeframes.split(",") if args.timeframes else None
+
+        # Handle preprocess-only mode
+        if args.preprocess_only:
+            logger.info("Preprocess-only mode: skipping collection")
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("Stage 2: Silver Layer Preprocessing")
+            logger.info("=" * 60)
+
+            normalizer = PriceNormalizer(
+                input_dir=Config.DATA_DIR / "raw",
+                output_dir=Config.DATA_DIR / "processed" / "ohlcv",
+                sources=["mt5"],
+            )
+
+            # Check if raw data exists
+            raw_dir = Config.DATA_DIR / "raw" / "mt5"
+            if not raw_dir.exists() or not list(raw_dir.glob("*.csv")):
+                logger.error("No raw MT5 data found in %s", raw_dir)
+                logger.error("Run without --preprocess-only to collect data first")
+                return 1
+
+            logger.info("Processing existing Bronze data from %s", raw_dir)
+
+            # Parse dates if provided
+            if args.start:
+                try:
+                    start_date = datetime.strptime(args.start, "%Y-%m-%d")
+                except ValueError:
+                    logger.error("Invalid start date format. Use YYYY-MM-DD")
+                    return 1
+            else:
+                start_date = None
+
+            if args.end:
+                try:
+                    end_date = datetime.strptime(args.end, "%Y-%m-%d")
+                except ValueError:
+                    logger.error("Invalid end date format. Use YYYY-MM-DD")
+                    return 1
+            else:
+                end_date = None
+
+            silver_data = normalizer.preprocess(start_date=start_date, end_date=end_date)
+
+            if not silver_data:
+                logger.warning("No data preprocessed")
+                return 1
+
+            logger.info("Exporting Silver data...")
+            for identifier, df in silver_data.items():
+                if df.empty:
+                    continue
+                min_date = df["timestamp_utc"].min().to_pydatetime()
+                max_date = df["timestamp_utc"].max().to_pydatetime()
+                path = normalizer.export(df, identifier, min_date, max_date, format="parquet")
+                logger.info("  ✓ Processed %s: %d records → %s", identifier, len(df), path.name)
+
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("✓ Preprocessing Complete!")
+            logger.info("=" * 60)
+            return 0
 
         # Initialize collector
         collector = MT5Collector(

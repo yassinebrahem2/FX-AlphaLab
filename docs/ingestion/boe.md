@@ -40,12 +40,10 @@ Collected items are categorized into the following buckets:
   -------------- ------------------------------------ ---------------------------
   `statements`   General BoE press releases / news    `press_release`
 
-  `mpc`          Monetary Policy Committee related    `mpc_statement`
-                 communications                       
-
   `speeches`     Official speeches                    `boe_speech`
 
-  `summaries`    Monetary policy summaries / minutes  `monetary_policy_summary`
+  `summaries`    Monetary policy summaries            `monetary_policy_summary`
+                 (includes MPC minutes)
   -------------------------------------------------------------------------------
 
 ### Notes
@@ -72,7 +70,6 @@ Example:
 
     statements_20260212.jsonl
     speeches_20260212.jsonl
-    mpc_20260212.jsonl
     summaries_20260212.jsonl
 
 ### Important Note on Filename Date
@@ -209,7 +206,6 @@ Unit tests cover:
 -   RSS parsing
 -   Timestamp normalization
 -   Document type classification
--   MPC classification via title keywords
 -   Date filtering (inclusive bounds)
 -   Error handling & fallback
 -   Rate limiting behavior

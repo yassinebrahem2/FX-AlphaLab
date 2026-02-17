@@ -11,6 +11,9 @@ Usage:
     # Collect and preprocess to Silver
     python scripts/collect_ecb_data.py --preprocess
 
+    # Preprocess existing Bronze data only (no collection)
+    python scripts/collect_ecb_data.py --preprocess-only
+
     # Specific dataset only
     python scripts/collect_ecb_data.py --dataset exchange_rates --preprocess
     python scripts/collect_ecb_data.py --dataset policy_rates --preprocess
@@ -88,6 +91,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--preprocess-only",
+        action="store_true",
+        help="Skip collection and only preprocess existing raw data",
+    )
+
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -108,6 +117,98 @@ def main() -> int:
     )
 
     try:
+        # Handle preprocess-only mode
+        if args.preprocess_only:
+            logger.info("Preprocess-only mode: skipping collection")
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("Stage 2: Silver Layer Preprocessing")
+            logger.info("=" * 60)
+
+            # Check if raw data exists
+            raw_dir = Config.DATA_DIR / "raw" / "ecb"
+            if not raw_dir.exists() or not list(raw_dir.glob("*.csv")):
+                logger.error("No raw ECB data found in %s", raw_dir)
+                logger.error("Run without --preprocess-only to collect data first")
+                return 1
+
+            logger.info("Processing existing Bronze data from %s", raw_dir)
+
+            # Parse dates if provided
+            if args.start:
+                try:
+                    start_date = datetime.strptime(args.start, "%Y-%m-%d")
+                except ValueError:
+                    logger.error("Invalid start date format. Use YYYY-MM-DD")
+                    return 1
+            else:
+                start_date = datetime.now() - timedelta(days=730)  # 2 years ago
+
+            if args.end:
+                try:
+                    end_date = datetime.strptime(args.end, "%Y-%m-%d")
+                except ValueError:
+                    logger.error("Invalid end date format. Use YYYY-MM-DD")
+                    return 1
+            else:
+                end_date = datetime.now()
+
+            silver_count = 0
+
+            # Process exchange rates to OHLCV if exists
+            if (raw_dir / "ecb_exchange_rates.csv").exists() or list(
+                raw_dir.glob("*exchange_rates*.csv")
+            ):
+                logger.info("Processing exchange_rates to OHLCV...")
+                price_normalizer = PriceNormalizer(
+                    input_dir=Config.DATA_DIR / "raw",
+                    output_dir=Config.DATA_DIR / "processed" / "ohlcv",
+                    sources=["ecb"],
+                )
+                ohlcv_data = price_normalizer.preprocess(start_date=start_date, end_date=end_date)
+
+                for pair_tf, df in ohlcv_data.items():
+                    if df.empty:
+                        continue
+                    min_date = df["timestamp_utc"].min().to_pydatetime()
+                    max_date = df["timestamp_utc"].max().to_pydatetime()
+                    path = price_normalizer.export(
+                        df, pair_tf, min_date, max_date, format="parquet"
+                    )
+                    logger.info("  ✓ Processed %s: %d records → %s", pair_tf, len(df), path.name)
+                    silver_count += 1
+
+            # Process policy rates to macro if exists
+            if (raw_dir / "ecb_policy_rates.csv").exists() or list(
+                raw_dir.glob("*policy_rates*.csv")
+            ):
+                logger.info("Processing policy_rates to macro...")
+                macro_normalizer = MacroNormalizer(
+                    input_dir=Config.DATA_DIR / "raw",
+                    output_dir=Config.DATA_DIR / "processed" / "macro",
+                    sources=["ecb"],
+                )
+                macro_data = macro_normalizer.preprocess(start_date=start_date, end_date=end_date)
+
+                for series_id, df in macro_data.items():
+                    if df.empty:
+                        continue
+                    min_date = df["timestamp_utc"].min().to_pydatetime()
+                    max_date = df["timestamp_utc"].max().to_pydatetime()
+                    path = macro_normalizer.export(df, series_id, min_date, max_date, format="csv")
+                    logger.info("  ✓ Processed %s: %d records → %s", series_id, len(df), path.name)
+                    silver_count += 1
+
+            if silver_count == 0:
+                logger.warning("No datasets preprocessed")
+                return 1
+
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("✓ Preprocessing Complete: %d datasets", silver_count)
+            logger.info("=" * 60)
+            return 0
+
         # Initialize collector
         collector = ECBCollector()
         logger.info("ECBCollector initialized (Bronze layer: %s)", collector.output_dir)

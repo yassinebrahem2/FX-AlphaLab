@@ -32,23 +32,23 @@ from typing import Any
 
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from bs4 import BeautifulSoup
-
-from src.shared.config import Config
 
 from src.ingestion.collectors.document_collector import DocumentCollector
+from src.shared.config import Config
+
 
 class BoECollector(DocumentCollector):
     SOURCE_NAME = "boe"
 
     RSS_URLS = [
-    "https://www.bankofengland.co.uk/RSS/News",  
-    "https://www.bankofengland.co.uk/rss/news",  
-    "https://www.bankofengland.co.uk/rss/speeches",
-    "https://www.bankofengland.co.uk/rss/prudential-regulation-publications",
-]
+        "https://www.bankofengland.co.uk/RSS/News",
+        "https://www.bankofengland.co.uk/rss/news",
+        "https://www.bankofengland.co.uk/rss/speeches",
+        "https://www.bankofengland.co.uk/rss/prudential-regulation-publications",
+    ]
 
     DEFAULT_TIMEOUT = 30
     MAX_RETRIES = 3
@@ -69,11 +69,7 @@ class BoECollector(DocumentCollector):
         self._session = self._create_session()
         self.logger.info("BoECollector initialized, output_dir=%s", self.output_dir)
 
-
-
-
     def _to_utc_iso(self, published: str | None, published_parsed: Any | None) -> str | None:
-
         """
         Convert RSS published date to UTC ISO-8601 string.
         Uses feedparser's published_parsed (time.struct_time) when available.
@@ -109,31 +105,25 @@ class BoECollector(DocumentCollector):
 
     def _classify_document_type(self, url: str, title: str | None = None) -> tuple[str, str]:
         u = (url or "").lower()
-        t = (title or "").lower()
 
-    # Speeches
+        # Speeches
         if "/speech/" in u or "/speeches/" in u:
             return "speeches", "boe_speech"
 
-      # Monetary Policy Summary
+        # Monetary Policy Summary (includes MPC minutes)
         if "monetary-policy-summary" in u or "monetary-policy-summary-and-minutes" in u:
-           return "summaries", "monetary_policy_summary"
+            return "summaries", "monetary_policy_summary"
 
-    # MPC
-        if (
-            "/monetary-policy-committee/" in u
-            or "/mpc/" in u
-            or t.startswith("mpc")
-            or "monetary policy committee" in t
-        ):
-            return "mpc", "mpc_statement"
-
-    # Default
-        return "statements", "press_release" 
+        # Default to statements (press releases)
+        return "statements", "press_release"
 
     def _fetch_article_text(self, url: str) -> str:
+        from bs4 import BeautifulSoup
+
         headers = {"User-Agent": "Mozilla/5.0"}
-        resp = self._session.get(url, headers=headers, timeout=self.DEFAULT_TIMEOUT, allow_redirects=True)
+        resp = self._session.get(
+            url, headers=headers, timeout=self.DEFAULT_TIMEOUT, allow_redirects=True
+        )
 
         try:
             resp.raise_for_status()
@@ -141,12 +131,59 @@ class BoECollector(DocumentCollector):
             # Attach status code for better upstream metadata
             raise RuntimeError(f"HTTP {resp.status_code} for {url}") from e
 
-
         resp.encoding = resp.apparent_encoding
 
-        return resp.text
+        # Parse HTML and extract clean text
+        soup = BeautifulSoup(resp.text, "html.parser")
 
+        # Remove unwanted elements
+        for element in soup(
+            ["script", "style", "nav", "header", "footer", "aside", "form", "button"]
+        ):
+            element.decompose()
 
+        # Remove cookie notice, navigation bypass, and other BoE-specific noise
+        for noise_class in [
+            "cookie-notice",
+            "nav-bypass",
+            "global-header",
+            "global-footer",
+            "page-survey",
+            "accordion",
+            "pdf-button",
+            "footer-social-bank",
+            "footer-topics",
+        ]:
+            for element in soup.find_all(class_=noise_class):
+                element.decompose()
+
+        # Try BoE-specific content selectors (in priority order)
+        content_selectors = [
+            "div.page-content",  # Primary content div
+            "section.page-section",  # Section container
+            "div.accordion-content",  # Sometimes in accordion
+            "article",  # Semantic HTML5
+            "main#main-content",  # Main content area
+            "body",  # Last resort
+        ]
+
+        text_content = ""
+        for selector in content_selectors:
+            content_div = soup.select_one(selector)
+            if content_div:
+                # Get text but skip if it's too short (likely just nav/header)
+                temp_text = content_div.get_text(separator="\n", strip=True)
+                if len(temp_text) > 200:  # Minimum threshold
+                    text_content = temp_text
+                    break
+
+        # If still empty, get all text from body
+        if not text_content or len(text_content) < 200:
+            body = soup.find("body")
+            if body:
+                text_content = body.get_text(separator="\n", strip=True)
+
+        return text_content if text_content else resp.text
 
     def collect(
         self,
@@ -160,12 +197,11 @@ class BoECollector(DocumentCollector):
               Mapping of document_type -> list of raw records (Bronze contract).
 
         """
-    
-        import feedparser
         from collections import defaultdict
 
-        results: dict[str, list[dict]] = defaultdict(list)
+        import feedparser
 
+        results: dict[str, list[dict]] = defaultdict(list)
 
         # Default window: last 1 day if not provided
         now_utc = datetime.now(timezone.utc)
@@ -174,17 +210,16 @@ class BoECollector(DocumentCollector):
         if start_date is None:
             start_date = end_date - pd.Timedelta(days=90)
 
-
         # Normalize to UTC aware
         if start_date.tzinfo is None:
             start_date = start_date.replace(tzinfo=timezone.utc)
         if end_date.tzinfo is None:
             end_date = end_date.replace(tzinfo=timezone.utc)
-            
+
         self.logger.info(
-        "Collecting BoE documents from %s to %s",
-        start_date.isoformat(),
-        end_date.isoformat(),
+            "Collecting BoE documents from %s to %s",
+            start_date.isoformat(),
+            end_date.isoformat(),
         )
 
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -192,24 +227,24 @@ class BoECollector(DocumentCollector):
         collected_count = 0
         seen_urls: set[str] = set()
 
-
         for feed_url in self.RSS_URLS:
             resp = self._session.get(feed_url, headers=headers, timeout=20, allow_redirects=True)
             resp.raise_for_status()
 
             feed = feedparser.parse(resp.text)
             if getattr(feed, "bozo", False):
-                self.logger.warning("RSS bozo flag for %s: %s", feed_url, getattr(feed, "bozo_exception", None))
+                self.logger.warning(
+                    "RSS bozo flag for %s: %s", feed_url, getattr(feed, "bozo_exception", None)
+                )
 
             for entry in feed.entries:
                 url = entry.get("link")
                 if not url or url in seen_urls:
                     continue
                 title = entry.get("title")
-                published_iso = self._to_utc_iso(entry.get("published"), entry.get("published_parsed"))
-
-
-
+                published_iso = self._to_utc_iso(
+                    entry.get("published"), entry.get("published_parsed")
+                )
 
                 if not url or not published_iso:
                     continue
@@ -228,7 +263,6 @@ class BoECollector(DocumentCollector):
                         speaker = self._extract_speaker_from_page(url)
                     except Exception:
                         speaker = None
-                    
 
                 fetch_error = None
                 fetch_error_type = None
@@ -238,7 +272,9 @@ class BoECollector(DocumentCollector):
                     fetch_error = str(e)
                     fetch_error_type = e.__class__.__name__
                     content = entry.get("summary") or ""
-                    self.logger.info("Article fetch failed, falling back to RSS summary for %s", url)
+                    self.logger.info(
+                        "Article fetch failed, falling back to RSS summary for %s", url
+                    )
 
                 record = {
                     "source": "BoE",
@@ -253,7 +289,9 @@ class BoECollector(DocumentCollector):
                         "rss_feed": feed_url,
                         "rss_id": entry.get("id") or entry.get("guid"),
                         "rss_summary": entry.get("summary"),
-                        "rss_tags": [t.get("term") for t in entry.get("tags", []) if isinstance(t, dict)],
+                        "rss_tags": [
+                            t.get("term") for t in entry.get("tags", []) if isinstance(t, dict)
+                        ],
                         "fetch_error": fetch_error,
                         "fetch_error_type": fetch_error_type,
                     },
@@ -264,12 +302,8 @@ class BoECollector(DocumentCollector):
                 collected_count += 1
                 time.sleep(self.REQUEST_DELAY)
 
-
         self.logger.info("Collected %d BoE documents", collected_count)
         return dict(results)
-
-
-
 
     def _extract_speaker_from_page(self, url: str) -> str | None:
         """
@@ -278,7 +312,9 @@ class BoECollector(DocumentCollector):
         """
         headers = {"User-Agent": "Mozilla/5.0"}
         try:
-            resp = self._session.get(url, headers=headers, timeout=self.DEFAULT_TIMEOUT, allow_redirects=True)
+            resp = self._session.get(
+                url, headers=headers, timeout=self.DEFAULT_TIMEOUT, allow_redirects=True
+            )
             resp.raise_for_status()
             resp.encoding = resp.apparent_encoding
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -306,7 +342,9 @@ class BoECollector(DocumentCollector):
             # 3) Fallback: scan first part of main content for "speech by X"
             main = soup.find("main")
             if main:
-                lines = [ln.strip() for ln in main.get_text("\n", strip=True).splitlines() if ln.strip()]
+                lines = [
+                    ln.strip() for ln in main.get_text("\n", strip=True).splitlines() if ln.strip()
+                ]
                 for ln in lines[:80]:
                     low = ln.lower()
                     if "speech by " in low:
@@ -316,7 +354,6 @@ class BoECollector(DocumentCollector):
             return None
         except Exception:
             return None
-
 
     def health_check(self) -> bool:
         """
@@ -333,7 +370,9 @@ class BoECollector(DocumentCollector):
             try:
                 resp = self._session.get(url, headers=headers, timeout=10, allow_redirects=True)
                 if not resp.ok:
-                    self.logger.warning("Health check failed for %s: HTTP %s", url, resp.status_code)
+                    self.logger.warning(
+                        "Health check failed for %s: HTTP %s", url, resp.status_code
+                    )
                     continue
 
                 feed = feedparser.parse(resp.text)
@@ -355,8 +394,6 @@ class BoECollector(DocumentCollector):
                 self.logger.warning("Health check request error for %s: %s", url, e)
 
         return False
-    
-
 
     # -----------------------
     # Helpers
@@ -370,22 +407,17 @@ class BoECollector(DocumentCollector):
             connect=self.MAX_RETRIES,
             read=self.MAX_RETRIES,
             status=self.MAX_RETRIES,
-
-         # Exponential backoff: 0, 2, 4, 8... seconds-ish (depends on urllib3)
+            # Exponential backoff: 0, 2, 4, 8... seconds-ish (depends on urllib3)
             backoff_factor=self.RETRY_BACKOFF,
-
-        # Retry on these HTTP status codes
+            # Retry on these HTTP status codes
             status_forcelist=(429, 500, 502, 503, 504),
-
-        # Only retry GETs
+            # Only retry GETs
             allowed_methods=frozenset(["GET"]),
-
-        # Respect Retry-After header (important for 429 rate limit)
+            # Respect Retry-After header (important for 429 rate limit)
             respect_retry_after_header=True,
-
-        # Retry even if status code is returned (not just exceptions)
+            # Retry even if status code is returned (not just exceptions)
             raise_on_status=False,
-    )
+        )
 
         adapter = HTTPAdapter(max_retries=retry)
         session.mount("https://", adapter)
@@ -393,16 +425,14 @@ class BoECollector(DocumentCollector):
 
         return session
 
-
     def _write_jsonl(self, path: Path, records: list[dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as f:
             for obj in records:
                 f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
-if __name__ == "__main__":
-    from datetime import datetime, timezone
 
+if __name__ == "__main__":
     collector = BoECollector()
     data = collector.collect(
         start_date=datetime(2026, 2, 9, tzinfo=timezone.utc),
@@ -411,5 +441,3 @@ if __name__ == "__main__":
     print(data.keys())
     paths = collector.export_all(data=data)
     print(paths)
-
-

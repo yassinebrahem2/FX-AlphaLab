@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
-from src.ingestion.collectors.boe_collector import BoECollector
-from unittest.mock import Mock, patch
-from unittest.mock import call
-import requests
 import json
+from datetime import datetime, timezone
+from unittest.mock import Mock, patch
 
+import requests
+
+from src.ingestion.collectors.boe_collector import BoECollector
 
 
 def test_timestamp_normalization():
@@ -33,7 +33,6 @@ def test_document_type_classification_speech():
     assert doc_type == "boe_speech"
 
 
-
 def test_document_type_classification_mps():
     collector = BoECollector()
     url = "https://www.bankofengland.co.uk/monetary-policy-summary-and-minutes/2026/february"
@@ -44,11 +43,11 @@ def test_document_type_classification_mps():
     assert doc_type == "monetary_policy_summary"
 
 
-
 def test_health_check_returns_bool():
     collector = BoECollector()
     result = collector.health_check()
     assert isinstance(result, bool)
+
 
 def _make_response(text: str, status: int = 200) -> Mock:
     resp = Mock()
@@ -80,7 +79,6 @@ class TestHealthCheckMocked:
         with patch.object(collector._session, "get", return_value=_make_response(sample_rss, 200)):
             assert collector.health_check() is True
 
-
     def test_health_check_false_when_all_feeds_fail(self):
         collector = BoECollector()
         with patch.object(
@@ -93,7 +91,6 @@ class TestCollectErrorHandling:
     def test_collect_skips_statement_when_fetch_fails(self, tmp_path):
         collector = BoECollector(output_dir=tmp_path)
         collector.RSS_URLS = ["https://www.bankofengland.co.uk/RSS/News"]
-
 
         # Minimal RSS with one entry inside range
         sample_rss = """<?xml version="1.0" encoding="UTF-8"?>
@@ -125,6 +122,7 @@ class TestCollectErrorHandling:
         assert obj["metadata"]["fetch_error"] is not None
         assert obj["metadata"]["fetch_error_type"] is not None
 
+
 def test_collect_writes_jsonl_with_required_schema(tmp_path):
     collector = BoECollector(output_dir=tmp_path)
 
@@ -150,7 +148,6 @@ def test_collect_writes_jsonl_with_required_schema(tmp_path):
 
     assert "statements" in data
     obj = data["statements"][0]
-
 
     required_keys = [
         "source",
@@ -191,7 +188,9 @@ def test_extract_speaker_from_page_finds_speech_by(tmp_path):
     resp.raise_for_status = Mock()
 
     with patch.object(collector._session, "get", return_value=resp):
-        speaker = collector._extract_speaker_from_page("https://www.bankofengland.co.uk/speech/2026/test")
+        speaker = collector._extract_speaker_from_page(
+            "https://www.bankofengland.co.uk/speech/2026/test"
+        )
 
     assert speaker == "Jane Doe"
 
@@ -226,7 +225,6 @@ def test_collect_calls_sleep_for_rate_limiting(tmp_path):
 def test_collect_date_filtering_inclusive_bounds(tmp_path):
     collector = BoECollector(output_dir=tmp_path)
     collector.RSS_URLS = ["https://www.bankofengland.co.uk/RSS/News"]
-
 
     # Two items: one on Feb 10, one on Feb 11
     sample_rss = """<?xml version="1.0" encoding="UTF-8"?>
@@ -296,17 +294,19 @@ def test_collect_fallback_writes_record_when_fetch_fails(tmp_path):
 def test_export_jsonl_writes_file(tmp_path):
     collector = BoECollector(output_dir=tmp_path)
 
-    fake_data = [{
-        "source": "BoE",
-        "timestamp_collected": "2026-02-11T00:00:00+00:00",
-        "timestamp_published": "2026-02-10T16:30:00+00:00",
-        "url": "http://test",
-        "title": "Test",
-        "content": "Hello",
-        "document_type": "press_release",
-        "speaker": None,
-        "metadata": {},
-    }]
+    fake_data = [
+        {
+            "source": "BoE",
+            "timestamp_collected": "2026-02-11T00:00:00+00:00",
+            "timestamp_published": "2026-02-10T16:30:00+00:00",
+            "url": "http://test",
+            "title": "Test",
+            "content": "Hello",
+            "document_type": "press_release",
+            "speaker": None,
+            "metadata": {},
+        }
+    ]
 
     path = collector.export_jsonl(fake_data, "statements")
 
@@ -319,28 +319,32 @@ def test_export_all_to_jsonl_writes_multiple_files(tmp_path):
     collector = BoECollector(output_dir=tmp_path)
 
     fake = {
-        "statements": [{
-            "source": "BoE",
-            "timestamp_collected": "x",
-            "timestamp_published": "x",
-            "url": "x",
-            "title": "A",
-            "content": "x",
-            "document_type": "press_release",
-            "speaker": None,
-            "metadata": {},
-        }],
-        "speeches": [{
-            "source": "BoE",
-            "timestamp_collected": "x",
-            "timestamp_published": "x",
-            "url": "x",
-            "title": "B",
-            "content": "x",
-            "document_type": "boe_speech",
-            "speaker": None,
-            "metadata": {},
-        }],
+        "statements": [
+            {
+                "source": "BoE",
+                "timestamp_collected": "x",
+                "timestamp_published": "x",
+                "url": "x",
+                "title": "A",
+                "content": "x",
+                "document_type": "press_release",
+                "speaker": None,
+                "metadata": {},
+            }
+        ],
+        "speeches": [
+            {
+                "source": "BoE",
+                "timestamp_collected": "x",
+                "timestamp_published": "x",
+                "url": "x",
+                "title": "B",
+                "content": "x",
+                "document_type": "boe_speech",
+                "speaker": None,
+                "metadata": {},
+            }
+        ],
     }
 
     paths = collector.export_all(data=fake)
@@ -350,36 +354,13 @@ def test_export_all_to_jsonl_writes_multiple_files(tmp_path):
     assert paths["statements"].exists()
     assert paths["speeches"].exists()
 
-def test_export_jsonl_writes_file(tmp_path):
-    collector = BoECollector(output_dir=tmp_path)
 
-    fake_data = [{
-        "source": "BoE",
-        "timestamp_collected": "2026-02-11T00:00:00+00:00",
-        "timestamp_published": "2026-02-10T16:30:00+00:00",
-        "url": "http://test",
-        "title": "Test",
-        "content": "Hello",
-        "document_type": "press_release",
-        "speaker": None,
-        "metadata": {},
-    }]
-
-    path = collector.export_jsonl(fake_data, "statements")
-
-    assert path.exists()
-    obj = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
-    assert obj["title"] == "Test"
-
-def test_document_type_classification_mpc_by_title():
+def test_document_type_classification_default_statement():
+    """Test that non-matching documents default to statements."""
     collector = BoECollector()
     url = "https://www.bankofengland.co.uk/news/2025/november/test"
-    bucket, doc_type = collector._classify_document_type(url, "Remit for the Monetary Policy Committee - November 2025")
-    assert bucket == "mpc"
-    assert doc_type == "mpc_statement"
-
-
-
-
-
-
+    bucket, doc_type = collector._classify_document_type(
+        url, "Remit for the Monetary Policy Committee - November 2025"
+    )
+    assert bucket == "statements"
+    assert doc_type == "press_release"
