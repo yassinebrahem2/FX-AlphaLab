@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-
+import random
 import pandas as pd
 from pytrends.request import TrendReq
 
@@ -29,7 +29,7 @@ class GoogleTrendsCollector(BaseCollector):
     SOURCE_NAME = "google_trends"
 
     # Keep it polite to reduce risk of 429
-    REQUEST_DELAY = 2.0
+    REQUEST_DELAY = 10.0
 
     def __init__(
         self,
@@ -40,7 +40,7 @@ class GoogleTrendsCollector(BaseCollector):
         retries: int = 2,
         backoff_factor: float = 0.2,
         timeout: tuple[int, int] = (10, 25),
-        proxies: list[str] | None = None,
+        proxies: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             output_dir=output_dir or (Config.DATA_DIR / "raw" / "attention" / "google_trends"),
@@ -52,7 +52,7 @@ class GoogleTrendsCollector(BaseCollector):
             hl=hl,
             tz=tz,
             timeout=timeout,
-            proxies=proxies,
+            proxies=proxies or {},
             retries=retries,
             backoff_factor=backoff_factor,
         )
@@ -135,6 +135,9 @@ class GoogleTrendsCollector(BaseCollector):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        keywords: list[str] | None = None,
+        geo: str = "",
+        gprop: str = "",
     ) -> dict[str, pd.DataFrame]:
         """
         Collect Google Trends datasets.
@@ -143,7 +146,7 @@ class GoogleTrendsCollector(BaseCollector):
             dict of dataset_name -> DataFrame
         """
         # You can later move these into config/collectors/google_trends.yaml if you want.
-        keywords = getattr(Config, "GOOGLE_TRENDS_KEYWORDS", None) or [
+        keywords = keywords or getattr(Config, "GOOGLE_TRENDS_KEYWORDS", None) or [
             "inflation",
             "recession",
             "Federal Reserve",
@@ -155,27 +158,46 @@ class GoogleTrendsCollector(BaseCollector):
             "GBPUSD",
         ]
 
-        geo = getattr(Config, "GOOGLE_TRENDS_GEO", "")  # "" = worldwide
-        gprop = getattr(Config, "GOOGLE_TRENDS_GPROP", "")  # "" = web
+        geo = geo if geo is not None else getattr(Config, "GOOGLE_TRENDS_GEO", "") # "" = worldwide
+        gprop = gprop if gprop is not None else getattr(Config, "GOOGLE_TRENDS_GPROP", "") # "" = web search
         timeframe = self._to_timeframe(start_date, end_date)
 
-        self.logger.info("Collecting Google Trends: keywords=%d timeframe=%s geo=%s gprop=%s",
-                         len(keywords), timeframe, geo, gprop)
+        self.logger.info(
+        "Collecting Google Trends: keywords=%d timeframe=%s geo=%s gprop=%s",
+        len(keywords), timeframe, geo, gprop
+        )
+
 
         frames: list[pd.DataFrame] = []
         for kw in keywords:
-            try:
-                df = self._fetch_interest_over_time(
-                    keyword=kw,
-                    timeframe=timeframe,
-                    geo=geo,
-                    gprop=gprop,
-                )
-                if not df.empty:
-                    frames.append(df)
-            except Exception as e:
-                self.logger.warning("Failed keyword=%s: %s", kw, e)
-            time.sleep(self.REQUEST_DELAY)
+            for attempt in range(2):  # 1 retry
+                try:
+                    df = self._fetch_interest_over_time(
+                        keyword=kw,
+                        timeframe=timeframe,
+                        geo=geo,
+                        gprop=gprop,
+                    )
+                    if not df.empty:    
+                       frames.append(df)
+                    break
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "429" in msg or "too many" in msg:
+                        wait = 180 if attempt == 0 else 0
+                        if wait:
+                            self.logger.warning("Rate limited (429). Sleeping %ss then retrying keyword=%s", wait, kw)
+                            time.sleep(wait)
+                            continue
+                    self.logger.warning("Failed keyword=%s: %s", kw, e)
+                    break  # don't retry on other errors
+            time.sleep(self.REQUEST_DELAY + random.uniform(0, 2.0))
+
+                
+                
+                    
+               
+
 
         if not frames:
             return {"interest_over_time": pd.DataFrame()}

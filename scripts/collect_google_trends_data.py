@@ -34,6 +34,7 @@ import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 
+
 from src.ingestion.collectors.google_trends_collector import GoogleTrendsCollector
 from src.shared.config import Config
 from src.shared.utils import setup_logger
@@ -104,17 +105,17 @@ def main() -> int:
         )
 
         # Health check
-        if not collector.health_check():
-            logger.error("Google Trends health check failed (pytrends)")
-            logger.error("Possible causes: network issue, temporary Google blocking, rate limit.")
-            logger.error("Tip: try again later or configure proxies in collector if needed.")
-            return 1
-
-        logger.info("Health check: PASSED")
-
         if args.health_check:
+            if not collector.health_check():
+                logger.error("Google Trends health check failed (pytrends)")
+                logger.error("Possible causes: network issue, temporary Google blocking, rate limit.")
+                logger.error("Tip: try again later or configure proxies in collector if needed.")
+                return 1
+
+            logger.info("Health check: PASSED")
             logger.info("Health check complete, exiting")
             return 0
+
 
         # Dates
         if args.start:
@@ -195,9 +196,20 @@ def main() -> int:
             logger.warning("Collected dataset is empty")
             return 1
 
-        # Export to Bronze
-        path = collector.export_csv(df, "interest_over_time")
+        # Export to Bronze (unique filename per run/params)
+        run_ts = datetime.now(timezone.utc).strftime("%H%M%S")  # only time
+        dataset_name = (
+            f"interest_over_time_"
+            f"{start_date:%Y%m%d}_{end_date:%Y%m%d}_"
+            f"{(geo or 'GLOBAL').replace(' ', '')}_"
+            f"{(gprop or 'web').replace(' ', '')}_"
+            f"kw{len(keywords)}_"
+            f"{run_ts}"
+        )
+
+        path = collector.export_csv(df, dataset_name)
         logger.info("Exported Bronze CSV -> %s", path)
+
 
         # Optional preprocess step (only if you implement a preprocessor)
         if args.preprocess:

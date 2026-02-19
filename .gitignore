@@ -18,6 +18,7 @@ ENV/
 
 # Environment
 .env
+.venv-trends/
 
 # Credentials (Google Cloud, API keys, etc.)
 credentials/

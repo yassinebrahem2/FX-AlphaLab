@@ -3,6 +3,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
+
+
 from src.ingestion.collectors.google_trends_collector import GoogleTrendsCollector
 
 
@@ -62,3 +64,26 @@ def test_export_csv_works(tmp_path):
     )
     path = collector.export_csv(df, "interest_over_time")
     assert path.exists()
+
+def test_collect_respects_passed_keywords(tmp_path):
+    collector = GoogleTrendsCollector(output_dir=tmp_path)
+
+    fake_df = pd.DataFrame(
+        {"date": pd.date_range("2026-02-01", periods=1, tz="UTC"),
+         "inflation": [10],
+         "isPartial": [False]}
+    ).set_index("date")
+
+    with patch.object(collector._pytrends, "build_payload") as bp, patch.object(
+        collector._pytrends, "interest_over_time", return_value=fake_df
+    ), patch("time.sleep"):
+        out = collector.collect(
+            start_date=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            end_date=datetime(2026, 2, 2, tzinfo=timezone.utc),
+            keywords=["inflation"],
+            geo="US",
+            gprop="news",
+        )
+
+    assert bp.call_args.kwargs["kw_list"] == ["inflation"]
+
