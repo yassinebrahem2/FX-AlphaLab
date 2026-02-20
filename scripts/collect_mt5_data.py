@@ -118,7 +118,56 @@ def parse_args() -> argparse.Namespace:
         help="Enable verbose logging",
     )
 
+    parser.add_argument(
+        "--list-symbols",
+        action="store_true",
+        help="List all available symbols from MT5 broker grouped by category, then exit",
+    )
+
     return parser.parse_args()
+
+
+def list_broker_symbols() -> int:
+    """Connect to MT5 and print all available symbols grouped by category."""
+    try:
+        import MetaTrader5 as mt5  # noqa: N813
+    except ImportError:
+        print("ERROR: MetaTrader5 module not found. Install with: pip install MetaTrader5")
+        return 1
+
+    if not mt5.initialize():
+        print(f"ERROR: MT5 initialisation failed: {mt5.last_error()}")
+        return 1
+
+    try:
+        symbols = mt5.symbols_get()
+        if not symbols:
+            print("No symbols returned from MT5")
+            return 1
+
+        # Group by path/category
+        from collections import defaultdict
+
+        groups: dict[str, list[str]] = defaultdict(list)
+        for s in symbols:
+            # MT5 path looks like "Forex\EURUSD" or "Crypto\BTCUSD"
+            parts = s.path.split("\\") if "\\" in s.path else s.path.split("/")
+            category = parts[0] if parts else "Other"
+            groups[category].append(s.name)
+
+        print(f"\nBroker symbols ({len(symbols)} total)\n" + "=" * 60)
+        for category in sorted(groups):
+            syms = sorted(groups[category])
+            print(f"\n[{category}] ({len(syms)} symbols)")
+            # Print in columns of 4
+            for i in range(0, len(syms), 4):
+                print("  " + "  ".join(f"{s:<12}" for s in syms[i : i + 4]))
+
+        print(f"\nTotal: {len(symbols)} symbols across {len(groups)} categories")
+    finally:
+        mt5.shutdown()
+
+    return 0
 
 
 def main() -> int:
@@ -130,6 +179,10 @@ def main() -> int:
         "collect_mt5",
         level="DEBUG" if args.verbose else "INFO",
     )
+
+    # Handle symbol listing mode
+    if args.list_symbols:
+        return list_broker_symbols()
 
     try:
         # Parse pairs and timeframes
