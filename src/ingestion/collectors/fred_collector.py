@@ -118,29 +118,11 @@ class FREDCollector(BaseCollector):
         units="Percent",
     )
 
-    TRADE_BALANCE = FREDSeries(
-        series_id="BOPGSTB",
-        name="trade_balance",
-        description="Trade Balance: Goods and Services",
-        frequency="M",
-        units="Millions of Dollars",
-    )
-
-    NET_CAPITAL_FLOWS = FREDSeries(
-        series_id="NETFI",
-        name="net_capital_flows",
-        description="Net Capital Inflows to United States",
-        frequency="M",
-        units="Millions of Dollars",
-    )
-
     _ALL_SERIES: tuple[FREDSeries, ...] = (
         FINANCIAL_STRESS,
         FEDERAL_FUNDS_RATE,
         CPI,
         UNEMPLOYMENT_RATE,
-        TRADE_BALANCE,
-        NET_CAPITAL_FLOWS,
     )
 
     def __init__(
