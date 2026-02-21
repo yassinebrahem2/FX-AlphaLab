@@ -10,6 +10,8 @@ European Central Bank (ECB) provides EUR exchange rates and monetary policy inte
 **Setup Required**: None (public API)
 **Output**: Bronze CSV → Silver Parquet (rates) / CSV (macro)
 
+> **💡 Tip**: For macroeconomic policy rates, use the unified [macro data collector](macro.md) which combines ECB policy rates with FRED indicators into a single consolidated file. This document covers standalone ECB collection for advanced scenarios.
+
 ## Setup
 
 No API key or account required. Verify connectivity:
