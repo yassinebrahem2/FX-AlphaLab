@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 import pytest
 from bs4 import BeautifulSoup
 
-from src.ingestion.collectors.forexfactory_collector import ForexFactoryCalendarCollector
+from src.ingestion.collectors.forex_factory_collector import ForexFactoryCalendarCollector
 
 
 class TestForexFactoryCalendarCollector:
