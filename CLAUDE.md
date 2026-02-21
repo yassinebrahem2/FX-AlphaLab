@@ -80,8 +80,9 @@ Immutable source data preserving all fields:
 Normalized, validated data with standardized schemas:
 - **OHLCV**: `data/processed/ohlcv/ohlcv_{PAIR}_{TIMEFRAME}_{START}_{END}.parquet`
   - Schema: `[timestamp_utc, pair, timeframe, open, high, low, close, volume, source]`
-- **Macro**: `data/processed/macro/macro_{SERIES_ID}_{START}_{END}.csv`
+- **Macro**: `data/processed/macro/macro_all_{START}_{END}.csv` (consolidated single file)
   - Schema: `[timestamp_utc, series_id, value, source, frequency, units]`
+  - Contains all macro series from FRED and ECB in one file
 - **Events**: `data/processed/events/events_{START}_{END}.csv`
   - Schema: `[timestamp_utc, event_id, country, event_name, impact, actual, forecast, previous, source]`
 - **Sentiment** (Partitioned Parquet): `data/processed/sentiment/source={SOURCE}/year={YYYY}/month={MM}/sentiment_cleaned.parquet`
