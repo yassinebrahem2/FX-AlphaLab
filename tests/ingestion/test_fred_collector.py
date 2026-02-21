@@ -768,7 +768,7 @@ class TestMacroNormalizer:
             normalizer.validate(invalid_df)
 
     def test_process_and_export(self, tmp_path):
-        """Test end-to-end process_and_export."""
+        """Test end-to-end process_and_export with consolidated output (default)."""
         input_dir = tmp_path / "raw"
         fred_dir = input_dir / "fred"
         output_dir = tmp_path / "processed" / "macro"
@@ -788,21 +788,23 @@ class TestMacroNormalizer:
         bronze_file = fred_dir / "fred_federal_funds_rate_20260210.csv"
         bronze_data.to_csv(bronze_file, index=False)
 
-        # Process and export
+        # Process and export (consolidated by default)
         normalizer = MacroNormalizer(input_dir=input_dir, output_dir=output_dir, sources=["fred"])
-        paths = normalizer.process_and_export()
+        paths = normalizer.process_and_export(consolidated=True)
 
         assert len(paths) == 1
-        assert "DFF" in paths
+        assert "all" in paths
 
-        silver_file = paths["DFF"]
+        silver_file = paths["all"]
         assert silver_file.exists()
-        assert "macro_DFF_" in silver_file.name
+        assert "macro_all_" in silver_file.name
 
         # Verify Silver file content
         df = pd.read_csv(silver_file)
         assert len(df) == 2
         assert "timestamp_utc" in df.columns
+        assert "series_id" in df.columns
+        assert df["series_id"].iloc[0] == "DFF"
         assert df["timestamp_utc"].iloc[0] == "2023-01-01T00:00:00Z"
 
     def test_handles_duplicates(self, tmp_path):
