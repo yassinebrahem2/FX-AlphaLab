@@ -464,24 +464,29 @@ class MacroNormalizer(BasePreprocessor):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        consolidated: bool = True,
     ) -> dict[str, Path]:
         """Convenience method: preprocess and export all series.
 
         Args:
             start_date: Optional start date filter.
             end_date: Optional end date filter.
+            consolidated: If True, export single consolidated file. If False, one file per series.
 
         Returns:
-            Dictionary mapping series_id to exported file path.
+            Dictionary mapping identifier to exported file path.
+            If consolidated=True, returns {"all": path_to_consolidated_file}
+            If consolidated=False, returns {series_id: path_to_series_file}
 
         Example:
             >>> normalizer = MacroNormalizer(input_dir, output_dir)
             >>> paths = normalizer.process_and_export(
             ...     start_date=datetime(2023, 1, 1),
-            ...     end_date=datetime(2023, 12, 31)
+            ...     end_date=datetime(2023, 12, 31),
+            ...     consolidated=True
             ... )
-            >>> print(paths["DFF"])
-            data/processed/macro/macro_DFF_2023-01-01_2023-12-31.csv
+            >>> print(paths["all"])
+            data/processed/macro/macro_all_2023-01-01_2023-12-31.csv
         """
         data = self.preprocess(start_date, end_date)
 
@@ -489,17 +494,53 @@ class MacroNormalizer(BasePreprocessor):
             self.logger.warning("No data to export")
             return {}
 
-        paths = {}
-        for series_id, df in data.items():
-            try:
-                # Extract date range from data
-                timestamps = pd.to_datetime(df["timestamp_utc"])
-                file_start = timestamps.min().to_pydatetime()
-                file_end = timestamps.max().to_pydatetime()
+        if consolidated:
+            # Consolidate all series into one DataFrame
+            all_series = []
+            for series_id, df in data.items():
+                if not df.empty:
+                    all_series.append(df)
 
-                path = self.export(df, series_id, file_start, file_end)
-                paths[series_id] = path
-            except Exception as e:
-                self.logger.error("Failed to export %s: %s", series_id, e)
+            if not all_series:
+                self.logger.warning("No non-empty series to consolidate")
+                return {}
 
-        return paths
+            consolidated_df = pd.concat(all_series, ignore_index=True)
+
+            # Sort by timestamp and series_id for consistent ordering
+            consolidated_df = consolidated_df.sort_values(
+                ["timestamp_utc", "series_id"]
+            ).reset_index(drop=True)
+
+            # Extract global date range
+            timestamps = pd.to_datetime(consolidated_df["timestamp_utc"])
+            file_start = timestamps.min().to_pydatetime()
+            file_end = timestamps.max().to_pydatetime()
+
+            # Export consolidated file
+            path = self.export(consolidated_df, "all", file_start, file_end, format="csv")
+
+            self.logger.info(
+                "Consolidated %d series (%d total records) into %s",
+                len(data),
+                len(consolidated_df),
+                path.name,
+            )
+
+            return {"all": path}
+        else:
+            # Legacy: Export one file per series
+            paths = {}
+            for series_id, df in data.items():
+                try:
+                    # Extract date range from data
+                    timestamps = pd.to_datetime(df["timestamp_utc"])
+                    file_start = timestamps.min().to_pydatetime()
+                    file_end = timestamps.max().to_pydatetime()
+
+                    path = self.export(df, series_id, file_start, file_end)
+                    paths[series_id] = path
+                except Exception as e:
+                    self.logger.error("Failed to export %s: %s", series_id, e)
+
+            return paths

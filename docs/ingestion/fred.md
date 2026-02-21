@@ -10,6 +10,8 @@ Federal Reserve Economic Data (FRED) provides macroeconomic indicators and finan
 **Setup Required**: Free API key
 **Output**: Bronze CSV → Silver normalized CSV
 
+> **💡 Tip**: For most use cases, use the unified [macro data collector](macro.md) which combines FRED and ECB data into a single consolidated file. This document covers FRED-only collection for advanced scenarios.
+
 ## Setup
 
 ### 1. Get API Key

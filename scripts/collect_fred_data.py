@@ -247,13 +247,18 @@ def main() -> int:
                 output_dir=Config.DATA_DIR / "processed" / "macro",
                 sources=["fred"],
             )
-            silver_paths = normalizer.process_and_export(start_date=start_date, end_date=end_date)
-
-            logger.info(
-                "Exported %d Silver CSV files to %s:", len(silver_paths), normalizer.output_dir
+            silver_paths = normalizer.process_and_export(
+                start_date=start_date, end_date=end_date, consolidated=True
             )
-            for series_id, path in silver_paths.items():
-                logger.info("  - %s -> %s", series_id, path.name)
+
+            if "all" in silver_paths:
+                logger.info("Exported consolidated macro data to %s", silver_paths["all"].name)
+            else:
+                logger.info(
+                    "Exported %d Silver CSV files to %s:", len(silver_paths), normalizer.output_dir
+                )
+                for series_id, path in silver_paths.items():
+                    logger.info("  - %s -> %s", series_id, path.name)
 
             logger.info("SUCCESS: Collection and preprocessing complete")
         else:
