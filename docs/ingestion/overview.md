@@ -66,11 +66,12 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/fx_alphalab
 Each source has a dedicated script in `scripts/`:
 
 ```bash
-# FRED macroeconomic data
-python -m scripts.collect_fred_data --preprocess
+# Macro data (FRED + ECB) - Unified collection (recommended)
+python -m scripts.collect_macro_data --preprocess
 
-# ECB exchange rates and policy rates
-python -m scripts.collect_ecb_data --preprocess
+# Individual macro sources (if needed)
+python -m scripts.collect_fred_data --preprocess  # FRED only
+python -m scripts.collect_ecb_data --preprocess   # ECB only
 
 # ECB news and sentiment data
 python -m scripts.collect_ecb_news_data

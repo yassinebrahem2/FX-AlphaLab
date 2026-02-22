@@ -188,16 +188,17 @@ def main() -> int:
                     output_dir=Config.DATA_DIR / "processed" / "macro",
                     sources=["ecb"],
                 )
-                macro_data = macro_normalizer.preprocess(start_date=start_date, end_date=end_date)
+                macro_paths = macro_normalizer.process_and_export(
+                    start_date=start_date, end_date=end_date, consolidated=True
+                )
 
-                for series_id, df in macro_data.items():
-                    if df.empty:
-                        continue
-                    min_date = df["timestamp_utc"].min().to_pydatetime()
-                    max_date = df["timestamp_utc"].max().to_pydatetime()
-                    path = macro_normalizer.export(df, series_id, min_date, max_date, format="csv")
-                    logger.info("  ✓ Processed %s: %d records → %s", series_id, len(df), path.name)
+                if "all" in macro_paths:
+                    logger.info("  ✓ Processed policy_rates → %s", macro_paths["all"].name)
                     silver_count += 1
+                else:
+                    for series_id, path in macro_paths.items():
+                        logger.info("  ✓ Processed %s → %s", series_id, path.name)
+                        silver_count += 1
 
             if silver_count == 0:
                 logger.warning("No datasets preprocessed")
@@ -318,16 +319,17 @@ def main() -> int:
                     output_dir=Config.DATA_DIR / "processed" / "macro",
                     sources=["ecb"],
                 )
-                macro_data = macro_normalizer.preprocess(start_date=start_date, end_date=end_date)
+                macro_paths = macro_normalizer.process_and_export(
+                    start_date=start_date, end_date=end_date, consolidated=True
+                )
 
-                for series_id, df in macro_data.items():
-                    if df.empty:
-                        continue
-                    min_date = df["timestamp_utc"].min().to_pydatetime()
-                    max_date = df["timestamp_utc"].max().to_pydatetime()
-                    path = macro_normalizer.export(df, series_id, min_date, max_date, format="csv")
-                    logger.info("  ✓ Processed %s: %d records → %s", series_id, len(df), path.name)
+                if "all" in macro_paths:
+                    logger.info("  ✓ Processed policy_rates → %s", macro_paths["all"].name)
                     silver_count += 1
+                else:
+                    for series_id, path in macro_paths.items():
+                        logger.info("  ✓ Processed %s → %s", series_id, path.name)
+                        silver_count += 1
 
             logger.info("✓ Silver preprocessing complete: %d datasets", silver_count)
 
