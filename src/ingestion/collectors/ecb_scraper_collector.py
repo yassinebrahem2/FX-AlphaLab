@@ -46,29 +46,71 @@ from src.shared.config import Config
 
 # Selenium imports with graceful fallback
 try:
-    import undetected_chromedriver as uc
+    import undetected_chromedriver as uc  # type: ignore[import]
 
     HAS_UNDETECTED_CHROMEDRIVER = True
 except ImportError:
     HAS_UNDETECTED_CHROMEDRIVER = False
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
 
 try:
-    from webdriver_manager.chrome import ChromeDriverManager
+    from webdriver_manager.chrome import ChromeDriverManager  # type: ignore[import]
 
     HAS_WEBDRIVER_MANAGER = True
 except ImportError:
     HAS_WEBDRIVER_MANAGER = False
 
-from selenium.common.exceptions import (
-    StaleElementReferenceException,
-    TimeoutException,
-    WebDriverException,
-)
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+try:
+    from selenium import webdriver  # type: ignore[import]
+    from selenium.common.exceptions import (  # type: ignore[import]
+        StaleElementReferenceException,
+        TimeoutException,
+        WebDriverException,
+    )
+    from selenium.webdriver.chrome.options import Options  # type: ignore[import]
+    from selenium.webdriver.chrome.service import Service  # type: ignore[import]
+    from selenium.webdriver.common.by import By  # type: ignore[import]
+    from selenium.webdriver.support.ui import WebDriverWait  # type: ignore[import]
+
+    HAS_SELENIUM = True
+except ImportError:
+    HAS_SELENIUM = False
+
+    class StaleElementReferenceException(Exception):  # type: ignore[misc]  # noqa: N818
+        pass
+
+    class TimeoutException(Exception):  # type: ignore[misc]  # noqa: N818
+        pass
+
+    class WebDriverException(Exception):  # type: ignore[misc]  # noqa: N818
+        pass
+
+    class By:  # type: ignore[misc]
+        XPATH = "xpath"
+        CSS_SELECTOR = "css selector"
+        ID = "id"
+        CLASS_NAME = "class name"
+        TAG_NAME = "tag name"
+
+    class WebDriverWait:  # type: ignore[misc]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def until(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    class Options:  # type: ignore[misc]
+        def add_argument(self, arg: str) -> None:
+            pass
+
+    class Service:  # type: ignore[misc]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    class webdriver:  # type: ignore[misc]  # noqa: N801
+        class Chrome:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
 
 # ---------------------------------------------------------------------------
 # Archive section configuration

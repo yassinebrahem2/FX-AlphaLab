@@ -58,6 +58,17 @@ from urllib3.util.retry import Retry
 from src.ingestion.collectors.document_collector import DocumentCollector
 from src.shared.config import Config
 
+# curl_cffi provides browser-level TLS fingerprinting that bypasses the
+# Cloudflare anti-bot layer protecting api.stocktwits.com.  It is an
+# optional dependency; the collector falls back to plain requests if absent,
+# though plain requests will return 403 in most production environments.
+try:
+    from curl_cffi import requests as _cffi_requests  # type: ignore[import-untyped]
+
+    _HAS_CURL_CFFI = True
+except ImportError:  # pragma: no cover
+    _HAS_CURL_CFFI = False
+
 
 class StocktwitsCollector(DocumentCollector):
     """Collector for Stocktwits retail trader sentiment - Bronze Layer.
@@ -343,7 +354,10 @@ class StocktwitsCollector(DocumentCollector):
                 )
                 time.sleep(2**attempt)
 
-            except requests.RequestException as exc:
+            except (requests.RequestException, Exception) as exc:
+                # Catches both requests.RequestException (plain requests) and
+                # curl_cffi.requests.RequestsError (curl_cffi), which are not
+                # in the same class hierarchy.
                 self.logger.warning(
                     "Request error (attempt %d/%d): %s", attempt, self.MAX_RETRIES, exc
                 )
@@ -359,7 +373,31 @@ class StocktwitsCollector(DocumentCollector):
         self._last_request_time = time.monotonic()
 
     def _build_session(self) -> requests.Session:
-        """Build a requests Session with retry adapter for transient errors."""
+        """Build an HTTP session that can reach the Cloudflare-protected Stocktwits API.
+
+        Prefers curl_cffi (browser TLS fingerprinting) when available because
+        api.stocktwits.com is served behind a Cloudflare under-attack-mode layer
+        that returns 403 to standard requests Sessions.
+
+        Falls back to a plain requests Session with a retry adapter for
+        environments where curl_cffi is not installed.
+        """
+        if _HAS_CURL_CFFI:
+            self.logger.info(
+                "Using curl_cffi (impersonate=chrome110) to bypass Cloudflare on Stocktwits API."
+            )
+            session = _cffi_requests.Session(impersonate="chrome110")
+            session.headers.update(
+                {
+                    "Accept": "application/json",
+                }
+            )
+            return session  # type: ignore[return-value]
+
+        self.logger.warning(
+            "curl_cffi not available — falling back to requests.Session. "
+            "Stocktwits API may return 403 (Cloudflare block)."
+        )
         session = requests.Session()
         retry = Retry(
             total=self.MAX_RETRIES,
