@@ -18,12 +18,16 @@ pd.set_option("display.width", 160)
 # ============================================================================
 # CONFIG
 # ============================================================================
-BASE = Path(r"C:\Users\MSI GF63 I7\repos\FX-AlphaLab")
-GT_CSV = Path(r"C:\Users\MSI GF63 I7\Downloads\google_trends_interest_over_time_FULL_MERGED.csv")
+# ── Resolve repo root (works from scripts/ or repo root) ─────────────────
+BASE = Path(__file__).resolve().parent.parent
+if not (BASE / "src").exists():
+    BASE = BASE.parent
+
 GT_RAW_DIR = BASE / "data" / "raw" / "attention" / "google_trends"
-CALIB_CSV = BASE / "data" / "processed" / "macro" / "google_trends_calibrated.csv"
-OUTPUTS = BASE / "outputs"
-MT5_DIR = Path(r"C:\Users\MSI GF63 I7\Downloads\mt5__20260210")
+GT_CSV     = GT_RAW_DIR / "google_trends_FULL_MERGED.csv"
+CALIB_CSV  = BASE / "data" / "processed" / "macro" / "google_trends_calibrated.csv"
+OUTPUTS    = BASE / "outputs"
+MT5_DIR    = BASE / "data" / "raw" / "mt5"
 PAIR = "GBPUSD"
 TIMEFRAME = "H1"
 TARGET = "ret_1"
