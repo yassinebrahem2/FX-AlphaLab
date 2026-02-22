@@ -29,7 +29,6 @@ dependencies = [
     "beautifulsoup4",
     "feedparser",
     "fredapi",
-    "feedparser",
     "sqlalchemy",
     "pytz",
     "pyarrow",
@@ -40,6 +39,7 @@ dependencies = [
     "webdriver-manager>=4.0",
     "transformers>=4.30",
     "torch>=2.0",
+    "pytrends>=4.9",
 ]
 
 
