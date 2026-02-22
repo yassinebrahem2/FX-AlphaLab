@@ -1,4 +1,4 @@
-"""Collectors package."""
+"""Data collectors for various sources."""
 
 from src.ingestion.collectors.base_collector import BaseCollector
 from src.ingestion.collectors.boe_collector import BoECollector
@@ -11,8 +11,6 @@ from src.ingestion.collectors.fed_collector import FedCollector
 from src.ingestion.collectors.fed_scraper_collector import FedScraperCollector
 from src.ingestion.collectors.forexfactory_collector import ForexFactoryCalendarCollector
 from src.ingestion.collectors.fred_collector import FREDCollector
-from src.ingestion.collectors.gdelt_collector import GDELTCollector
-from src.ingestion.collectors.google_trends_collector import GoogleTrendsCollector
 from src.ingestion.collectors.mt5_collector import MT5Collector
 
 __all__ = [
@@ -25,9 +23,7 @@ __all__ = [
     "ECBScraperCollector",
     "FedCollector",
     "FedScraperCollector",
-    "ForexFactoryCalendarCollector",
     "FREDCollector",
-    "GDELTCollector",
-    "GoogleTrendsCollector",
+    "ForexFactoryCalendarCollector",
     "MT5Collector",
 ]
