@@ -12,6 +12,7 @@ from src.ingestion.collectors.fed_scraper_collector import FedScraperCollector
 from src.ingestion.collectors.forexfactory_collector import ForexFactoryCalendarCollector
 from src.ingestion.collectors.fred_collector import FREDCollector
 from src.ingestion.collectors.mt5_collector import MT5Collector
+from src.ingestion.collectors.stocktwits_collector import StocktwitsCollector
 
 __all__ = [
     "BaseCollector",
@@ -26,4 +27,5 @@ __all__ = [
     "FREDCollector",
     "ForexFactoryCalendarCollector",
     "MT5Collector",
+    "StocktwitsCollector",
 ]
