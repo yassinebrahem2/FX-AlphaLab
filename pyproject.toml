@@ -60,6 +60,7 @@ notebook = [
     "jupyter",
     "matplotlib",
     "seaborn",
+    "scipy",
     "plotly",
     "yfinance",
 ]
