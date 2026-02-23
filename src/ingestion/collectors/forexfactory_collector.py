@@ -67,28 +67,84 @@ from urllib.robotparser import RobotFileParser
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from selenium.common.exceptions import TimeoutException, WebDriverException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as ec
-from selenium.webdriver.support.ui import WebDriverWait
 
 # Use undetected_chromedriver to bypass Cloudflare
 try:
-    import undetected_chromedriver as uc
+    import undetected_chromedriver as uc  # type: ignore[import]
 
     HAS_UNDETECTED_CHROMEDRIVER = True
 except ImportError:
     HAS_UNDETECTED_CHROMEDRIVER = False
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
 
 try:
-    from webdriver_manager.chrome import ChromeDriverManager
+    from webdriver_manager.chrome import ChromeDriverManager  # type: ignore[import]
 
     HAS_WEBDRIVER_MANAGER = True
 except ImportError:
     HAS_WEBDRIVER_MANAGER = False
+
+try:
+    from selenium import webdriver  # type: ignore[import]
+    from selenium.common.exceptions import (  # type: ignore[import]
+        TimeoutException,
+        WebDriverException,
+    )
+    from selenium.webdriver.chrome.options import Options  # type: ignore[import]
+    from selenium.webdriver.chrome.service import Service  # type: ignore[import]
+    from selenium.webdriver.common.by import By  # type: ignore[import]
+    from selenium.webdriver.support import expected_conditions as ec  # type: ignore[import]
+    from selenium.webdriver.support.ui import WebDriverWait  # type: ignore[import]
+
+    HAS_SELENIUM = True
+except ImportError:
+    HAS_SELENIUM = False
+
+    class TimeoutException(Exception):  # type: ignore[misc]  # noqa: N818
+        pass
+
+    class WebDriverException(Exception):  # type: ignore[misc]  # noqa: N818
+        pass
+
+    class By:  # type: ignore[misc]
+        XPATH = "xpath"
+        CSS_SELECTOR = "css selector"
+        ID = "id"
+        CLASS_NAME = "class name"
+        TAG_NAME = "tag name"
+
+    class WebDriverWait:  # type: ignore[misc]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def until(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    class ec:  # type: ignore[misc]  # noqa: N801
+        @staticmethod
+        def presence_of_element_located(*args: object) -> None:
+            pass
+
+        @staticmethod
+        def element_to_be_clickable(*args: object) -> None:
+            pass
+
+        @staticmethod
+        def visibility_of_element_located(*args: object) -> None:
+            pass
+
+    class Options:  # type: ignore[misc]
+        def add_argument(self, arg: str) -> None:
+            pass
+
+    class Service:  # type: ignore[misc]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    class webdriver:  # type: ignore[misc]  # noqa: N801
+        class Chrome:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
 
 from src.ingestion.collectors.base_collector import BaseCollector
 from src.shared.config import Config
