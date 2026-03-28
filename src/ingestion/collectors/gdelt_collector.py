@@ -110,6 +110,28 @@ class GDELTCollector(DocumentCollector):
             return []
         return [item.strip() for item in str(field_value).split(";")]
 
+    def _parse_v2tone(self, v2tone_raw) -> float:
+        """Parse GDELT V2Tone field to overall tone score.
+
+        GDELT V2Tone is a comma-separated string where the first element is
+        the overall tone score (e.g. "-2.42,2.34,4.77,...").
+        Returns 0.0 on parse failure.
+
+        Args:
+            v2tone_raw: Raw V2Tone value from BigQuery row (str, float, or None).
+
+        Returns:
+            Overall tone score as float.
+        """
+        if v2tone_raw is None:
+            return 0.0
+        if isinstance(v2tone_raw, (int, float)):
+            return float(v2tone_raw)
+        try:
+            return float(str(v2tone_raw).split(",")[0])
+        except (ValueError, IndexError):
+            return 0.0
+
     # -------------------------------------------------------
     # Main Collection Logic (PURE)
     # -------------------------------------------------------
@@ -225,7 +247,7 @@ class GDELTCollector(DocumentCollector):
                             "timestamp_published": timestamp_published,
                             "url": url,
                             "source_domain": source_domain,
-                            "tone": row.get("V2Tone"),
+                            "tone": self._parse_v2tone(row.get("V2Tone")),
                             "themes": self._parse_field(row.get("Themes")),
                             "locations": self._parse_field(row.get("Locations")),
                             "organizations": self._parse_field(row.get("Organizations")),
