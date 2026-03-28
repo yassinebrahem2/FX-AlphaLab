@@ -464,7 +464,7 @@ class CalendarPreprocessor(BasePreprocessor):
                 raise ValueError(f"Column '{col}' has {null_count} null values")
 
         # Validate impact values
-        valid_impacts = ["high", "medium", "low", "unknown"]
+        valid_impacts = ["high", "medium", "low", "non-economic", "unknown"]
         invalid_impacts = df[~df["impact"].isin(valid_impacts)]["impact"].unique()
         if len(invalid_impacts) > 0:
             raise ValueError(f"Invalid impact values: {invalid_impacts}")

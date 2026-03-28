@@ -180,6 +180,42 @@ class TestForexFactoryCalendarCollector:
         # Test None element
         assert collector._parse_impact_level(None) == "Unknown"
 
+        # Test Non-Economic (grey icon: icon--ff-impact-gry)
+        non_econ_html = (
+            '<td class="calendar__impact">'
+            '<span title="Non-Economic Indicator" class="icon icon--ff-impact-gry"></span>'
+            "</td>"
+        )
+        non_econ_el = BeautifulSoup(non_econ_html, "html.parser").find("td")
+        assert collector._parse_impact_level(non_econ_el) == "Non-Economic"
+
+        # Test real FF icon class for medium (icon--ff-impact-ora)
+        medium_ff_html = (
+            '<td class="calendar__cell calendar__impact">'
+            '<span title="Medium Impact Expected" class="icon icon--ff-impact-ora"></span>'
+            "</td>"
+        )
+        medium_ff_el = BeautifulSoup(medium_ff_html, "html.parser").find("td")
+        assert collector._parse_impact_level(medium_ff_el) == "Medium"
+
+        # Test real FF icon class for high (icon--ff-impact-red)
+        high_ff_html = (
+            '<td class="calendar__cell calendar__impact">'
+            '<span title="High Impact Expected" class="icon icon--ff-impact-red"></span>'
+            "</td>"
+        )
+        high_ff_el = BeautifulSoup(high_ff_html, "html.parser").find("td")
+        assert collector._parse_impact_level(high_ff_el) == "High"
+
+        # Test real FF icon class for low (icon--ff-impact-yel)
+        low_ff_html = (
+            '<td class="calendar__cell calendar__impact">'
+            '<span title="Low Impact Expected" class="icon icon--ff-impact-yel"></span>'
+            "</td>"
+        )
+        low_ff_el = BeautifulSoup(low_ff_html, "html.parser").find("td")
+        assert collector._parse_impact_level(low_ff_el) == "Low"
+
         # Test unknown impact
         unknown_html = '<td class="calendar__impact"><span>Unknown</span></td>'
         unknown_el = BeautifulSoup(unknown_html, "html.parser").find("td")
@@ -199,6 +235,67 @@ class TestForexFactoryCalendarCollector:
         assert collector._clean_value("") is None
         assert collector._clean_value("—") is None
         assert collector._clean_value(None) is None
+
+    def test_parse_calendarspecs(self, collector):
+        """Test parsing of calendarspecs detail table."""
+        html = """
+        <tr class="calendar__row calendar__row--detail" data-event-id="150005">
+          <td colspan="9">
+            <div class="detail">
+              <table class="calendarspecs">
+                <tr>
+                  <td class="calendarspecs__spec">Source</td>
+                  <td class="calendarspecs__specdescription">Statistics New Zealand (latest release)</td>
+                </tr>
+                <tr>
+                  <td class="calendarspecs__spec">Measures</td>
+                  <td class="calendarspecs__specdescription">Change in the total value of inflation-adjusted sales at the retail level;</td>
+                </tr>
+                <tr>
+                  <td class="calendarspecs__spec">Usual Effect</td>
+                  <td class="calendarspecs__specdescription">'Actual' greater than 'Forecast' is good for currency;</td>
+                </tr>
+                <tr>
+                  <td class="calendarspecs__spec">Frequency</td>
+                  <td class="calendarspecs__specdescription">Released Quarterly, about 55 days after the quarter ends;</td>
+                </tr>
+                <tr>
+                  <td class="calendarspecs__spec">Next Release</td>
+                  <td class="calendarspecs__specdescription">May 22, 2026</td>
+                </tr>
+                <tr>
+                  <td class="calendarspecs__spec">FF Notes</td>
+                  <td class="calendarspecs__specdescription">Although this data is extremely late relative to retail data from other countries;</td>
+                </tr>
+                <tr>
+                  <td class="calendarspecs__spec">Why Traders Care</td>
+                  <td class="calendarspecs__specdescription">It's the primary gauge of consumer spending;</td>
+                </tr>
+              </table>
+            </div>
+          </td>
+        </tr>
+        """
+        from bs4 import BeautifulSoup
+
+        row = BeautifulSoup(html, "html.parser").find("tr")
+        specs = collector._parse_calendarspecs(row)
+
+        assert specs["spec_source"] == "Statistics New Zealand (latest release)"
+        assert "inflation-adjusted" in specs["spec_measures"]
+        assert "'Actual' greater than 'Forecast'" in specs["spec_usual_effect"]
+        assert "Quarterly" in specs["spec_frequency"]
+        assert specs["spec_next_release"] == "May 22, 2026"
+        assert "extremely late" in specs["spec_ff_notes"]
+        assert "consumer spending" in specs["spec_why_traders_care"]
+
+    def test_parse_calendarspecs_empty(self, collector):
+        """Test that _parse_calendarspecs returns empty dict when no table present."""
+        html = "<tr><td>No specs here</td></tr>"
+        from bs4 import BeautifulSoup
+
+        row = BeautifulSoup(html, "html.parser").find("tr")
+        assert collector._parse_calendarspecs(row) == {}
 
     def test_parse_calendar_row(self, collector):
         """Test parsing of individual calendar rows (10-cell structure)."""

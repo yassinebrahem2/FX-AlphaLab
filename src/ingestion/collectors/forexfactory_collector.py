@@ -927,36 +927,51 @@ class ForexFactoryCalendarCollector(BaseCollector):
         """
         Parse impact level from HTML cell.
 
-        Forex Factory uses icon classes:
-        - high-impact = High impact
-        - medium-impact = Medium impact
-        - low-impact = Low impact
+        Forex Factory uses icon span classes and title attributes:
+        - icon--ff-impact-red  / title "High Impact Expected"      → "High"
+        - icon--ff-impact-ora  / title "Medium Impact Expected"    → "Medium"
+        - icon--ff-impact-yel  / title "Low Impact Expected"       → "Low"
+        - icon--ff-impact-gry  / title "Non-Economic Indicator"    → "Non-Economic"
         """
         if not impact_cell:
             return "Unknown"
 
-        # Check for impact classes
-        class_str = " ".join(impact_cell.get("class", []))
+        # Check for icon/span title and class (primary detection method)
+        # FF renders impact as <span title="High Impact Expected" class="icon icon--ff-impact-red">
+        for icon in impact_cell.find_all(["span", "i", "div"]):
+            title = icon.get("title", "").lower()
+            icon_classes = " ".join(icon.get("class", [])).lower()
 
-        if "high" in class_str.lower():
+            # Title-based detection (most reliable)
+            if "high impact" in title:
+                return "High"
+            elif "medium impact" in title:
+                return "Medium"
+            elif "low impact" in title:
+                return "Low"
+            elif "non-economic" in title or "nonecon" in title:
+                return "Non-Economic"
+
+            # Class-based detection (icon--ff-impact-{red|ora|yel|gry})
+            if "impact-red" in icon_classes:
+                return "High"
+            elif "impact-ora" in icon_classes:
+                return "Medium"
+            elif "impact-yel" in icon_classes:
+                return "Low"
+            elif "impact-gry" in icon_classes or "impact-gray" in icon_classes:
+                return "Non-Economic"
+
+        # Fallback: check cell-level class string
+        class_str = " ".join(impact_cell.get("class", [])).lower()
+        if "high" in class_str:
             return "High"
-        elif "medium" in class_str.lower() or "moderate" in class_str.lower():
+        elif "medium" in class_str or "moderate" in class_str:
             return "Medium"
-        elif "low" in class_str.lower():
+        elif "low" in class_str:
             return "Low"
 
-        # Check for icon/span titles
-        icon = impact_cell.find(["span", "i", "div"])
-        if icon:
-            title = icon.get("title", "").lower()
-            if "high" in title:
-                return "High"
-            elif "medium" in title or "moderate" in title:
-                return "Medium"
-            elif "low" in title:
-                return "Low"
-
-        # Check text content
+        # Fallback: plain text content
         text = impact_cell.get_text(strip=True).lower()
         if "high" in text:
             return "High"
@@ -964,6 +979,8 @@ class ForexFactoryCalendarCollector(BaseCollector):
             return "Medium"
         elif "low" in text:
             return "Low"
+        elif "non-economic" in text or "nonecon" in text:
+            return "Non-Economic"
 
         return "Unknown"
 
@@ -989,6 +1006,51 @@ class ForexFactoryCalendarCollector(BaseCollector):
 
         return value
 
+    def _parse_calendarspecs(self, container) -> dict[str, str | None]:
+        """
+        Parse the calendarspecs detail table embedded inside a detail row.
+
+        Forex Factory renders a hidden <table class="calendarspecs"> for each event type
+        containing static metadata: Source, Measures, Usual Effect, Frequency,
+        Next Release, FF Notes, and Why Traders Care.
+
+        Args:
+            container: BeautifulSoup element (tr or any wrapper) that may contain
+                       the calendarspecs table.
+
+        Returns:
+            Dictionary with spec fields prefixed by ``spec_``, or empty dict if
+            no specs table is found.
+        """
+        specs: dict[str, str | None] = {}
+
+        calendarspecs_table = container.find("table", class_="calendarspecs")
+        if not calendarspecs_table:
+            return specs
+
+        # Field label → output key mapping (lower-cased label)
+        field_mapping: dict[str, str] = {
+            "source": "spec_source",
+            "measures": "spec_measures",
+            "usual effect": "spec_usual_effect",
+            "frequency": "spec_frequency",
+            "next release": "spec_next_release",
+            "ff notes": "spec_ff_notes",
+            "why traders care": "spec_why_traders_care",
+        }
+
+        for row in calendarspecs_table.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 2:
+                continue
+            label = cells[0].get_text(strip=True).lower().rstrip(":")
+            value = cells[1].get_text(separator=" ", strip=True) or None
+            mapped_key = field_mapping.get(label)
+            if mapped_key:
+                specs[mapped_key] = value
+
+        return specs
+
     def _parse_calendar_row(self, row) -> dict[str, Any] | None:
         """
         Parse a single calendar row from the HTML table.
@@ -1013,6 +1075,9 @@ class ForexFactoryCalendarCollector(BaseCollector):
                 return None
 
             event_data = {}
+
+            # Capture event ID from data-event-id attribute (used to match calendarspecs)
+            event_data["event_id"] = row.get("data-event-id")
 
             # Detect row structure based on cell count
             # 11 cells = new time block (has date column), 10 cells = continuation
@@ -1176,8 +1241,8 @@ class ForexFactoryCalendarCollector(BaseCollector):
         if not page_content:
             return None
 
-        # Parse all events from the page
-        return self._parse_calendar_page(page_content)
+        # Parse all events from the page, passing dt so the year fallback is correct
+        return self._parse_calendar_page(page_content, reference_dt=dt)
 
     def _fetch_calendar_for_date(self, date_str: str) -> tuple[list[dict[str, Any]], str | None]:
         """
@@ -1202,12 +1267,17 @@ class ForexFactoryCalendarCollector(BaseCollector):
             self.logger.warning(f"Invalid date format: {date_str}")
             return [], None
 
-    def _parse_calendar_page(self, page_content: str) -> list[dict[str, Any]]:
+    def _parse_calendar_page(
+        self, page_content: str, reference_dt: datetime | None = None
+    ) -> list[dict[str, Any]]:
         """
         Parse calendar page HTML and extract all events.
 
         Args:
             page_content: HTML content of the calendar page
+            reference_dt: The datetime used to request this page (e.g. the month
+                being fetched). Used to infer the correct year when FF day-breaker
+                spans omit the year (e.g. "Feb 12" instead of "February 12, 2026").
 
         Returns:
             List of event dictionaries
@@ -1244,7 +1314,9 @@ class ForexFactoryCalendarCollector(BaseCollector):
                 return []
 
             # Parse table rows
-            events = []
+            events: list[dict[str, Any]] = []
+            # Maps data-event-id → index in events list for fast calendarspecs association
+            event_id_index: dict[str, int] = {}
             current_date = None
 
             rows = calendar_table.find_all("tr")
@@ -1252,6 +1324,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
 
             for row in rows:
                 row_classes = row.get("class", [])
+                row_class_str = " ".join(str(c) for c in row_classes).lower()
 
                 # Check if this is a date row (contains date info or is a day-breaker)
                 is_date_row = row_classes and any(
@@ -1259,6 +1332,11 @@ class ForexFactoryCalendarCollector(BaseCollector):
                     or "day-breaker" in str(c).lower()
                     or "day_breaker" in str(c).lower()
                     for c in row_classes
+                )
+
+                # Check if this is a detail row carrying calendarspecs
+                is_detail_row = "detail" in row_class_str and row.find(
+                    "table", class_="calendarspecs"
                 )
 
                 if is_date_row:
@@ -1279,8 +1357,10 @@ class ForexFactoryCalendarCollector(BaseCollector):
                             self.logger.info(f"Parsed date from row: {current_date}")
                         except ValueError:
                             try:
-                                # Alternative format: "Feb 12" - infer year from current context
-                                year = datetime.now().year
+                                # Alternative format: "Feb 12" — use the year from the
+                                # requested page, not the current year, so historical
+                                # fetches (e.g. oct.2022) resolve correctly.
+                                year = reference_dt.year if reference_dt else datetime.now().year
                                 parsed_date = datetime.strptime(date_text + f" {year}", "%b %d %Y")
                                 current_date = parsed_date.strftime("%Y-%m-%d")
                                 self.logger.info(f"Parsed date (alt format): {current_date}")
@@ -1291,6 +1371,18 @@ class ForexFactoryCalendarCollector(BaseCollector):
                                     cell_text = cells[0].get_text(strip=True)
                                     self.logger.debug(f"Day-breaker cell text: {cell_text}")
 
+                elif is_detail_row:
+                    # Associate calendarspecs with the event that shares the same data-event-id
+                    detail_event_id = row.get("data-event-id")
+                    if detail_event_id and detail_event_id in event_id_index:
+                        specs = self._parse_calendarspecs(row)
+                        if specs:
+                            events[event_id_index[detail_event_id]].update(specs)
+                            self.logger.debug(
+                                f"Attached calendarspecs to event_id={detail_event_id}: "
+                                f"{list(specs.keys())}"
+                            )
+
                 # Check if this is an event row - be more flexible with class matching
                 elif row_classes and any(
                     "calendar" in str(c).lower() and "row" in str(c).lower() for c in row_classes
@@ -1298,6 +1390,14 @@ class ForexFactoryCalendarCollector(BaseCollector):
                     event_data = self._parse_calendar_row(row)
                     if event_data and current_date:
                         event_data["date"] = current_date
+                        # Index event_id for calendarspecs association in detail rows
+                        if event_data.get("event_id"):
+                            event_id_index[event_data["event_id"]] = len(events)
+                        # Also check for calendarspecs embedded directly in this row
+                        # (some FF layouts include them inline)
+                        inline_specs = self._parse_calendarspecs(row)
+                        if inline_specs:
+                            event_data.update(inline_specs)
                         events.append(event_data)
                     elif event_data and not current_date:
                         self.logger.debug("Event parsed but no current_date set, skipping")
