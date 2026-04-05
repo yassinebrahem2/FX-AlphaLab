@@ -1,0 +1,6 @@
+date,time,currency,event,impact,actual,forecast,previous,source
+2026-03-06,13:30,USD,Non-Farm Payrolls,High,228K,190K,151K,forexfactory
+2026-03-06,13:30,USD,Unemployment Rate,High,4.0%,4.1%,4.1%,forexfactory
+2026-03-12,12:15,EUR,ECB Rate Decision,High,2.50%,2.50%,2.75%,forexfactory
+2026-03-18,09:00,GBP,Inflation Rate,Medium,3.1%,3.0%,2.9%,forexfactory
+2026-03-20,02:30,JPY,BoJ Policy Statement,High,,,-0.1%,forexfactory
