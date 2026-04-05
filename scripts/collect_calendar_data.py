@@ -27,23 +27,21 @@ def run_fixture(input_path):
 
 
 def run_preprocess(df):
-    from pathlib import Path
-
     processor = CalendarPreprocessor()
     result = processor.preprocess(df)
     processed = result["events"]
 
-    print(f"Processed {len(processed)} rows")
-
-    scored_count = int(processed["score_available"].fillna(False).sum())
-    skipped_count = len(processed) - scored_count
-
-    print(f"Scored {scored_count} events")
-    print(f"Skipped {skipped_count} events due to missing forecast/actual")
+    if "score_available" in processed.columns:
+        scored_count = int(processed["score_available"].fillna(False).sum())
+    else:
+        scored_count = 0
 
     output_path = Path("data/processed/calendar_fixture_scored.csv")
     processed.to_csv(output_path, index=False)
-    print(f"Saved to {output_path}")
+    print(f"Loaded {len(df)} rows")
+    print(f"Processed {len(processed)} unique events")
+    print(f"Scored {scored_count} events")
+    print("Saved scored calendar data to data/processed/calendar_fixture_scored.csv")
 
     return processed
 
