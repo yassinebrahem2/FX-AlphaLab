@@ -293,11 +293,13 @@ class CalendarPreprocessor(BasePreprocessor):
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     def _normalize_event(self, raw_event: dict) -> dict:
-        """Normalize a raw scraped event into the standardized Silver schema.
+        """
+        Normalize a raw scraped event into the standardized Silver schema.
 
-        Silver Schema (§3.2.3):
-            timestamp_utc, event_id, country, event_name, impact,
-            actual, forecast, previous, source
+        Target schema:
+            event_id, timestamp_utc, date, time, currency, event_name, impact,
+            actual, forecast, previous, source, affected_pairs,
+            hour_of_day, day_of_week, is_future_known
 
         Args:
             raw_event: Raw event dict from Bronze layer
@@ -305,27 +307,78 @@ class CalendarPreprocessor(BasePreprocessor):
         Returns:
             Normalized event dict
         """
-        timestamp_utc = self._build_timestamp_utc(raw_event.get("date"), raw_event.get("time"))
+        from datetime import datetime
+
+        timestamp_utc = self._build_timestamp_utc(
+            raw_event.get("date"), 
+            raw_event.get("time")
+        )
         event_name = raw_event.get("event", "")
 
-        # Try to extract country from event name first (e.g., "German WPI" → DE)
+        # Step 1: detect country code from event name or raw fields
         country = self._extract_country_from_event_name(event_name)
 
-        # Fall back to currency/country field mapping if not found in event name
         if not country:
             country_or_currency = raw_event.get("currency") or raw_event.get("country")
             country = self._to_country_code(country_or_currency)
 
+        # Step 2: map country code to currency code
+        country_to_currency = {
+            "US": "USD",
+            "EU": "EUR",
+            "GB": "GBP",
+            "JP": "JPY",
+            "CH": "CHF",
+            "CA": "CAD",
+            "AU": "AUD",
+            "NZ": "NZD",
+        }
+        currency = country_to_currency.get(country, country)
+
+        # Step 3: parse timestamp into extra time features
+        dt = None
+        if timestamp_utc:
+            try:
+                # Standardizing ISO format for parsing
+                dt = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
+            except Exception:
+                dt = None
+
+        date = dt.date().isoformat() if dt else None
+        time = dt.strftime("%H:%M") if dt else None
+        hour_of_day = dt.hour if dt else None
+        day_of_week = dt.weekday() if dt else None
+
+        # Step 4: FX affected pairs mapping
+        currency_to_pairs = {
+            "USD": "EURUSD|GBPUSD|USDJPY|USDCHF",
+            "EUR": "EURUSD",
+            "GBP": "GBPUSD",
+            "JPY": "USDJPY",
+            "CHF": "USDCHF",
+            "CAD": "USDCAD",
+            "AUD": "AUDUSD",
+            "NZD": "NZDUSD",
+        }
+        affected_pairs = currency_to_pairs.get(currency)
+
+        # Step 5: final normalized record
         return {
+            "event_id": self._generate_event_id(timestamp_utc, currency, event_name),
             "timestamp_utc": timestamp_utc,
-            "event_id": self._generate_event_id(timestamp_utc, country, event_name),
-            "country": country,
+            "date": date,
+            "time": time,
+            "currency": currency,
             "event_name": event_name,
             "impact": (raw_event.get("impact", "unknown") or "unknown").lower(),
             "actual": self._parse_numeric_to_float(raw_event.get("actual")),
             "forecast": self._parse_numeric_to_float(raw_event.get("forecast")),
             "previous": self._parse_numeric_to_float(raw_event.get("previous")),
             "source": raw_event.get("source", "unknown"),
+            "affected_pairs": affected_pairs,
+            "hour_of_day": hour_of_day,
+            "day_of_week": day_of_week,
+            "is_future_known": True,
         }
 
     def preprocess(
