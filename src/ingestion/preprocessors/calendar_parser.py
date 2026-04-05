@@ -361,6 +361,28 @@ class CalendarPreprocessor(BasePreprocessor):
             "NZD": "NZDUSD",
         }
         affected_pairs = currency_to_pairs.get(currency)
+        actual = self._parse_numeric_to_float(raw_event.get("actual"))
+        forecast = self._parse_numeric_to_float(raw_event.get("forecast"))
+        previous = self._parse_numeric_to_float(raw_event.get("previous"))
+
+        impact = (raw_event.get("impact", "unknown") or "unknown").lower()
+
+        surprise = self._compute_surprise(actual, forecast)
+        normalized_surprise = self._compute_normalized_surprise(actual, forecast)
+        impact_weight = self._impact_to_weight(impact)
+        event_importance = self._event_to_importance(event_name)
+
+        if (
+            normalized_surprise is not None
+            and impact_weight is not None
+            and event_importance is not None
+        ):
+            final_score = normalized_surprise * impact_weight * event_importance
+        else:
+            final_score = None
+
+        score_available = final_score is not None
+        score_sign = self._compute_score_sign(final_score)
 
         # Step 5: final normalized record
         return {
@@ -374,13 +396,84 @@ class CalendarPreprocessor(BasePreprocessor):
             "actual": self._parse_numeric_to_float(raw_event.get("actual")),
             "forecast": self._parse_numeric_to_float(raw_event.get("forecast")),
             "previous": self._parse_numeric_to_float(raw_event.get("previous")),
+            "surprise": surprise,
+            "normalized_surprise": normalized_surprise,
+            "event_importance": event_importance,
+            "impact_weight": impact_weight,
+            "final_score": final_score,
+            "score_available": score_available,
+            "score_sign": score_sign,
             "source": raw_event.get("source", "unknown"),
             "affected_pairs": affected_pairs,
             "hour_of_day": hour_of_day,
             "day_of_week": day_of_week,
             "is_future_known": True,
         }
+    def _impact_to_weight(self, impact: str | None) -> float | None:
+        """Map impact level to numeric weight."""
+        if not impact:
+            return None
 
+        impact = impact.lower().strip()
+        mapping = {
+            "high": 1.0,
+            "medium": 0.6,
+            "low": 0.3,
+        }
+        return mapping.get(impact)
+
+    def _event_to_importance(self, event_name: str | None) -> float:
+        """Assign domain importance weight based on event name."""
+        if not event_name:
+            return 0.5
+
+        name = event_name.lower().strip()
+
+        rules = [
+            ("interest rate", 1.2),
+            ("rate decision", 1.2),
+            ("non-farm payroll", 1.0),
+            ("cpi", 1.0),
+            ("inflation", 1.0),
+            ("gdp", 0.9),
+            ("unemployment", 0.8),
+            ("pmi", 0.6),
+            ("retail sales", 0.5),
+        ]
+
+        for keyword, weight in rules:
+            if keyword in name:
+                return weight
+
+        return 0.5
+
+    def _compute_surprise(self, actual: float | None, forecast: float | None) -> float | None:
+        """Compute raw surprise = actual - forecast."""
+        if actual is None or forecast is None:
+            return None
+        return actual - forecast
+
+    def _compute_normalized_surprise(
+        self,
+        actual: float | None,
+        forecast: float | None,
+    ) -> float | None:
+        """Compute normalized surprise safely."""
+        if actual is None or forecast is None:
+            return None
+        if forecast == 0:
+            return None
+        return (actual - forecast) / abs(forecast)
+
+    def _compute_score_sign(self, value: float | None) -> str | None:
+        """Classify score sign."""
+        if value is None:
+            return None
+        if value > 0:
+            return "positive"
+        if value < 0:
+            return "negative"
+        return "neutral"
     def preprocess(
         self,
         df: pd.DataFrame | None = None,
