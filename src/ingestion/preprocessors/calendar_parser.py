@@ -330,6 +330,7 @@ class CalendarPreprocessor(BasePreprocessor):
 
     def preprocess(
         self,
+        df: pd.DataFrame | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> dict[str, pd.DataFrame]:
@@ -352,38 +353,52 @@ class CalendarPreprocessor(BasePreprocessor):
             Dictionary with single key 'events' containing standardized DataFrame
         """
         # Find all Bronze CSV files (Forex Factory calendar data)
-        csv_files = list(self.input_dir.glob("forexfactory_*.csv"))
 
-        if not csv_files:
-            self.logger.warning(f"No Bronze calendar CSV files found in {self.input_dir}")
-            return {}
-
-        self.logger.info(f"Found {len(csv_files)} Bronze calendar files")
+        
 
         all_events = []
 
-        for csv_file in csv_files:
-            self.logger.info(f"Processing {csv_file.name}")
-            try:
-                df = pd.read_csv(csv_file, encoding="utf-8")
+# 👉 CASE 1: DataFrame provided (fixture mode)
+        if df is not None:
+            self.logger.info("Processing DataFrame input (fixture mode)")
 
-                # Forward-fill missing time values (Forex Factory groups events at same time)
-                # Empty time means "same as previous event"
-                df["time"] = df["time"].replace("", None).ffill()
+            # Forward-fill time like original logic
+            df["time"] = df["time"].replace("", None).ffill()
 
-                # Normalize each event
-                for _, row in df.iterrows():
-                    normalized = self._normalize_event(row.to_dict())
-                    all_events.append(normalized)
+            for _, row in df.iterrows():
+                normalized = self._normalize_event(row.to_dict())
+                all_events.append(normalized)
 
-            except Exception as e:
-                self.logger.error(f"Error processing {csv_file.name}: {e}")
-                continue
+        # 👉 CASE 2: fallback to original file-based behavior
+        else:
+            csv_files = list(self.input_dir.glob("forexfactory_*.csv"))
 
+            if not csv_files:
+                self.logger.warning(f"No Bronze calendar CSV files found in {self.input_dir}")
+                return {}
+
+            self.logger.info(f"Found {len(csv_files)} Bronze calendar files")
+
+            for csv_file in csv_files:
+                self.logger.info(f"Processing {csv_file.name}")
+                try:
+                    df_file = pd.read_csv(csv_file, encoding="utf-8")
+
+                    # Apply forward-fill logic to the file-based dataframe
+                    df_file["time"] = df_file["time"].replace("", None).ffill()
+
+                    for _, row in df_file.iterrows():
+                        normalized = self._normalize_event(row.to_dict())
+                        all_events.append(normalized)
+
+                except Exception as e:
+                    self.logger.error(f"Error processing {csv_file.name}: {e}")
+                    continue
+
+        # Final check after both cases
         if not all_events:
             self.logger.warning("No events processed")
             return {}
-
         # Create DataFrame
         df_events = pd.DataFrame(all_events)
 
