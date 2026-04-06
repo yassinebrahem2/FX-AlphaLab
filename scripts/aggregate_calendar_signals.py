@@ -58,6 +58,26 @@ def normalize_text(series: pd.Series) -> pd.Series:
     return series.astype(str).str.strip().str.lower()
 
 
+def normalize_currency(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.strip().str.upper()
+
+
+def map_country_to_currency(code: str) -> str:
+    mapping = {
+        "US": "USD",
+        "EU": "EUR",
+        "ES": "EUR",
+        "GB": "GBP",
+        "UK": "GBP",
+        "JP": "JPY",
+        "CH": "CHF",
+        "CA": "CAD",
+        "AU": "AUD",
+        "NZ": "NZD",
+    }
+    return mapping.get(code, code)
+
+
 def get_dominant_direction(value: float) -> str:
     if value > 0:
         return "positive"
@@ -109,11 +129,27 @@ def main() -> int:
         return 0
 
     scored_rows["date"] = pd.to_datetime(scored_rows["date"], errors="coerce")
-    scored_rows["currency"] = scored_rows["currency"].astype(str).str.strip()
+    scored_rows["currency"] = normalize_currency(scored_rows["currency"])
+    scored_rows["currency"] = scored_rows["currency"].apply(map_country_to_currency)
     scored_rows["impact_normalized"] = normalize_text(scored_rows["impact"])
     scored_rows = scored_rows.dropna(subset=["date"])
     scored_rows = scored_rows[scored_rows["currency"] != ""].copy()
     scored_rows["date"] = scored_rows["date"].dt.strftime("%Y-%m-%d")
+
+    normalized_currencies = sorted(set(scored_rows["currency"].dropna().unique()))
+    normalized_currencies_text = (
+        ", ".join(normalized_currencies) if normalized_currencies else "N/A"
+    )
+
+    unexpected_currencies = set(
+        curr
+        for curr in scored_rows["currency"].unique()
+        if len(str(curr).strip()) != 3 or not str(curr).isupper()
+    )
+    if unexpected_currencies:
+        print(f"Unexpected currencies found: {', '.join(sorted(unexpected_currencies))}")
+
+    print(f"Normalized currencies: {normalized_currencies_text}")
 
     aggregated = (
         scored_rows.groupby(["date", "currency"], as_index=False)
