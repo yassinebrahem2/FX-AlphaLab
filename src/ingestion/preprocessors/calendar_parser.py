@@ -481,6 +481,8 @@ class CalendarPreprocessor(BasePreprocessor):
             "hour_of_day": hour_of_day,
             "day_of_week": day_of_week,
             "is_future_known": True,
+            "source_count": int(raw_event.get("source_count", 1) or 1),
+            "source_agreement": bool(raw_event.get("source_agreement", False)),
         }
 
     def _impact_to_weight(self, impact: str | None) -> float | None:
@@ -642,6 +644,30 @@ class CalendarPreprocessor(BasePreprocessor):
 
         # Sort by timestamp
         df_events = df_events.sort_values("timestamp_utc").reset_index(drop=True)
+
+        # Calibration: mark low-signal scores using p25(|final_score|) and keep
+        # original final_score unchanged for backward compatibility.
+        scored_mask = df_events["final_score"].notna()
+        abs_scored = df_events.loc[scored_mask, "final_score"].abs()
+        score_threshold = float(abs_scored.quantile(0.25)) if not abs_scored.empty else 0.0
+
+        df_events["low_signal"] = False
+        df_events.loc[scored_mask, "low_signal"] = (
+            df_events.loc[scored_mask, "final_score"].abs() < score_threshold
+        )
+
+        df_events["filtered_score"] = df_events["final_score"]
+        df_events.loc[df_events["low_signal"], "filtered_score"] = 0.0
+
+        total_scored_rows = int(scored_mask.sum())
+        low_signal_count = int(df_events["low_signal"].sum())
+        filtered_pct = (low_signal_count / total_scored_rows * 100.0) if total_scored_rows else 0.0
+
+        print(
+            f"Scoring calibration: scored_rows={total_scored_rows}, "
+            f"low_signal={low_signal_count}, filtered_pct={filtered_pct:.2f}%, "
+            f"threshold_p25_abs_final_score={score_threshold:.6f}"
+        )
 
         total_events = len(df_events)
         scoreable_events = int(df_events["score_available"].fillna(False).sum())

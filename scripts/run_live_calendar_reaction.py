@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 OUTPUT_PATH = Path("data/processed/calendar_reaction_live.csv")
+ENRICHED_OUTPUT_PATH = Path("data/processed/calendar_live_scored_reactions.csv")
 PAIR_MAP = {
     "USD": "EURUSD",
     "EUR": "EURUSD",
@@ -158,7 +159,6 @@ def main() -> None:
             print(f"SKIP: {event['event_name']} ({pair}) - no MT5 file found")
             continue
 
-        min_price_ts = prices["timestamp_utc"].min()
         max_price_ts = prices["timestamp_utc"].max()
 
         has_bar_before = (prices["timestamp_utc"] < ts).any()
@@ -252,6 +252,8 @@ def main() -> None:
             "matched_price_timestamp_4h": matched_price_timestamp_4h,
             "return_1h": return_1h,
             "return_4h": return_4h,
+            "reaction_1h": return_1h,
+            "reaction_4h": return_4h,
             "reaction_explanation": reaction_explanation,
             "expected_direction": expected_direction,
             "observed_direction": observed_direction,
@@ -264,9 +266,25 @@ def main() -> None:
 
     result_df = pd.DataFrame(results)
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    result_df.to_csv(OUTPUT_PATH, index=False)
+    enriched_df = events.merge(
+        result_df[
+            [
+                "event_id",
+                "reaction_1h",
+                "reaction_4h",
+                "reaction_explanation",
+                "expected_direction",
+                "observed_direction",
+                "direction_match",
+            ]
+        ],
+        on="event_id",
+        how="left",
+    )
+    enriched_df.to_csv(ENRICHED_OUTPUT_PATH, index=False)
 
     print(f"Saved {len(result_df)} live reaction rows to {OUTPUT_PATH}")
+    print(f"Saved reaction-enriched scored calendar to {ENRICHED_OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

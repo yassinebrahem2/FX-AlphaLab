@@ -379,6 +379,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
             if self._headless:
                 chrome_options.add_argument("--headless=new")
 
+            # Enhanced stealth options to reduce automation fingerprint
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             chrome_options.add_argument("--disable-extensions")
             chrome_options.add_argument("--no-sandbox")
@@ -387,13 +388,22 @@ class ForexFactoryCalendarCollector(BaseCollector):
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument(f"--user-agent={self._get_random_user_agent()}")
 
+            # Additional stealth: disable additional automation-related features
+            chrome_options.add_argument("--disable-background-networking")
+            chrome_options.add_argument("--disable-sync")
+            chrome_options.add_argument("--disable-plugins")
+            chrome_options.add_argument("--disable-features=TranslateUI")
+            chrome_options.add_argument("--metrics-recording-only")
+
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option("useAutomationExtension", False)
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
             prefs = {
                 "profile.default_content_setting_values.notifications": 2,
                 "credentials_enable_service": False,
                 "profile.password_manager_enabled": False,
+                "profile.default_content_settings.popups": 0,
             }
             chrome_options.add_experimental_option("prefs", prefs)
 
@@ -403,13 +413,23 @@ class ForexFactoryCalendarCollector(BaseCollector):
             else:
                 self._driver = webdriver.Chrome(options=chrome_options)
 
+            # Mask automation signals via JavaScript execution
             try:
+                # Primary: override navigator.webdriver
                 self._driver.execute_script(
                     "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
                 )
+                # Additional: set chromeFlags to empty
+                self._driver.execute_script(
+                    "Object.defineProperty(navigator, 'chromeFlags', {get: () => ''})"
+                )
+                # Set realistic DevTools detection
+                self._driver.execute_script(
+                    "Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})"
+                )
             except Exception as e:
                 self.logger.debug(
-                    "Could not override navigator.webdriver via execute_script: %s", e
+                    "Could not override automation properties via execute_script: %s", e
                 )
 
             self._driver.set_page_load_timeout(self.timeout)
@@ -760,11 +780,27 @@ class ForexFactoryCalendarCollector(BaseCollector):
                 driver = self._init_driver()
                 self.logger.info(f"Fetching {url} with Selenium (attempt {attempt + 1})")
 
+                # Randomized initial idle before navigation (human-like behavior)
+                initial_idle = random.uniform(1.0, 3.0)
+                time.sleep(initial_idle)
+
                 driver.get(url)
 
-                # Human-like stabilization delay after navigation before interacting.
-                stabilization_wait = random.uniform(2.0, 4.0)
+                # Human-like stabilization delay after navigation before interacting (2-5s).
+                stabilization_wait = random.uniform(2.0, 5.0)
                 time.sleep(stabilization_wait)
+
+                # Wait for document to be in a stable state (not just loading)
+                # This gives the page time to load JS and initial content
+                try:
+                    for _ in range(5):
+                        ready_state = driver.execute_script("return document.readyState")
+                        if ready_state in ["complete", "interactive"]:
+                            self.logger.debug(f"Document ready state: {ready_state}")
+                            break
+                        time.sleep(1.0)
+                except Exception as e:
+                    self.logger.debug(f"Could not check document readyState: {e}")
 
                 # Wait for calendar container early so JS rendering can settle.
                 try:
@@ -801,19 +837,135 @@ class ForexFactoryCalendarCollector(BaseCollector):
                             self.logger.warning("Failed to set timezone to GMT via UI interaction")
                         self._timezone_configured = True  # Don't try again this session
 
-                # Wait for Cloudflare challenge to complete
-                # Check for "Just a moment" and wait for it to disappear
-                max_cloudflare_wait = 30  # seconds
-                start_time = time.time()
-                while time.time() - start_time < max_cloudflare_wait:
-                    page_title = driver.title
-                    if "just a moment" not in page_title.lower():
-                        self.logger.info(f"Cloudflare challenge passed (title: {page_title[:50]})")
-                        break
-                    self.logger.debug("Waiting for Cloudflare challenge to complete...")
-                    time.sleep(2)
+                # Intelligent Cloudflare challenge handling with polling and recovery
+                def has_challenge_indicators(drv) -> bool:
+                    """Check if page shows Cloudflare challenge indicators."""
+                    try:
+                        title = drv.title or ""
+                        source = drv.page_source.lower()
+                        return (
+                            "un instant" in title.lower()
+                            or "just a moment" in title.lower()
+                            or "challenge" in source
+                            or "cloudflare" in source
+                        )
+                    except Exception:
+                        return False
+
+                def has_calendar_content(drv) -> bool:
+                    """Check if calendar table or rows are present. Returns (has_table, row_count)."""
+                    try:
+                        soup = BeautifulSoup(drv.page_source, "html.parser")
+                        table = (
+                            soup.find("table", {"class": lambda x: x and "calendar__table" in x})
+                            or soup.find("table", {"id": "calendar_table"})
+                            or soup.find(
+                                "div", {"class": lambda x: x and "calendar" in str(x).lower()}
+                            )
+                        )
+                        rows = soup.select("tr.calendar__row")
+                        has_table = table is not None
+                        row_count = len(rows)
+                        return (has_table or row_count > 0, row_count)
+                    except Exception:
+                        return (False, 0)
+
+                # CRITICAL FIX: Check calendar content FIRST, regardless of challenge indicators
+                # If calendar data exists, treat as SUCCESS immediately
+                calendar_found, row_count = has_calendar_content(driver)
+                challenge_detected = has_challenge_indicators(driver)
+
+                if calendar_found:
+                    # SUCCESS: Calendar content is present - proceed to parsing
+                    # (ignore challenge indicators, they may be false positives in valid pages)
+                    self.logger.info(
+                        f"Calendar content found (rows={row_count}). Proceeding to parsing."
+                    )
                 else:
-                    self.logger.warning("Cloudflare challenge did not complete in time")
+                    # NO calendar content found - check if we should retry or skip
+                    # Polling strategy: if challenge detected, poll multiple times before giving up
+                    if challenge_detected:
+                        self.logger.info("Challenge indicators detected. Starting polling loop...")
+
+                        polling_max_iterations = 4
+                        polling_interval = 5  # seconds
+                        challenge_cleared = False
+
+                        for poll_attempt in range(polling_max_iterations):
+                            self.logger.info(
+                                f"Polling attempt {poll_attempt + 1}/{polling_max_iterations}"
+                            )
+
+                            # Small human-like delay before checking again
+                            time.sleep(random.uniform(polling_interval - 1, polling_interval + 1))
+
+                            # Re-check challenge and calendar presence
+                            challenge_detected = has_challenge_indicators(driver)
+                            calendar_found, row_count = has_calendar_content(driver)
+
+                            if calendar_found:
+                                self.logger.info(
+                                    f"Calendar content found during polling (rows={row_count})!"
+                                )
+                                challenge_cleared = True
+                                break
+
+                            if not challenge_detected:
+                                self.logger.info("Challenge indicators cleared during polling")
+                                challenge_cleared = True
+                                break
+
+                        # If still blocked after polling, try recovery path: visit homepage then retry
+                        if not challenge_cleared:
+                            self.logger.info(
+                                "Challenge persisted after polling. Attempting recovery..."
+                            )
+
+                        try:
+                            # Visit homepage to establish session
+                            self.logger.info(
+                                "Visiting Forex Factory homepage for session establishment..."
+                            )
+                            driver.get(self.CALENDAR_URL)  # Visit calendar root
+                            time.sleep(random.uniform(3.0, 5.0))
+
+                            # Navigate back to target month URL
+                            self.logger.info(
+                                "Navigating back to target month URL after recovery..."
+                            )
+                            driver.get(url)
+                            time.sleep(5.0)
+
+                            # Check again after recovery
+                            challenge_detected = has_challenge_indicators(driver)
+                            calendar_found, row_count = has_calendar_content(driver)
+
+                            if calendar_found:
+                                self.logger.info(
+                                    f"Calendar content found after recovery path (rows={row_count})!"
+                                )
+                                challenge_cleared = True
+                            elif not challenge_detected:
+                                self.logger.info("Challenge cleared after recovery path")
+                                challenge_cleared = True
+                        except Exception as e:
+                            self.logger.warning(f"Recovery path failed: {e}")
+
+                    # If still blocked, skip this month
+                    if not challenge_cleared:
+                        page_title = driver.title or "unknown"
+                        html_length = len(driver.page_source) if driver.page_source else 0
+                        challenge_now = has_challenge_indicators(driver)
+                        calendar_now, rows_now = has_calendar_content(driver)
+                        self.logger.warning(
+                            f"Skipping month due to persistent anti-bot challenge | "
+                            f"title={page_title[:50]} | calendar_found={calendar_now} | "
+                            f"rows_found={rows_now} | "
+                            f"challenge_detected={challenge_now} | "
+                            f"html_length={html_length}"
+                        )
+                        self.close()
+                        return None
 
                 # Wait for the calendar table to be present
                 try:
@@ -834,14 +986,15 @@ class ForexFactoryCalendarCollector(BaseCollector):
                 # Additional wait for dynamic content
                 time.sleep(3)
 
-                # Keep scrolling behavior minimal to avoid bot-like interaction patterns.
+                # Keep scrolling behavior human-like with longer pauses.
                 viewport_height = driver.execute_script("return window.innerHeight") or 800
                 stable_viewport = max(int(viewport_height), 400)
                 scroll_count = random.randint(1, 2)
                 for _ in range(scroll_count):
-                    scroll_distance = max(120, int(stable_viewport * random.uniform(0.18, 0.32)))
+                    # Smaller, slower scroll distances to avoid bot-like patterns
+                    scroll_distance = max(80, int(stable_viewport * random.uniform(0.12, 0.24)))
                     driver.execute_script(f"window.scrollBy(0, {scroll_distance});")
-                    time.sleep(random.uniform(0.4, 0.9))
+                    time.sleep(random.uniform(0.8, 1.2))
 
                 self.logger.info("Completed minimal scrolling (%d small scrolls)", scroll_count)
 
@@ -932,6 +1085,15 @@ class ForexFactoryCalendarCollector(BaseCollector):
                         attempt + 1,
                         sorted(set(detected_indicators)),
                     )
+                    # Check if this is a persistent Cloudflare challenge
+                    if "challenge" in detected_indicators or "cloudflare" in detected_indicators:
+                        page_title = driver.title or "unknown"
+                        html_length = len(page_source) if page_source else 0
+                        self.logger.warning(
+                            f"Skipping month due to persistent anti-bot challenge | "
+                            f"title={page_title[:50]} | indicators={sorted(set(detected_indicators))} | "
+                            f"html_length={html_length}"
+                        )
                     self._save_debug_artifacts(
                         reason_category="anti_bot_challenge_detected",
                         page_source=page_source,
@@ -1372,16 +1534,77 @@ class ForexFactoryCalendarCollector(BaseCollector):
             True if event is in range
         """
         try:
-            event_date_str = event.get("date", "")
-            if not event_date_str:
+            event_date_raw = event.get("date", "")
+            if not event_date_raw:
                 self.logger.debug(f"Event missing date field: {event.get('event', 'unknown')}")
                 return False
 
-            event_dt = datetime.strptime(event_date_str, "%Y-%m-%d")
-            return start_dt <= event_dt <= end_dt
-        except (ValueError, TypeError) as e:
-            self.logger.debug(f"Error parsing event date '{event_date_str}': {e}")
+            event_dt = pd.to_datetime(event_date_raw, errors="coerce")
+            if pd.isna(event_dt):
+                self.logger.debug(f"Error parsing event date '{event_date_raw}'")
+                return False
+
+            # Compare normalized date objects to avoid string/type mismatch issues.
+            event_date = event_dt.date()
+            start_date = start_dt.date()
+            end_date = end_dt.date()
+            return start_date <= event_date <= end_date
+        except (TypeError, AttributeError) as e:
+            self.logger.debug(f"Error parsing event date '{event_date_raw}': {e}")
             return False
+
+    def _filter_events_by_date_range(
+        self,
+        events: list[dict[str, Any]],
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> list[dict[str, Any]]:
+        """Filter events by inclusive date range using normalized datetime parsing."""
+        parsed_dates: list[datetime.date] = []
+        for event in events:
+            event_date_raw = event.get("date", "")
+            event_dt = pd.to_datetime(event_date_raw, errors="coerce")
+            if not pd.isna(event_dt):
+                parsed_dates.append(event_dt.date())
+
+        if parsed_dates:
+            self.logger.info(
+                "Date range before filtering: %s -> %s | filter: %s -> %s",
+                min(parsed_dates),
+                max(parsed_dates),
+                start_dt.date(),
+                end_dt.date(),
+            )
+        else:
+            self.logger.info(
+                "Date range before filtering: no parsable dates | filter: %s -> %s",
+                start_dt.date(),
+                end_dt.date(),
+            )
+
+        filtered_events = [e for e in events if self._is_event_in_range(e, start_dt, end_dt)]
+
+        # Safeguard: if filtering removes everything despite many parsed events,
+        # avoid dropping a full month due to date-normalization anomalies.
+        unique_parsed_dates = sorted(set(parsed_dates))
+        looks_anomalous = (
+            len(events) >= 10
+            and len(filtered_events) == 0
+            and len(unique_parsed_dates) <= 2
+            and (end_dt.date() - start_dt.date()).days >= 7
+        )
+        if looks_anomalous:
+            self.logger.warning(
+                "Date filtering anomaly detected; preserving unfiltered events "
+                "(events=%d, unique_parsed_dates=%d, filter=%s->%s)",
+                len(events),
+                len(unique_parsed_dates),
+                start_dt.date(),
+                end_dt.date(),
+            )
+            return events
+
+        return filtered_events
 
     def _fetch_calendar_by_url(self, dt: datetime, view_type: str) -> list[dict[str, Any]] | None:
         """
@@ -1662,18 +1885,14 @@ class ForexFactoryCalendarCollector(BaseCollector):
             events = self._fetch_calendar_by_url(start_dt, "week")
             # Filter to date range
             if events is not None:
-                all_events.extend(
-                    [e for e in events if self._is_event_in_range(e, start_dt, end_dt)]
-                )
+                all_events.extend(self._filter_events_by_date_range(events, start_dt, end_dt))
         elif num_days <= 31 and start_dt.month == end_dt.month and start_dt.year == end_dt.year:
             # Same month - use month view
             self.logger.info("Using month view (1 request)")
             events = self._fetch_calendar_by_url(start_dt, "month")
             # Filter to date range
             if events is not None:
-                all_events.extend(
-                    [e for e in events if self._is_event_in_range(e, start_dt, end_dt)]
-                )
+                all_events.extend(self._filter_events_by_date_range(events, start_dt, end_dt))
         else:
             # Multiple months - fetch each month separately
             self.logger.info("Using month views (multiple requests)")
@@ -1693,9 +1912,9 @@ class ForexFactoryCalendarCollector(BaseCollector):
                         )
 
                         # Filter to date range
-                        filtered_events = [
-                            e for e in events if self._is_event_in_range(e, start_dt, end_dt)
-                        ]
+                        filtered_events = self._filter_events_by_date_range(
+                            events, start_dt, end_dt
+                        )
                         self.logger.info(
                             f"After filtering to {start_dt.date()} - {end_dt.date()}: {len(filtered_events)} events"
                         )
