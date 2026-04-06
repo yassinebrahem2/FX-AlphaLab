@@ -1,5 +1,7 @@
 import argparse
+from datetime import datetime
 from pathlib import Path
+
 import pandas as pd
 
 # ONLY import what you need
@@ -16,6 +18,12 @@ def run_live(start_date=None, end_date=None):
         return None
 
     df = data["calendar"]
+    output_dir = Path("data/raw/calendar")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = output_dir / f"forexfactory_{timestamp}.csv"
+    df.to_csv(output_path, index=False)
+    print(f"Saved raw calendar data to {output_path}")
     print(f"Collected {len(df)} rows")
     return df
 
@@ -44,6 +52,7 @@ def run_preprocess(df):
     print("Saved scored calendar data to data/processed/calendar_fixture_scored.csv")
 
     return processed
+
 
 def main():
     parser = argparse.ArgumentParser()

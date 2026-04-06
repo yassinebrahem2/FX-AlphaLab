@@ -55,18 +55,25 @@ Example:
 """
 
 import csv
+import logging
 import os
 import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
+from src.ingestion.collectors.base_collector import BaseCollector
+from src.shared.config import Config
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 # Use undetected_chromedriver to bypass Cloudflare
 try:
@@ -146,10 +153,6 @@ except ImportError:
                 pass
 
 
-from src.ingestion.collectors.base_collector import BaseCollector
-from src.shared.config import Config
-
-
 class ForexFactoryCalendarCollector(BaseCollector):
     """
     Web scraper for Forex Factory economic calendar data.
@@ -203,6 +206,14 @@ class ForexFactoryCalendarCollector(BaseCollector):
     SOURCE_NAME = "forexfactory"
     BASE_URL = "https://www.forexfactory.com"
     CALENDAR_URL = "https://www.forexfactory.com/calendar"
+    BLOCK_PAGE_INDICATORS = [
+        "cloudflare",
+        "captcha",
+        "challenge",
+        "verify you are human",
+        "access denied",
+        "blocked",
+    ]
 
     # Rate limiting settings (conservative to avoid IP bans)
     DEFAULT_MIN_DELAY = 3.0
@@ -220,7 +231,8 @@ class ForexFactoryCalendarCollector(BaseCollector):
         timeout: int = DEFAULT_TIMEOUT,
         output_dir: Path | None = None,
         log_file: Path | None = None,
-        headless: bool = True,
+        headless: bool = False,
+        prefer_undetected_chromedriver: bool = False,
     ):
         """
         Initialize the Forex Factory Calendar Collector.
@@ -233,7 +245,8 @@ class ForexFactoryCalendarCollector(BaseCollector):
             timeout: Request timeout in seconds
             output_dir: Output directory for raw CSVs (default: data/raw/forexfactory/)
             log_file: Optional log file path
-            headless: Run browser in headless mode (default: True)
+            headless: Run browser in headless mode (default: False)
+            prefer_undetected_chromedriver: Whether to try undetected-chromedriver first
         """
         # Initialize BaseCollector first (sets up self.logger)
         super().__init__(
@@ -280,6 +293,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
         # Headless mode is disabled by default for better Cloudflare bypass
         # Set to True for CI/server environments (may not work on Cloudflare-protected sites)
         self._headless = headless
+        self._prefer_undetected_chromedriver = prefer_undetected_chromedriver
 
         # Robots.txt parser
         self.robots_parser = RobotFileParser()
@@ -314,7 +328,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
         self.logger.info("Initializing Selenium WebDriver...")
 
         try:
-            if HAS_UNDETECTED_CHROMEDRIVER:
+            if self._prefer_undetected_chromedriver and HAS_UNDETECTED_CHROMEDRIVER:
                 # Try undetected_chromedriver first for Cloudflare bypass
                 try:
                     options = uc.ChromeOptions()
@@ -353,6 +367,10 @@ class ForexFactoryCalendarCollector(BaseCollector):
                     self.logger.warning(
                         f"Undetected ChromeDriver not working, falling back to regular Selenium: {e}"
                     )
+            else:
+                self.logger.info(
+                    "Skipping undetected ChromeDriver and using regular Selenium directly"
+                )
 
             # Fallback to regular Selenium
             self.logger.info("Using regular Selenium WebDriver")
@@ -385,14 +403,14 @@ class ForexFactoryCalendarCollector(BaseCollector):
             else:
                 self._driver = webdriver.Chrome(options=chrome_options)
 
-            self._driver.execute_cdp_cmd(
-                "Page.addScriptToEvaluateOnNewDocument",
-                {"source": """
-                        Object.defineProperty(navigator, 'webdriver', {
-                            get: () => undefined
-                        });
-                    """},
-            )
+            try:
+                self._driver.execute_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+                )
+            except Exception as e:
+                self.logger.debug(
+                    "Could not override navigator.webdriver via execute_script: %s", e
+                )
 
             self._driver.set_page_load_timeout(self.timeout)
             self.logger.info("Regular Selenium WebDriver initialized successfully")
@@ -409,7 +427,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
             try:
                 self._driver.quit()
                 self.logger.info("WebDriver closed successfully")
-            except Exception as e:
+            except BaseException as e:
                 self.logger.warning(f"Error closing WebDriver: {e}")
             finally:
                 self._driver = None
@@ -417,7 +435,11 @@ class ForexFactoryCalendarCollector(BaseCollector):
 
     def __del__(self):
         """Destructor to ensure WebDriver is closed."""
-        self.close()
+        try:
+            self.close()
+        except BaseException:
+            # Never raise during object finalization.
+            pass
 
     def _load_robots_txt(self) -> None:
         """Load and parse robots.txt file."""
@@ -641,6 +663,57 @@ class ForexFactoryCalendarCollector(BaseCollector):
             self.logger.warning(f"Error setting timezone to GMT: {e}")
             return False
 
+    def _save_debug_artifacts(
+        self,
+        reason_category: str,
+        page_source: str | None = None,
+        driver: Any | None = None,
+        url: str | None = None,
+        include_preview: bool = False,
+    ) -> None:
+        """Persist debug evidence for failed or suspicious acquisition states."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = f"debug_{reason_category}_{timestamp}"
+
+        # Save screenshot when a driver instance is available.
+        if driver is not None:
+            screenshot_path = self.output_dir / f"{base_name}.png"
+            try:
+                driver.save_screenshot(str(screenshot_path))
+                self.logger.info("Saved debug screenshot to %s", screenshot_path)
+            except Exception as e:
+                self.logger.warning("Failed to save debug screenshot: %s", e)
+
+        html_content = page_source
+        if html_content is None and driver is not None:
+            try:
+                html_content = driver.page_source
+            except Exception:
+                html_content = None
+
+        # Save full HTML when available.
+        if html_content:
+            html_path = self.output_dir / f"{base_name}.html"
+            try:
+                with open(html_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                self.logger.info("Saved debug HTML to %s", html_path)
+            except Exception as e:
+                self.logger.warning("Failed to save debug HTML: %s", e)
+
+            if include_preview:
+                preview_path = self.output_dir / f"{base_name}_preview.txt"
+                try:
+                    preview = BeautifulSoup(html_content, "html.parser").prettify()[:2000]
+                    with open(preview_path, "w", encoding="utf-8") as f:
+                        f.write(preview)
+                    self.logger.info("Saved debug HTML preview to %s", preview_path)
+                except Exception as e:
+                    self.logger.warning("Failed to save debug HTML preview: %s", e)
+
+        if url:
+            self.logger.info("Diagnostic context URL: %s", url)
+
     def _fetch_page_with_selenium(self, url: str) -> str | None:
         """
         Fetch a page using Selenium WebDriver with human-like scrolling.
@@ -679,6 +752,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
             WebDriverException: If driver encounters errors
         """
         for attempt in range(self.max_retries + 1):
+            driver = None
             try:
                 # Apply rate limiting
                 self._apply_rate_limit()
@@ -688,15 +762,44 @@ class ForexFactoryCalendarCollector(BaseCollector):
 
                 driver.get(url)
 
-                # Configure timezone to GMT via UI interaction (first time only)
+                # Human-like stabilization delay after navigation before interacting.
+                stabilization_wait = random.uniform(2.0, 4.0)
+                time.sleep(stabilization_wait)
+
+                # Wait for calendar container early so JS rendering can settle.
+                try:
+                    WebDriverWait(driver, 12).until(
+                        ec.presence_of_element_located(
+                            (
+                                By.CSS_SELECTOR,
+                                "table.calendar__table, table#calendar_table, .calendar, tr.calendar__row",
+                            )
+                        )
+                    )
+                except TimeoutException:
+                    self.logger.debug(
+                        "Calendar container not ready after initial stabilization wait"
+                    )
+
+                parsed_url = urlparse(url)
+                query_params = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+
+                # Configure timezone to GMT via UI interaction (first time only),
+                # unless timezone=0 is already present in URL.
                 if not self._timezone_configured:
-                    if self._set_timezone_to_gmt(driver):
-                        self.logger.info("Timezone configured to GMT successfully")
-                        # Reload page with GMT timezone applied
-                        driver.get(url)
+                    if query_params.get("timezone") == "0":
+                        self.logger.info(
+                            "Skipping timezone UI interaction because timezone=0 is already in URL"
+                        )
+                        self._timezone_configured = True
                     else:
-                        self.logger.warning("Failed to set timezone to GMT via UI interaction")
-                    self._timezone_configured = True  # Don't try again this session
+                        if self._set_timezone_to_gmt(driver):
+                            self.logger.info("Timezone configured to GMT successfully")
+                            # Reload page with GMT timezone applied
+                            driver.get(url)
+                        else:
+                            self.logger.warning("Failed to set timezone to GMT via UI interaction")
+                        self._timezone_configured = True  # Don't try again this session
 
                 # Wait for Cloudflare challenge to complete
                 # Check for "Just a moment" and wait for it to disappear
@@ -731,44 +834,16 @@ class ForexFactoryCalendarCollector(BaseCollector):
                 # Additional wait for dynamic content
                 time.sleep(3)
 
-                # Human-like scrolling to trigger virtual scrolling and lazy loading
-                self.logger.info("Scrolling page with human-like behavior to load all content...")
-
-                # Enable smooth scrolling
-                driver.execute_script("document.documentElement.style.scrollBehavior = 'smooth';")
-
-                total_height = driver.execute_script("return document.body.scrollHeight")
-                viewport_height = driver.execute_script("return window.innerHeight")
-                current_position = 0
-                scroll_count = 0
-
-                while current_position < total_height - viewport_height:
-                    # Random scroll distance: 60-100% of viewport height
-                    scroll_distance = int(viewport_height * random.uniform(0.6, 1.0))
-
-                    # Scroll down using scrollBy for smoother, relative movement
+                # Keep scrolling behavior minimal to avoid bot-like interaction patterns.
+                viewport_height = driver.execute_script("return window.innerHeight") or 800
+                stable_viewport = max(int(viewport_height), 400)
+                scroll_count = random.randint(1, 2)
+                for _ in range(scroll_count):
+                    scroll_distance = max(120, int(stable_viewport * random.uniform(0.18, 0.32)))
                     driver.execute_script(f"window.scrollBy(0, {scroll_distance});")
-                    current_position += scroll_distance
-                    scroll_count += 1
+                    time.sleep(random.uniform(0.4, 0.9))
 
-                    # Random wait time: 0.3-0.8 seconds (human reading speed)
-                    time.sleep(random.uniform(0.3, 0.8))
-
-                    # Occasionally scroll back up a tiny bit (human behavior)
-                    if random.random() < 0.15:  # 15% chance
-                        small_backup = int(viewport_height * random.uniform(0.05, 0.15))
-                        driver.execute_script(f"window.scrollBy(0, -{small_backup});")
-                        current_position -= small_backup
-                        time.sleep(random.uniform(0.2, 0.4))
-
-                    # Check if page height increased (new content loaded)
-                    new_height = driver.execute_script("return document.body.scrollHeight")
-                    if new_height > total_height:
-                        total_height = new_height
-
-                self.logger.info(
-                    f"Completed human-like scroll ({scroll_count} scrolls, final height {total_height}px)"
-                )
+                self.logger.info("Completed minimal scrolling (%d small scrolls)", scroll_count)
 
                 # Scroll back to top smoothly
                 driver.execute_script("window.scrollTo({top: 0, behavior: 'smooth'});")
@@ -776,11 +851,92 @@ class ForexFactoryCalendarCollector(BaseCollector):
 
                 # Get page source
                 page_source = driver.page_source
-
-                # Check for Cloudflare challenge page
-                if "Just a moment" in page_source or "checking your browser" in page_source.lower():
+                page_title = driver.title or ""
+                source_snippet = " ".join(page_source.split())[:160]
+                self.logger.info(
+                    "Page diagnostics: title='%s' html_len=%d snippet='%s'",
+                    page_title[:80],
+                    len(page_source),
+                    source_snippet,
+                )
+                if len(page_source.strip()) < 200:
                     self.logger.warning(
-                        f"Still on Cloudflare challenge page on attempt {attempt + 1}"
+                        "Fetch failure reason=empty_html_shell_after_regular_selenium (bytes=%d, attempt=%d)",
+                        len(page_source),
+                        attempt + 1,
+                    )
+                    self._save_debug_artifacts(
+                        reason_category="empty_html_shell",
+                        page_source=page_source,
+                        driver=driver,
+                        url=url,
+                    )
+                    # Fail fast for repeated tiny-shell responses: allow at most one retry.
+                    if attempt < min(self.max_retries, 1):
+                        wait_time = (self.DEFAULT_BACKOFF_MULTIPLIER**attempt) + random.uniform(
+                            2, 5
+                        )
+                        self.logger.info(f"Waiting {wait_time:.1f}s before retry...")
+                        self.close()
+                        time.sleep(wait_time)
+                        continue
+                    self.logger.error(
+                        "Stopping early after repeated empty_html_shell_after_regular_selenium"
+                    )
+                    return None
+
+                soup = BeautifulSoup(page_source, "html.parser")
+                body_text = soup.get_text(separator=" ", strip=True)
+                if not body_text:
+                    self.logger.warning(
+                        "Fetch failure reason=empty_body (attempt=%d)",
+                        attempt + 1,
+                    )
+                    self._save_debug_artifacts(
+                        reason_category="empty_body",
+                        page_source=page_source,
+                        driver=driver,
+                        url=url,
+                    )
+                    if attempt < self.max_retries:
+                        wait_time = (self.DEFAULT_BACKOFF_MULTIPLIER**attempt) + random.uniform(
+                            2, 5
+                        )
+                        self.logger.info(f"Waiting {wait_time:.1f}s before retry...")
+                        self.close()
+                        time.sleep(wait_time)
+                        continue
+
+                has_calendar_markup = (
+                    soup.find("table", {"class": lambda x: x and "calendar__table" in x})
+                    or soup.find("table", {"id": "calendar_table"})
+                    or soup.find("div", {"class": lambda x: x and "calendar" in str(x).lower()})
+                )
+                event_rows = soup.select("tr.calendar__row")
+                self.logger.info("Detected %d calendar rows before validation", len(event_rows))
+
+                # Detect anti-bot and block pages by scanning known indicators.
+                lower_source = page_source.lower()
+                detected_indicators = [
+                    indicator
+                    for indicator in self.BLOCK_PAGE_INDICATORS
+                    if indicator in lower_source
+                ]
+                if "just a moment" in lower_source or "checking your browser" in lower_source:
+                    detected_indicators.extend(["just a moment", "checking your browser"])
+
+                # Only classify as anti-bot when indicators are present AND usable rows are missing.
+                if detected_indicators and len(event_rows) == 0:
+                    self.logger.warning(
+                        "Fetch failure reason=anti_bot_challenge_detected (attempt=%d, indicators=%s)",
+                        attempt + 1,
+                        sorted(set(detected_indicators)),
+                    )
+                    self._save_debug_artifacts(
+                        reason_category="anti_bot_challenge_detected",
+                        page_source=page_source,
+                        driver=driver,
+                        url=url,
                     )
                     if attempt < self.max_retries:
                         wait_time = (self.DEFAULT_BACKOFF_MULTIPLIER**attempt) + random.uniform(
@@ -793,22 +949,29 @@ class ForexFactoryCalendarCollector(BaseCollector):
                         continue
                     return None
 
-                if "Access Denied" in page_source or "blocked" in page_source.lower():
-                    self.logger.warning(f"Access denied on attempt {attempt + 1}")
-                    if attempt < self.max_retries:
-                        wait_time = (self.DEFAULT_BACKOFF_MULTIPLIER**attempt) + random.uniform(
-                            2, 5
-                        )
-                        self.logger.info(f"Waiting {wait_time:.1f}s before retry...")
-                        time.sleep(wait_time)
-                        continue
-                    return None
+                if not has_calendar_markup:
+                    self.logger.warning(
+                        "Fetch diagnostic reason=calendar_table_missing (attempt=%d)",
+                        attempt + 1,
+                    )
+                    self._save_debug_artifacts(
+                        reason_category="calendar_table_missing",
+                        page_source=page_source,
+                        driver=driver,
+                        url=url,
+                        include_preview=True,
+                    )
 
                 self.logger.info(f"Successfully fetched page ({len(page_source)} bytes)")
                 return page_source
 
             except TimeoutException as e:
                 self.logger.warning(f"Page load timeout (attempt {attempt + 1}): {e}")
+                self._save_debug_artifacts(
+                    reason_category="fetch_timeout",
+                    driver=driver,
+                    url=url,
+                )
                 if attempt < self.max_retries:
                     wait_time = (self.DEFAULT_BACKOFF_MULTIPLIER**attempt) + random.uniform(1, 3)
                     time.sleep(wait_time)
@@ -818,6 +981,11 @@ class ForexFactoryCalendarCollector(BaseCollector):
 
             except WebDriverException as e:
                 self.logger.error(f"WebDriver error (attempt {attempt + 1}): {e}")
+                self._save_debug_artifacts(
+                    reason_category="webdriver_error",
+                    driver=driver,
+                    url=url,
+                )
                 # Reset driver on error
                 self.close()
                 if attempt < self.max_retries:
@@ -828,6 +996,11 @@ class ForexFactoryCalendarCollector(BaseCollector):
 
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching page: {e}")
+                self._save_debug_artifacts(
+                    reason_category="unexpected_fetch_error",
+                    driver=driver,
+                    url=url,
+                )
                 if attempt < self.max_retries:
                     wait_time = (self.DEFAULT_BACKOFF_MULTIPLIER**attempt) + random.uniform(1, 3)
                     time.sleep(wait_time)
@@ -1174,6 +1347,7 @@ class ForexFactoryCalendarCollector(BaseCollector):
             return event_data
 
         except Exception as e:
+            logger.error(f"Failed to parse event row: {e}")
             if not hasattr(self, "_debug_exception_count"):
                 self._debug_exception_count = 0
             if self._debug_exception_count < 3:
@@ -1234,6 +1408,10 @@ class ForexFactoryCalendarCollector(BaseCollector):
             self.logger.error(f"Invalid view type: {view_type}")
             return None
 
+        # Force GMT timezone at URL level to avoid local-browser timezone drift.
+        url = self._with_gmt_timezone(url)
+
+        logger.info(f"Fetching URL: {url}")
         self.logger.debug(f"Fetching {view_type} view: {url}")
 
         # Fetch the page
@@ -1242,7 +1420,16 @@ class ForexFactoryCalendarCollector(BaseCollector):
             return None
 
         # Parse all events from the page, passing dt so the year fallback is correct
-        return self._parse_calendar_page(page_content, reference_dt=dt)
+        events = self._parse_calendar_page(page_content, reference_dt=dt)
+        logger.info(f"Found {len(events)} events")
+        return events
+
+    def _with_gmt_timezone(self, url: str) -> str:
+        """Ensure ForexFactory calendar URL carries timezone=0 (GMT/UTC)."""
+        parsed = urlparse(url)
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query["timezone"] = "0"
+        return urlunparse(parsed._replace(query=urlencode(query)))
 
     def _fetch_calendar_for_date(self, date_str: str) -> tuple[list[dict[str, Any]], str | None]:
         """
@@ -1303,14 +1490,12 @@ class ForexFactoryCalendarCollector(BaseCollector):
                     self.logger.info("Found calendar table via row detection")
 
             if not calendar_table:
-                self.logger.error("Calendar table not found on the page")
-                # Save debug HTML for analysis
-                debug_file = (
-                    self.output_dir / f"debug_page_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                self.logger.error("Parse failure reason=calendar_table_missing")
+                self._save_debug_artifacts(
+                    reason_category="calendar_table_missing",
+                    page_source=page_content,
+                    include_preview=True,
                 )
-                with open(debug_file, "w", encoding="utf-8") as f:
-                    f.write(page_content)
-                self.logger.info(f"Saved debug HTML to {debug_file}")
                 return []
 
             # Parse table rows
@@ -1634,6 +1819,11 @@ class ForexFactoryCalendarCollector(BaseCollector):
             if "date" in df.columns:
                 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
+            # Normalize event timestamps to UTC when date/time columns are available.
+            if "date" in df.columns and "time" in df.columns:
+                combined = df["date"].dt.strftime("%Y-%m-%d") + " " + df["time"].fillna("")
+                df["event_time_utc"] = pd.to_datetime(combined, errors="coerce", utc=True)
+
             return df
 
         except Exception as e:
@@ -1657,6 +1847,8 @@ class ForexFactoryCalendarCollector(BaseCollector):
         Returns:
             Dictionary with single key 'calendar' containing raw DataFrame
         """
+        logger.info("Starting ForexFactory collection")
+
         # Convert datetime to string format expected by collect_events
         start_str = start_date.strftime("%Y-%m-%d") if start_date else None
         end_str = end_date.strftime("%Y-%m-%d") if end_date else None
