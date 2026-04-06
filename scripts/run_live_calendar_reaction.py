@@ -35,12 +35,18 @@ def load_latest_scored_calendar() -> pd.DataFrame:
     return df
 
 
-def load_prices(pair: str) -> pd.DataFrame:
-    price_path = Path(f"data/raw/mt5/mt5_{pair}_H1_20260406.csv")
-    if not price_path.exists():
-        raise FileNotFoundError(f"Price file not found: {price_path}")
+def load_prices(pair: str) -> pd.DataFrame | None:
+    # Find latest MT5 file for this pair
+    mt5_dir = Path("data/raw/mt5")
+    candidates = sorted(
+        [p for p in mt5_dir.glob(f"mt5_{pair}_H1_*.csv")],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return None
 
-    prices = pd.read_csv(price_path)
+    prices = pd.read_csv(candidates[0])
     required_columns = {"time", "close"}
     if not required_columns.issubset(prices.columns):
         missing = required_columns - set(prices.columns)
@@ -95,6 +101,39 @@ def explain_reaction(final_score: float | None, return_1h: float | None) -> str:
     return "Neutral or weak reaction"
 
 
+def get_expected_direction(final_score: float | None) -> str | None:
+    """Return expected price direction based on macro score: UP/DOWN/NEUTRAL."""
+    if final_score is None:
+        return None
+    if final_score > 0.1:
+        return "UP"
+    elif final_score < -0.1:
+        return "DOWN"
+    else:
+        return "NEUTRAL"
+
+
+def get_observed_direction(return_1h: float | None) -> str | None:
+    """Return observed price direction in 1h window: UP/DOWN/NEUTRAL."""
+    if return_1h is None:
+        return None
+    if return_1h > 0.001:  # > 0.1% threshold
+        return "UP"
+    elif return_1h < -0.001:  # < -0.1% threshold
+        return "DOWN"
+    else:
+        return "NEUTRAL"
+
+
+def direction_match(expected: str | None, observed: str | None) -> bool | None:
+    """Check if expected and observed directions align (excluding NEUTRAL mismatches)."""
+    if expected is None or observed is None:
+        return None
+    if expected == "NEUTRAL" or observed == "NEUTRAL":
+        return None
+    return expected == observed
+
+
 def main() -> None:
     events = load_latest_scored_calendar()
 
@@ -108,111 +147,126 @@ def main() -> None:
     if scoreable.empty:
         raise ValueError("No scoreable events with supported currency mapping")
 
-    event = scoreable.iloc[0]
-    ts = event["timestamp_utc"]
-    pair = str(event["pair"])
+    results = []
 
-    prices = load_prices(pair)
-    min_price_ts = prices["timestamp_utc"].min()
-    max_price_ts = prices["timestamp_utc"].max()
-    print(f"event_timestamp_utc={pd.Timestamp(ts).isoformat()}")
-    print(f"min_price_timestamp_utc={pd.Timestamp(min_price_ts).isoformat()}")
-    print(f"max_price_timestamp_utc={pd.Timestamp(max_price_ts).isoformat()}")
+    for idx, event in scoreable.iterrows():
+        ts = event["timestamp_utc"]
+        pair = str(event["pair"])
 
-    has_bar_before = (prices["timestamp_utc"] < ts).any()
-    has_bar_at_or_after = (prices["timestamp_utc"] >= ts).any()
-    has_through_4h = max_price_ts >= (ts + pd.Timedelta(hours=4))
+        prices = load_prices(pair)
+        if prices is None:
+            print(f"SKIP: {event['event_name']} ({pair}) - no MT5 file found")
+            continue
 
-    # For live data, require bars before/at event but allow partial post-event window
-    if not (has_bar_before and has_bar_at_or_after):
-        raise ValueError("Insufficient price coverage for event window")
+        min_price_ts = prices["timestamp_utc"].min()
+        max_price_ts = prices["timestamp_utc"].max()
 
-    if not has_through_4h:
-        print(
-            f"WARNING: Incomplete 4h window (have up to {pd.Timestamp(max_price_ts).isoformat()}, need {(ts + pd.Timedelta(hours=4)).isoformat()})"
+        has_bar_before = (prices["timestamp_utc"] < ts).any()
+        has_bar_at_or_after = (prices["timestamp_utc"] >= ts).any()
+        has_through_4h = max_price_ts >= (ts + pd.Timedelta(hours=4))
+
+        # For live data, require bars before/at event but allow partial post-event window
+        if not (has_bar_before and has_bar_at_or_after):
+            print(
+                f"SKIP: {event['event_name']} ({pair}) - insufficient price coverage before/at event"
+            )
+            continue
+
+        if not has_through_4h:
+            print(
+                f"WARN: {event['event_name']} ({pair}) - incomplete 4h window (have up to {pd.Timestamp(max_price_ts).isoformat()})"
+            )
+
+        before_subset = prices[prices["timestamp_utc"] < ts]
+        matched_price_timestamp_before = (
+            pd.Timestamp(before_subset.iloc[-1]["timestamp_utc"]).isoformat()
+            if not before_subset.empty
+            else None
         )
 
-    before_subset = prices[prices["timestamp_utc"] < ts]
-    matched_price_timestamp_before = (
-        pd.Timestamp(before_subset.iloc[-1]["timestamp_utc"]).isoformat()
-        if not before_subset.empty
-        else None
-    )
+        idx_at_event = (prices["timestamp_utc"] - ts).abs().idxmin() if not prices.empty else None
+        matched_price_timestamp_at_event = (
+            pd.Timestamp(prices.loc[idx_at_event, "timestamp_utc"]).isoformat()
+            if idx_at_event is not None
+            else None
+        )
 
-    idx_at_event = (prices["timestamp_utc"] - ts).abs().idxmin() if not prices.empty else None
-    matched_price_timestamp_at_event = (
-        pd.Timestamp(prices.loc[idx_at_event, "timestamp_utc"]).isoformat()
-        if idx_at_event is not None
-        else None
-    )
+        one_h_subset = prices[prices["timestamp_utc"] <= ts + pd.Timedelta(hours=1)]
+        matched_price_timestamp_1h = (
+            pd.Timestamp(one_h_subset.iloc[-1]["timestamp_utc"]).isoformat()
+            if not one_h_subset.empty
+            else None
+        )
 
-    one_h_subset = prices[prices["timestamp_utc"] <= ts + pd.Timedelta(hours=1)]
-    matched_price_timestamp_1h = (
-        pd.Timestamp(one_h_subset.iloc[-1]["timestamp_utc"]).isoformat()
-        if not one_h_subset.empty
-        else None
-    )
+        four_h_subset = prices[prices["timestamp_utc"] <= ts + pd.Timedelta(hours=4)]
+        matched_price_timestamp_4h = (
+            pd.Timestamp(four_h_subset.iloc[-1]["timestamp_utc"]).isoformat()
+            if not four_h_subset.empty
+            else None
+        )
 
-    four_h_subset = prices[prices["timestamp_utc"] <= ts + pd.Timedelta(hours=4)]
-    matched_price_timestamp_4h = (
-        pd.Timestamp(four_h_subset.iloc[-1]["timestamp_utc"]).isoformat()
-        if not four_h_subset.empty
-        else None
-    )
+        price_before_event = get_last_price_before(prices, ts)
+        price_at_event = get_price_closest_to_event(prices, ts)
+        price_1h_after = get_last_price_at_or_before(prices, ts + pd.Timedelta(hours=1))
+        price_4h_after = get_last_price_at_or_before(prices, ts + pd.Timedelta(hours=4))
 
-    price_before_event = get_last_price_before(prices, ts)
-    price_at_event = get_price_closest_to_event(prices, ts)
-    price_1h_after = get_last_price_at_or_before(prices, ts + pd.Timedelta(hours=1))
-    price_4h_after = get_last_price_at_or_before(prices, ts + pd.Timedelta(hours=4))
+        return_1h = safe_return(price_at_event, price_1h_after)
+        return_4h = safe_return(price_at_event, price_4h_after)
 
-    return_1h = safe_return(price_at_event, price_1h_after)
-    return_4h = safe_return(price_at_event, price_4h_after)
+        final_score = pd.to_numeric(pd.Series([event.get("final_score")]), errors="coerce").iloc[0]
+        final_score_val = float(final_score) if pd.notna(final_score) else None
 
-    final_score = pd.to_numeric(pd.Series([event.get("final_score")]), errors="coerce").iloc[0]
-    final_score_val = float(final_score) if pd.notna(final_score) else None
-
-    matched_timestamps = [
-        matched_price_timestamp_before,
-        matched_price_timestamp_at_event,
-        matched_price_timestamp_1h,
-        matched_price_timestamp_4h,
-    ]
-    all_matched_identical = all(ts_val is not None for ts_val in matched_timestamps) and (
-        len(set(matched_timestamps)) == 1
-    )
-    if all_matched_identical:
-        reaction_explanation = "No measurable reaction at current price resolution"
-    else:
-        reaction_explanation = explain_reaction(final_score_val, return_1h)
-
-    result = pd.DataFrame(
-        [
-            {
-                "event_id": event.get("event_id"),
-                "timestamp_utc": pd.Timestamp(ts).isoformat(),
-                "event_name": event.get("event_name"),
-                "currency": event.get("currency_norm"),
-                "final_score": final_score_val,
-                "pair": pair,
-                "price_before_event": price_before_event,
-                "matched_price_timestamp_before": matched_price_timestamp_before,
-                "price_at_event": price_at_event,
-                "matched_price_timestamp_at_event": matched_price_timestamp_at_event,
-                "price_1h_after": price_1h_after,
-                "matched_price_timestamp_1h": matched_price_timestamp_1h,
-                "price_4h_after": price_4h_after,
-                "matched_price_timestamp_4h": matched_price_timestamp_4h,
-                "return_1h": return_1h,
-                "return_4h": return_4h,
-                "reaction_explanation": reaction_explanation,
-            }
+        matched_timestamps = [
+            matched_price_timestamp_before,
+            matched_price_timestamp_at_event,
+            matched_price_timestamp_1h,
+            matched_price_timestamp_4h,
         ]
-    )
+        all_matched_identical = all(ts_val is not None for ts_val in matched_timestamps) and (
+            len(set(matched_timestamps)) == 1
+        )
+        if all_matched_identical:
+            reaction_explanation = "No measurable reaction at current price resolution"
+        else:
+            reaction_explanation = explain_reaction(final_score_val, return_1h)
 
+        # Calculate direction fields
+        expected_direction = get_expected_direction(final_score_val)
+        observed_direction = get_observed_direction(return_1h)
+        dir_match = direction_match(expected_direction, observed_direction)
+
+        result_row = {
+            "event_id": event.get("event_id"),
+            "timestamp_utc": pd.Timestamp(ts).isoformat(),
+            "event_name": event.get("event_name"),
+            "currency": event.get("currency_norm"),
+            "final_score": final_score_val,
+            "pair": pair,
+            "price_before_event": price_before_event,
+            "matched_price_timestamp_before": matched_price_timestamp_before,
+            "price_at_event": price_at_event,
+            "matched_price_timestamp_at_event": matched_price_timestamp_at_event,
+            "price_1h_after": price_1h_after,
+            "matched_price_timestamp_1h": matched_price_timestamp_1h,
+            "price_4h_after": price_4h_after,
+            "matched_price_timestamp_4h": matched_price_timestamp_4h,
+            "return_1h": return_1h,
+            "return_4h": return_4h,
+            "reaction_explanation": reaction_explanation,
+            "expected_direction": expected_direction,
+            "observed_direction": observed_direction,
+            "direction_match": dir_match,
+        }
+        results.append(result_row)
+
+    if not results:
+        raise ValueError("No valid reaction data generated for any events")
+
+    result_df = pd.DataFrame(results)
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    result.to_csv(OUTPUT_PATH, index=False)
+    result_df.to_csv(OUTPUT_PATH, index=False)
 
-    print(f"Saved live reaction row to {OUTPUT_PATH}")
+    print(f"Saved {len(result_df)} live reaction rows to {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
