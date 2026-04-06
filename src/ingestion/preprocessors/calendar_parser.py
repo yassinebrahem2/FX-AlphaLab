@@ -199,6 +199,55 @@ class CalendarPreprocessor(BasePreprocessor):
             self.logger.debug(f"Could not parse numeric value: {value}")
             return None
 
+    def _is_missing_numeric_value(self, value: str | None) -> bool:
+        """Return True when a raw numeric field should be treated as missing."""
+        if value is None:
+            return True
+
+        cleaned = str(value).strip().lower()
+        return cleaned in {"", "-", "n/a", "na", "—", "–"}
+
+    def _classify_score_reason(
+        self,
+        raw_event: dict,
+        event_name: str,
+        actual: float | None,
+        forecast: float | None,
+    ) -> tuple[bool, str]:
+        """Classify score availability reason without changing score computation."""
+        name = (event_name or "").strip().lower()
+        actual_raw = raw_event.get("actual")
+        forecast_raw = raw_event.get("forecast")
+
+        if not name:
+            return False, "unknown_event_name"
+
+        if "bank holiday" in name:
+            return False, "holiday_or_no_quantitative_value"
+
+        if "speech" in name:
+            return False, "speech_event"
+
+        if self._is_missing_numeric_value(actual_raw):
+            return False, "missing_actual"
+
+        if self._is_missing_numeric_value(forecast_raw):
+            return False, "missing_forecast"
+
+        if actual is None:
+            actual_text = str(actual_raw).strip().lower()
+            if any(token in actual_text for token in ["tentative", "tbd", "n/f", "n.a"]):
+                return False, "non_numeric_release"
+            return False, "parse_failed_actual"
+
+        if forecast is None:
+            forecast_text = str(forecast_raw).strip().lower()
+            if any(token in forecast_text for token in ["tentative", "tbd", "n/f", "n.a"]):
+                return False, "non_numeric_release"
+            return False, "parse_failed_forecast"
+
+        return True, "ok"
+
     def _build_timestamp_utc(self, date_str: str | None, time_str: str | None) -> str | None:
         """Build UTC ISO 8601 timestamp from date and time strings.
 
@@ -309,10 +358,7 @@ class CalendarPreprocessor(BasePreprocessor):
         """
         from datetime import datetime
 
-        timestamp_utc = self._build_timestamp_utc(
-            raw_event.get("date"), 
-            raw_event.get("time")
-        )
+        timestamp_utc = self._build_timestamp_utc(raw_event.get("date"), raw_event.get("time"))
         event_name = raw_event.get("event", "")
 
         # Step 1: detect country code from event name or raw fields
@@ -381,8 +427,33 @@ class CalendarPreprocessor(BasePreprocessor):
         else:
             final_score = None
 
+        diag_available, score_reason = self._classify_score_reason(
+            raw_event=raw_event,
+            event_name=event_name,
+            actual=actual,
+            forecast=forecast,
+        )
+
         score_available = final_score is not None
+        if score_available:
+            score_reason = "ok"
+        elif score_reason == "ok" and not diag_available:
+            score_reason = "other"
+        elif score_reason == "ok" and final_score is None:
+            score_reason = "other"
+
         score_sign = self._compute_score_sign(final_score)
+        event_name_lower = (event_name or "").lower()
+        if "bank holiday" in event_name_lower:
+            event_type = "holiday"
+        elif "speech" in event_name_lower:
+            event_type = "speech"
+        elif score_reason == "missing_actual" and forecast is not None:
+            event_type = "future_release"
+        elif score_available:
+            event_type = "quantitative_release"
+        else:
+            event_type = "other"
 
         # Step 5: final normalized record
         return {
@@ -393,15 +464,17 @@ class CalendarPreprocessor(BasePreprocessor):
             "currency": currency,
             "event_name": event_name,
             "impact": (raw_event.get("impact", "unknown") or "unknown").lower(),
-            "actual": self._parse_numeric_to_float(raw_event.get("actual")),
-            "forecast": self._parse_numeric_to_float(raw_event.get("forecast")),
-            "previous": self._parse_numeric_to_float(raw_event.get("previous")),
+            "actual": actual,
+            "forecast": forecast,
+            "previous": previous,
             "surprise": surprise,
             "normalized_surprise": normalized_surprise,
             "event_importance": event_importance,
             "impact_weight": impact_weight,
             "final_score": final_score,
             "score_available": score_available,
+            "score_reason": score_reason,
+            "event_type": event_type,
             "score_sign": score_sign,
             "source": raw_event.get("source", "unknown"),
             "affected_pairs": affected_pairs,
@@ -409,6 +482,7 @@ class CalendarPreprocessor(BasePreprocessor):
             "day_of_week": day_of_week,
             "is_future_known": True,
         }
+
     def _impact_to_weight(self, impact: str | None) -> float | None:
         """Map impact level to numeric weight."""
         if not impact:
@@ -474,6 +548,7 @@ class CalendarPreprocessor(BasePreprocessor):
         if value < 0:
             return "negative"
         return "neutral"
+
     def preprocess(
         self,
         df: pd.DataFrame | None = None,
@@ -500,11 +575,9 @@ class CalendarPreprocessor(BasePreprocessor):
         """
         # Find all Bronze CSV files (Forex Factory calendar data)
 
-        
-
         all_events = []
 
-# 👉 CASE 1: DataFrame provided (fixture mode)
+        # 👉 CASE 1: DataFrame provided (fixture mode)
         if df is not None:
             self.logger.info("Processing DataFrame input (fixture mode)")
 
@@ -569,6 +642,22 @@ class CalendarPreprocessor(BasePreprocessor):
 
         # Sort by timestamp
         df_events = df_events.sort_values("timestamp_utc").reset_index(drop=True)
+
+        total_events = len(df_events)
+        scoreable_events = int(df_events["score_available"].fillna(False).sum())
+        unscored_events = total_events - scoreable_events
+        self.logger.info("Scoring audit summary")
+        self.logger.info("Total events: %d", total_events)
+        self.logger.info("Scoreable: %d", scoreable_events)
+        self.logger.info("Unscored: %d", unscored_events)
+
+        reason_counts = (
+            df_events.loc[~df_events["score_available"].fillna(False), "score_reason"]
+            .fillna("other")
+            .value_counts()
+        )
+        for reason, count in reason_counts.items():
+            self.logger.info("Reason %s: %d", reason, int(count))
 
         self.logger.info(f"Successfully processed {len(df_events)} unique events")
 
