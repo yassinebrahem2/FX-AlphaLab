@@ -7,6 +7,7 @@ from src.ingestion.collectors import (
     FREDCollector,
     MT5Collector,
     StocktwitsCollector,
+    TradingEconomicsCalendarCollector,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "FREDCollector",
     "MT5Collector",
     "StocktwitsCollector",
+    "TradingEconomicsCalendarCollector",
 ]

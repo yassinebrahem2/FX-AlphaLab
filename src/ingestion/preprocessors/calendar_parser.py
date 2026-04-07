@@ -369,6 +369,7 @@ class CalendarPreprocessor(BasePreprocessor):
             country = self._to_country_code(country_or_currency)
 
         # Step 2: map country code to currency code
+        # Eurozone countries (DE, FR, IT, ES, GR, PT, NL, BE, AT, IE, FI) all map to EUR
         country_to_currency = {
             "US": "USD",
             "EU": "EUR",
@@ -378,6 +379,27 @@ class CalendarPreprocessor(BasePreprocessor):
             "CA": "CAD",
             "AU": "AUD",
             "NZ": "NZD",
+            # Eurozone countries
+            "DE": "EUR",  # Germany
+            "FR": "EUR",  # France
+            "IT": "EUR",  # Italy
+            "ES": "EUR",  # Spain
+            "GR": "EUR",  # Greece
+            "PT": "EUR",  # Portugal
+            "NL": "EUR",  # Netherlands
+            "BE": "EUR",  # Belgium
+            "AT": "EUR",  # Austria
+            "IE": "EUR",  # Ireland
+            "FI": "EUR",  # Finland
+            "LU": "EUR",  # Luxembourg
+            "CY": "EUR",  # Cyprus
+            "MT": "EUR",  # Malta
+            "SI": "EUR",  # Slovenia
+            "SK": "EUR",  # Slovakia
+            # Additional European currencies
+            "NO": "NOK",  # Norway
+            "SE": "SEK",  # Sweden
+            "DK": "DKK",  # Denmark
         }
         currency = country_to_currency.get(country, country)
 

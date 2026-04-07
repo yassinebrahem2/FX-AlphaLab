@@ -1,12 +1,133 @@
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
 # ONLY import what you need
 from src.ingestion.collectors.forexfactory_collector import ForexFactoryCalendarCollector
+from src.ingestion.collectors.tradingeconomics_collector import (
+    TradingEconomicsCalendarCollector,
+)
 from src.ingestion.preprocessors.calendar_parser import CalendarPreprocessor
+
+TARGET_CURRENCIES = {"EUR", "GBP", "CHF", "JPY"}
+DEFAULT_LIVE_LOOKBACK_DAYS = 90
+
+RAW_OUTPUT_DIR = Path("data/raw/calendar")
+
+
+def _empty_calendar_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "date",
+            "time",
+            "currency",
+            "event",
+            "impact",
+            "forecast",
+            "previous",
+            "actual",
+            "event_url",
+            "source_url",
+            "scraped_at",
+            "source",
+        ]
+    )
+
+
+def _ensure_calendar_columns(df: pd.DataFrame) -> pd.DataFrame:
+    canonical_cols = [
+        "date",
+        "time",
+        "currency",
+        "event",
+        "impact",
+        "forecast",
+        "previous",
+        "actual",
+        "event_url",
+        "source_url",
+        "scraped_at",
+        "source",
+    ]
+    if df.empty:
+        return _empty_calendar_frame()
+
+    normalized = df.copy()
+    for col in canonical_cols:
+        if col not in normalized.columns:
+            normalized[col] = pd.NA
+
+    return normalized
+
+
+def _save_raw_calendar(df: pd.DataFrame, source: str) -> Path:
+    RAW_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = RAW_OUTPUT_DIR / f"{source}_{timestamp}.csv"
+    df.to_csv(output_path, index=False)
+    return output_path
+
+
+def _collect_forexfactory(start_date: datetime | None, end_date: datetime | None) -> pd.DataFrame:
+    collector = ForexFactoryCalendarCollector()
+    data = collector.collect(start_date=start_date, end_date=end_date)
+    if "calendar" not in data:
+        return _empty_calendar_frame()
+    return _ensure_calendar_columns(data["calendar"])
+
+
+def _collect_tradingeconomics(
+    start_date: datetime | None,
+    end_date: datetime | None,
+) -> pd.DataFrame:
+    collector = TradingEconomicsCalendarCollector()
+    data = collector.collect(start_date=start_date, end_date=end_date)
+    if "calendar" not in data:
+        return _empty_calendar_frame()
+    return _ensure_calendar_columns(data["calendar"])
+
+
+def _collect_combined(start_date: datetime | None, end_date: datetime | None) -> pd.DataFrame:
+    frames = []
+    ff_df = _collect_forexfactory(start_date, end_date)
+    te_df = _collect_tradingeconomics(start_date, end_date)
+
+    if not ff_df.empty:
+        frames.append(ff_df)
+    if not te_df.empty:
+        frames.append(te_df)
+
+    if not frames:
+        return _empty_calendar_frame()
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    combined = add_source_matching_annotations(combined)[0]
+    return _ensure_calendar_columns(combined)
+
+
+def collect_calendar_source(
+    source: str,
+    start_date: datetime | None,
+    end_date: datetime | None,
+) -> pd.DataFrame:
+    source = source.lower().strip()
+
+    if source in {"live", "forexfactory"}:
+        df = _collect_forexfactory(start_date, end_date)
+    elif source == "tradingeconomics":
+        df = _collect_tradingeconomics(start_date, end_date)
+    elif source == "combined":
+        df = _collect_combined(start_date, end_date)
+    else:
+        raise ValueError(f"Unsupported source: {source}")
+
+    if "currency" in df.columns:
+        df["currency"] = df["currency"].astype(str).str.upper().str.strip()
+        df = df[df["currency"].isin(TARGET_CURRENCIES)].reset_index(drop=True)
+
+    return df
 
 
 def load_fred_secondary_events(
@@ -153,50 +274,51 @@ def add_source_matching_annotations(combined_df: pd.DataFrame) -> tuple[pd.DataF
     return annotated, matched_pairs, multi_source_pct
 
 
-def run_live(start_date=None, end_date=None):
-    collector = ForexFactoryCalendarCollector()
-    data = collector.collect(start_date=start_date, end_date=end_date)
+def run_source(source: str, start_date=None, end_date=None):
+    if start_date is None and end_date is None:
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=DEFAULT_LIVE_LOOKBACK_DAYS)
 
-    if "calendar" not in data:
+    combined_df = collect_calendar_source(source=source, start_date=start_date, end_date=end_date)
+
+    if combined_df.empty:
         print("No data collected")
         return None
 
-    df_ff = data["calendar"]
-    if "source" not in df_ff.columns:
-        df_ff["source"] = "forexfactory"
-
-    df_secondary = load_fred_secondary_events(start_date=start_date, end_date=end_date)
-
-    if df_secondary is None:
-        combined_df = df_ff.copy()
-        secondary_rows = 0
+    if source == "combined" and {"source_count", "source_agreement"}.issubset(combined_df.columns):
+        matched_events = int(combined_df["source_agreement"].fillna(False).sum())
+        multi_source_pct = matched_events / len(combined_df) * 100.0 if len(combined_df) else 0.0
     else:
-        combined_df = pd.concat([df_ff, df_secondary], ignore_index=True, sort=False)
-        secondary_rows = len(df_secondary)
+        matched_events = 0
+        multi_source_pct = 0.0
 
-    combined_df, matched_events, multi_source_pct = add_source_matching_annotations(combined_df)
-
-    ff_rows = len(df_ff)
     total_rows = len(combined_df)
 
-    print(f"Rows from forexfactory: {ff_rows}")
-    print(f"Rows from secondary source (fred): {secondary_rows}")
-    print(f"Total combined rows: {total_rows}")
+    print(f"Source: {source}")
+    print(f"Total rows: {total_rows}")
+    if start_date and end_date:
+        print(f"Collection date window: {start_date.date()} to {end_date.date()}")
     print("Source value counts:")
     source_counts = combined_df["source"].astype(str).value_counts(dropna=False)
     for source_name, count in source_counts.items():
         print(f"- {source_name}: {int(count)}")
+    if "currency" in combined_df.columns:
+        print("Rows by currency:")
+        for ccy, cnt in combined_df["currency"].value_counts(dropna=False).items():
+            print(f"- {ccy}: {int(cnt)}")
     print(f"Matched events across sources: {matched_events}")
     print(f"% of events with multiple sources: {multi_source_pct:.2f}%")
 
-    output_dir = Path("data/raw/calendar")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / f"forexfactory_{timestamp}.csv"
-    combined_df.to_csv(output_path, index=False)
+    output_path = _save_raw_calendar(combined_df, source)
     print(f"Saved raw calendar data to {output_path}")
     print(f"Collected {len(combined_df)} rows")
+    if len(combined_df) == 0:
+        raise ValueError("No target-currency events collected (EUR/GBP/CHF/JPY)")
     return combined_df
+
+
+def run_live(start_date=None, end_date=None):
+    return run_source("forexfactory", start_date=start_date, end_date=end_date)
 
 
 def run_fixture(input_path):
@@ -225,23 +347,59 @@ def run_preprocess(df, output_path: Path | None = None):
     print(f"Scored {scored_count} events")
     print(f"Saved scored calendar data to {output_path}")
 
+    if "timestamp_utc" in processed.columns:
+        ts = pd.to_datetime(processed["timestamp_utc"], errors="coerce", utc=True).dropna()
+        ts_min = ts.min() if not ts.empty else "n/a"
+        ts_max = ts.max() if not ts.empty else "n/a"
+    else:
+        ts_min = "n/a"
+        ts_max = "n/a"
+
+    print(f"Scored file: {output_path}")
+    print(f"Total scored rows: {len(processed)}")
+    print(f"score_available true: {scored_count}")
+    if "currency" in processed.columns:
+        print("Rows by currency:")
+        for ccy, cnt in (
+            processed["currency"]
+            .astype(str)
+            .str.upper()
+            .str.strip()
+            .value_counts(dropna=False)
+            .items()
+        ):
+            print(f"- {ccy}: {int(cnt)}")
+    print(f"timestamp_utc min: {ts_min}")
+    print(f"timestamp_utc max: {ts_max}")
+
     return processed
 
 
 def build_scored_output_path(
     source: str, start_date: datetime | None, end_date: datetime | None
 ) -> Path:
-    if source != "live":
+    if source == "fixture":
         return Path("data/processed/calendar_fixture_scored.csv")
+
+    if source in {"live", "forexfactory"}:
+        start_part = (
+            start_date.strftime("%Y%m%d") if start_date else datetime.now().strftime("%Y%m%d")
+        )
+        end_part = end_date.strftime("%Y%m%d") if end_date else start_part
+        return Path(f"data/processed/calendar_live_scored_{start_part}_{end_part}.csv")
 
     start_part = start_date.strftime("%Y%m%d") if start_date else datetime.now().strftime("%Y%m%d")
     end_part = end_date.strftime("%Y%m%d") if end_date else start_part
-    return Path(f"data/processed/calendar_live_scored_{start_part}_{end_part}.csv")
+    return Path(f"data/processed/calendar_{source}_scored_{start_part}_{end_part}.csv")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=["live", "fixture"], required=True)
+    parser.add_argument(
+        "--source",
+        choices=["forexfactory", "tradingeconomics", "combined", "fixture", "live"],
+        default="forexfactory",
+    )
     parser.add_argument("--input", type=str, help="Path to fixture CSV")
     parser.add_argument("--start", type=str, help="Start date for live mode (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, help="End date for live mode (YYYY-MM-DD)")
@@ -252,12 +410,12 @@ def main():
     start_date = datetime.strptime(args.start, "%Y-%m-%d") if args.start else None
     end_date = datetime.strptime(args.end, "%Y-%m-%d") if args.end else start_date
 
-    if args.source == "live":
-        df = run_live(start_date=start_date, end_date=end_date)
-    else:
+    if args.source == "fixture":
         if not args.input:
             raise ValueError("Fixture mode requires --input")
         df = run_fixture(args.input)
+    else:
+        df = run_source(args.source, start_date=start_date, end_date=end_date)
 
     if df is None:
         return

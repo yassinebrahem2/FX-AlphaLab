@@ -26,6 +26,7 @@ class Config:
 
     # API Keys
     FRED_API_KEY: str | None = os.getenv("FRED_API_KEY")
+    TRADINGECONOMICS_API_KEY: str | None = os.getenv("TRADINGECONOMICS_API_KEY")
 
     # Google Cloud (BigQuery for GDELT)
     GOOGLE_APPLICATION_CREDENTIALS: str | None = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")

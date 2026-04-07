@@ -986,17 +986,54 @@ class ForexFactoryCalendarCollector(BaseCollector):
                 # Additional wait for dynamic content
                 time.sleep(3)
 
-                # Keep scrolling behavior human-like with longer pauses.
+                # Adaptive deep scrolling to trigger lazy-loaded month rows.
+                # Continue scrolling while row count increases, then stop when growth stalls.
                 viewport_height = driver.execute_script("return window.innerHeight") or 800
-                stable_viewport = max(int(viewport_height), 400)
-                scroll_count = random.randint(1, 2)
-                for _ in range(scroll_count):
-                    # Smaller, slower scroll distances to avoid bot-like patterns
-                    scroll_distance = max(80, int(stable_viewport * random.uniform(0.12, 0.24)))
-                    driver.execute_script(f"window.scrollBy(0, {scroll_distance});")
-                    time.sleep(random.uniform(0.8, 1.2))
+                stable_viewport = max(int(viewport_height), 500)
+                max_scroll_rounds = 14
+                max_stagnant_rounds = 3
+                stagnant_rounds = 0
+                scroll_round = 0
 
-                self.logger.info("Completed minimal scrolling (%d small scrolls)", scroll_count)
+                try:
+                    last_row_count = len(driver.find_elements(By.CSS_SELECTOR, "tr.calendar__row"))
+                except Exception:
+                    last_row_count = 0
+
+                while scroll_round < max_scroll_rounds and stagnant_rounds < max_stagnant_rounds:
+                    scroll_round += 1
+
+                    # Human-like forward scroll: larger than previous minimal probe.
+                    scroll_distance = max(220, int(stable_viewport * random.uniform(0.55, 0.95)))
+                    driver.execute_script(f"window.scrollBy(0, {scroll_distance});")
+                    time.sleep(random.uniform(1.0, 1.6))
+
+                    # Occasional small backscroll to reduce bot-like monotonic pattern.
+                    if random.random() < 0.12:
+                        back_distance = max(60, int(stable_viewport * random.uniform(0.08, 0.18)))
+                        driver.execute_script(f"window.scrollBy(0, {-back_distance});")
+                        time.sleep(random.uniform(0.5, 0.9))
+
+                    try:
+                        current_row_count = len(
+                            driver.find_elements(By.CSS_SELECTOR, "tr.calendar__row")
+                        )
+                    except Exception:
+                        current_row_count = last_row_count
+
+                    if current_row_count > last_row_count:
+                        stagnant_rounds = 0
+                    else:
+                        stagnant_rounds += 1
+
+                    last_row_count = current_row_count
+
+                self.logger.info(
+                    "Completed adaptive scrolling (rounds=%d, final_rows=%d, stagnant_rounds=%d)",
+                    scroll_round,
+                    last_row_count,
+                    stagnant_rounds,
+                )
 
                 # Scroll back to top smoothly
                 driver.execute_script("window.scrollTo({top: 0, behavior: 'smooth'});")

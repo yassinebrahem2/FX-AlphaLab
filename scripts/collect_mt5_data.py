@@ -41,12 +41,18 @@ Example:
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+
+import pandas as pd
 
 from src.ingestion.collectors.mt5_collector import MT5Collector
 from src.ingestion.preprocessors.price_normalizer import PriceNormalizer
 from src.shared.config import Config
 from src.shared.utils import setup_logger
+
+TARGET_PAIRS = ["EURUSD", "GBPUSD", "USDCHF", "USDJPY"]
+TARGET_TIMEFRAMES = ["H1"]
+MAX_LOOKBACK_YEARS_CANDIDATES = [30, 20, 10, 5, 3]
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,22 +66,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pairs",
         type=str,
-        help=f"Comma-separated FX pairs (default: {','.join(MT5Collector.DEFAULT_PAIRS)})",
+        help=(
+            "Comma-separated FX pairs (allowed only: "
+            f"{','.join(TARGET_PAIRS)}; default: {','.join(TARGET_PAIRS)})"
+        ),
         metavar="PAIRS",
     )
 
     parser.add_argument(
         "--timeframes",
         type=str,
-        help=f"Comma-separated timeframes (default: {','.join(MT5Collector.DEFAULT_TIMEFRAMES)})",
+        help=(
+            "Comma-separated timeframes (allowed only: "
+            f"{','.join(TARGET_TIMEFRAMES)}; default: {','.join(TARGET_TIMEFRAMES)})"
+        ),
         metavar="TFS",
     )
 
     parser.add_argument(
         "--years",
         type=int,
-        default=MT5Collector.DEFAULT_YEARS,
-        help=f"Years of history to fetch (default: {MT5Collector.DEFAULT_YEARS})",
+        default=None,
+        help=(
+            "Years of history to fetch (used only if --start is omitted). "
+            "If omitted, script requests maximum practical lookback from MT5."
+        ),
         metavar="N",
     )
 
@@ -185,9 +200,31 @@ def main() -> int:
         return list_broker_symbols()
 
     try:
-        # Parse pairs and timeframes
-        pairs = args.pairs.split(",") if args.pairs else None
-        timeframes = args.timeframes.split(",") if args.timeframes else None
+        # Parse pairs and timeframes (restricted to target scope)
+        if args.pairs:
+            requested_pairs = [p.strip().upper() for p in args.pairs.split(",") if p.strip()]
+            pairs = [p for p in requested_pairs if p in TARGET_PAIRS]
+        else:
+            pairs = TARGET_PAIRS.copy()
+
+        if args.timeframes:
+            requested_timeframes = [
+                tf.strip().upper() for tf in args.timeframes.split(",") if tf.strip()
+            ]
+            timeframes = [tf for tf in requested_timeframes if tf in TARGET_TIMEFRAMES]
+        else:
+            timeframes = TARGET_TIMEFRAMES.copy()
+
+        if not pairs:
+            logger.error("No supported pairs selected. Allowed pairs: %s", ", ".join(TARGET_PAIRS))
+            return 1
+
+        if not timeframes:
+            logger.error(
+                "No supported timeframes selected. Allowed timeframes: %s",
+                ", ".join(TARGET_TIMEFRAMES),
+            )
+            return 1
 
         # Handle preprocess-only mode
         if args.preprocess_only:
@@ -256,7 +293,7 @@ def main() -> int:
         collector = MT5Collector(
             pairs=pairs,
             timeframes=timeframes,
-            years=args.years,
+            years=args.years if args.years is not None else 30,
         )
         logger.info("MT5Collector initialized (Bronze layer: %s)", collector.output_dir)
 
@@ -276,7 +313,7 @@ def main() -> int:
         # Parse dates
         if args.start:
             try:
-                start_date = datetime.strptime(args.start, "%Y-%m-%d")
+                start_date = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             except ValueError:
                 logger.error("Invalid start date format. Use YYYY-MM-DD")
                 return 1
@@ -285,7 +322,7 @@ def main() -> int:
 
         if args.end:
             try:
-                end_date = datetime.strptime(args.end, "%Y-%m-%d")
+                end_date = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             except ValueError:
                 logger.error("Invalid end date format. Use YYYY-MM-DD")
                 return 1
@@ -302,7 +339,13 @@ def main() -> int:
         logger.info("=" * 60)
         logger.info("Pairs: %s", ", ".join(collector.pairs))
         logger.info("Timeframes: %s", ", ".join(collector.timeframes))
-        logger.info("History: %d years", collector.years)
+        if args.years is not None:
+            logger.info("History: %d years", collector.years)
+        else:
+            logger.info(
+                "History: maximum practical lookback (candidates: %s years)",
+                ", ".join(str(y) for y in MAX_LOOKBACK_YEARS_CANDIDATES),
+            )
         if start_date:
             logger.info(
                 "Date range: %s to %s", start_date.date(), end_date.date() if end_date else "today"
@@ -310,7 +353,31 @@ def main() -> int:
 
         # STAGE 1: Collect Bronze (raw) data
         logger.info("Collecting Bronze data...")
-        data = collector.collect(start_date=start_date, end_date=end_date)
+        data = None
+        if args.start:
+            data = collector.collect(start_date=start_date, end_date=end_date)
+        elif args.years is not None:
+            data = collector.collect(start_date=None, end_date=end_date)
+        else:
+            last_error = None
+            for years in MAX_LOOKBACK_YEARS_CANDIDATES:
+                collector.years = years
+                logger.info("Attempting MT5 collection with %d-year lookback", years)
+                try:
+                    data = collector.collect(start_date=None, end_date=end_date)
+                    logger.info(
+                        "Using %d-year lookback (maximum practical on this MT5 setup)", years
+                    )
+                    break
+                except RuntimeError as exc:
+                    last_error = exc
+                    logger.warning("No data at %d-year lookback; trying shorter range", years)
+                    continue
+
+            if data is None:
+                raise RuntimeError(
+                    "No data collected for any fallback lookback window"
+                ) from last_error
 
         if not data:
             logger.warning("No data collected")
@@ -320,7 +387,28 @@ def main() -> int:
         logger.info("Exporting Bronze data...")
         for name, df in data.items():
             path = collector.export_csv(df, name)
-            logger.info("  ✓ Exported %s: %d records → %s", name, len(df), path.name)
+            pair, timeframe = name.split("_", 1)
+            if "time" in df.columns and not df.empty:
+                ts = pd.to_datetime(df["time"], unit="s", utc=True, errors="coerce").dropna()
+                if not ts.empty:
+                    start_ts = ts.min().date()
+                    end_ts = ts.max().date()
+                else:
+                    start_ts = "n/a"
+                    end_ts = "n/a"
+            else:
+                start_ts = "n/a"
+                end_ts = "n/a"
+
+            logger.info(
+                "  ✓ pair=%s timeframe=%s range=%s→%s rows=%d path=%s",
+                pair,
+                timeframe,
+                start_ts,
+                end_ts,
+                len(df),
+                path,
+            )
 
         logger.info("✓ Bronze collection complete: %d datasets", len(data))
 
