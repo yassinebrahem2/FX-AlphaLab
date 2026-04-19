@@ -23,6 +23,7 @@ authors = [
 dependencies = [
     "pandas",
     "numpy",
+    "statsmodels",
     "python-dotenv",
     "psycopg2-binary>=2.9",
     "requests",
