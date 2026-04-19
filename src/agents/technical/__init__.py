@@ -1,3 +1,5 @@
 """Technical analysis agent (indicators, patterns, stat arb)."""
 
-__all__ = []  # W7-W8 implementation
+from src.agents.technical.lstm_agent import LSTMTechnicalAgent, TechnicalSignal, TrainingMetrics
+
+__all__ = ["LSTMTechnicalAgent", "TechnicalSignal", "TrainingMetrics"]
