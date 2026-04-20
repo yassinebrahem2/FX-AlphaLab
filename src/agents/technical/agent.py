@@ -18,7 +18,7 @@ from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Dataset
 
-from src.agents.technical.features import add_features, get_feature_names
+from src.agents.technical.features import add_features, get_feature_names, volatility_regime_label
 from src.shared.utils import setup_logger
 
 
@@ -45,8 +45,44 @@ class TechnicalSignal:
     prob_up: float
     prob_down: float
     confidence: float
+    volatility_regime: str
     threshold_used: float
     model_version: str
+
+
+def fuse_timeframe_signals(
+    signals: dict[str, TechnicalSignal],
+    weights: dict[str, float] | None = None,
+) -> TechnicalSignal:
+    if "D1" not in signals:
+        raise ValueError("D1 signal is required for multi-timeframe fusion.")
+
+    if weights is None:
+        weights = {"D1": 1.0 / 3.0, "H4": 1.0 / 3.0, "H1": 1.0 / 3.0}
+
+    missing_weights = [tf for tf in signals if tf not in weights]
+    if missing_weights:
+        raise ValueError(f"Missing weights for timeframes: {missing_weights}")
+
+    fused_score = sum(weights[tf] * (signal.prob_up - 0.5) for tf, signal in signals.items())
+
+    direction = int(fused_score >= 0.0)
+    prob_up = float(np.clip(fused_score + 0.5, 0.0, 1.0))
+    confidence = float(np.clip(abs(fused_score) * 2.0, 0.0, 1.0))
+
+    d1_signal = signals["D1"]
+    return TechnicalSignal(
+        pair=d1_signal.pair,
+        timeframe="MTF",
+        timestamp_utc=d1_signal.timestamp_utc,
+        direction=direction,
+        prob_up=prob_up,
+        prob_down=1.0 - prob_up,
+        confidence=confidence,
+        volatility_regime=d1_signal.volatility_regime,
+        threshold_used=d1_signal.threshold_used,
+        model_version=d1_signal.model_version,
+    )
 
 
 class FXDataset(Dataset):
@@ -88,7 +124,7 @@ class LSTMModel(nn.Module):
         return out.squeeze(-1)
 
 
-class LSTMTechnicalAgent:
+class TechnicalAgent:
     """Train/infer LSTM directional model using features from features.py."""
 
     def __init__(
@@ -131,7 +167,7 @@ class LSTMTechnicalAgent:
         self.scaler: MinMaxScaler | None = None
         self.history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "val_hit": []}
 
-        self.logger = setup_logger(f"LSTMTechnicalAgent[{pair}-{timeframe}]")
+        self.logger = setup_logger(f"TechnicalAgent[{pair}-{timeframe}]")
 
     def _chronological_split(
         self, df: pd.DataFrame
@@ -373,7 +409,7 @@ class LSTMTechnicalAgent:
     @classmethod
     def load(
         cls, artifact_path: str | Path, device: str | torch.device | None = None
-    ) -> LSTMTechnicalAgent:
+    ) -> TechnicalAgent:
         """Load agent from .pkl artifact."""
         artifact = joblib.load(artifact_path)
 
@@ -432,6 +468,8 @@ class LSTMTechnicalAgent:
         direction = int(prob_up >= self.threshold)
         prob_down = 1.0 - prob_up
         confidence = abs(prob_up - 0.5) * 2.0
+        atr_pct_rank = float(df["atr_pct_rank"].iloc[-1])
+        volatility_regime = volatility_regime_label(atr_pct_rank=atr_pct_rank)
 
         return TechnicalSignal(
             pair=self.pair,
@@ -441,6 +479,7 @@ class LSTMTechnicalAgent:
             prob_up=prob_up,
             prob_down=prob_down,
             confidence=confidence,
+            volatility_regime=volatility_regime,
             threshold_used=self.threshold,
             model_version=self.model_version,
         )

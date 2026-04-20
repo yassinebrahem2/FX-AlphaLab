@@ -7,7 +7,7 @@ import pandas as pd
 from statsmodels.tsa.stattools import adfuller
 
 # ── Constants ──────────────────────────────────────────────────────────────
-DATA_DIR = Path(__file__).parent.parent.parent.parent / "src_technical"
+DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "processed" / "ohlcv"
 PAIRS = ["EURUSDm", "GBPUSDm", "USDJPYm", "USDCHFm"]
 TIMEFRAMES = ["D1", "H4", "H1"]
 MISSING = set()
@@ -88,6 +88,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     lpc = (df["low"] - c.shift(1)).abs()
     tr = pd.concat([hl, hpc, lpc], axis=1).max(axis=1)
     df["atr"] = tr.ewm(span=14, adjust=False).mean()
+    df["atr_pct_rank"] = df["atr"].rolling(252).rank(pct=True)
 
     # EMAs
     for span in [20, 50, 200]:
@@ -104,7 +105,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ── Feature names ──────────────────────────────────────────────────────────
-def get_feature_names() -> list:
+def get_feature_names() -> list[str]:
     """Returns list of all feature column names excluding OHLCV and target."""
     return [
         "log_ret",
@@ -123,6 +124,11 @@ def get_feature_names() -> list:
         "mom_5",
         "mom_20",
     ]
+
+
+def volatility_regime_label(atr_pct_rank: float, threshold: float = 0.6) -> str:
+    """Returns 'high' if ATR percentile rank exceeds threshold, else 'low'."""
+    return "high" if atr_pct_rank > threshold else "low"
 
 
 # ── Stationarity test ──────────────────────────────────────────────────────

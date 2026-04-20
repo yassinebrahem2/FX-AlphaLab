@@ -1,5 +1,5 @@
 """Technical analysis agent (indicators, patterns, stat arb)."""
 
-from src.agents.technical.lstm_agent import LSTMTechnicalAgent, TechnicalSignal, TrainingMetrics
+from src.agents.technical.agent import TechnicalAgent, TechnicalSignal, TrainingMetrics
 
-__all__ = ["LSTMTechnicalAgent", "TechnicalSignal", "TrainingMetrics"]
+__all__ = ["TechnicalAgent", "TechnicalSignal", "TrainingMetrics"]
