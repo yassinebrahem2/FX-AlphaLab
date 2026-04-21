@@ -1,3 +1,5 @@
 """Macro & event-driven analysis agent."""
 
-__all__ = []  # W7-W8 implementation
+from src.agents.macro.agent import MacroAgent, MacroSignal
+
+__all__ = ["MacroAgent", "MacroSignal"]
