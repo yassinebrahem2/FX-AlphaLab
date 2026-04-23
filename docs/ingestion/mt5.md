@@ -236,7 +236,7 @@ Low-level MT5 API wrapper:
 
 ### MT5Collector (Business Logic)
 High-level data collection:
-- BaseCollector interface
+- TabularCollector interface
 - Multi-pair/timeframe iteration
 - CSV export and naming
 - Error handling and logging

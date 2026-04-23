@@ -6,12 +6,12 @@ from typing import IO
 
 import requests
 
-from src.shared.utils import setup_logger
+from src.ingestion.collectors.base_collector import BaseCollector
 
 __all__ = ["RedditCollector"]
 
 
-class RedditCollector:
+class RedditCollector(BaseCollector):
     SOURCE_NAME = "reddit"
     API_BASE = "https://arctic-shift.photon-reddit.com/api/posts/search"
     DEFAULT_LOOKBACK_DAYS = 30
@@ -22,42 +22,53 @@ class RedditCollector:
         self,
         output_dir: Path,
         subreddits: list[str],
-        backfill: bool = False,
-        start_date: datetime | None = None,
-        end_date: datetime | None = None,
         batch_size: int = 100,
         request_delay: float = 0.5,
         log_file: Path | None = None,
     ) -> None:
-        self.output_dir = output_dir
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        super().__init__(output_dir, log_file)
         self.subreddits = subreddits
-        self.backfill = backfill
-        self.start_date = self._to_utc(start_date) if start_date is not None else None
-        self.end_date = (
-            self._to_utc(end_date) if end_date is not None else datetime.now(timezone.utc)
-        )
         self.batch_size = batch_size
         self.request_delay = request_delay
-        self.logger = setup_logger(self.__class__.__name__, log_file)
 
-    def collect(self) -> None:
+    def collect(
+        self,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        backfill: bool = False,
+    ) -> dict[str, int]:
+        result: dict[str, int] = {}
         for subreddit in self.subreddits:
-            self.collect_one(subreddit)
+            result[subreddit.lower()] = self.collect_one(
+                subreddit,
+                start_date=start_date,
+                end_date=end_date,
+                backfill=backfill,
+            )
+        return result
 
-    def collect_one(self, subreddit: str) -> None:
-        end_date = self.end_date
-        lookback_start = end_date - timedelta(days=self.DEFAULT_LOOKBACK_DAYS)
+    def collect_one(
+        self,
+        subreddit: str,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        backfill: bool = False,
+    ) -> int:
+        effective_end = (
+            self._to_utc(end_date) if end_date is not None else datetime.now(timezone.utc)
+        )
+        effective_start = self._to_utc(start_date) if start_date is not None else None
+        lookback_start = effective_end - timedelta(days=self.DEFAULT_LOOKBACK_DAYS)
 
         path = self._canonical_path(subreddit)
         last_ts, seen_ids = self._load_canonical_state(path)
         if last_ts is not None:
-            if self.backfill:
+            if backfill:
                 cursor = last_ts + timedelta(seconds=1)
             else:
                 cursor = max(last_ts + timedelta(seconds=1), lookback_start)
-        elif self.backfill and self.start_date is not None:
-            cursor = self.start_date
+        elif backfill and effective_start is not None:
+            cursor = effective_start
         else:
             cursor = lookback_start
 
@@ -65,14 +76,14 @@ class RedditCollector:
             "Starting subreddit=%s cursor=%s end=%s seen_ids=%d",
             subreddit,
             cursor.isoformat(),
-            end_date.isoformat(),
+            effective_end.isoformat(),
             len(seen_ids),
         )
 
         total_written = 0
         with path.open("a", encoding="utf-8") as file_handle:
-            while cursor < end_date:
-                posts = self._fetch_batch(subreddit=subreddit, after=cursor, before=end_date)
+            while cursor < effective_end:
+                posts = self._fetch_batch(subreddit=subreddit, after=cursor, before=effective_end)
                 batch_count = len(posts)
                 if batch_count == 0:
                     break
@@ -104,6 +115,7 @@ class RedditCollector:
                 time.sleep(self.request_delay)
 
         self.logger.info("Finished subreddit=%s total_written=%d", subreddit, total_written)
+        return total_written
 
     def health_check(self) -> bool:
         subreddit = self.subreddits[0] if self.subreddits else "Forex"
@@ -276,12 +288,6 @@ class RedditCollector:
             if max_dt is None or created > max_dt:
                 max_dt = created
         return max_dt
-
-    @staticmethod
-    def _to_utc(value: datetime) -> datetime:
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
 
     @staticmethod
     def _created_utc_from_post(post: dict) -> datetime | None:

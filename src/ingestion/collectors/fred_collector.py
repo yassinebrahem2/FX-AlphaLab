@@ -42,7 +42,7 @@ from pathlib import Path
 import pandas as pd
 from fredapi import Fred
 
-from src.ingestion.collectors.base_collector import BaseCollector
+from src.ingestion.collectors.tabular_collector import TabularCollector
 from src.shared.config import Config
 
 
@@ -57,7 +57,7 @@ class FREDSeries:
     units: str
 
 
-class FREDCollector(BaseCollector):
+class FREDCollector(TabularCollector):
     """Collector for FRED macroeconomic indicators - Bronze Layer (Raw Data).
 
     Uses the official FRED API via fredapi package.

@@ -22,8 +22,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from src.ingestion.collectors.base_collector import BaseCollector
 from src.shared.config import Config
-from src.shared.utils import setup_logger
 
 try:
     from curl_cffi import requests as _cffi_requests  # type: ignore[import-untyped]
@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover
 __all__ = ["StocktwitsCollector"]
 
 
-class StocktwitsCollector:
+class StocktwitsCollector(BaseCollector):
     """Collector for Stocktwits retail trader sentiment - Bronze Layer."""
 
     SOURCE_NAME = "stocktwits"
@@ -54,11 +54,9 @@ class StocktwitsCollector:
         log_file: Path | None = None,
         symbols: list[str] | None = None,
     ) -> None:
-        self.output_dir = output_dir or Config.DATA_DIR / "raw" / "news" / "stocktwits"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.logger = setup_logger(
-            self.__class__.__name__,
-            log_file or Config.LOGS_DIR / "collectors" / "stocktwits_collector.log",
+        super().__init__(
+            output_dir=output_dir or Config.DATA_DIR / "raw" / "news" / "stocktwits",
+            log_file=log_file or Config.LOGS_DIR / "collectors" / "stocktwits_collector.log",
         )
         self.symbols = symbols or self.DEFAULT_SYMBOLS
         self._session = self._build_session()
@@ -285,11 +283,6 @@ class StocktwitsCollector:
             return None
 
         return self._to_utc(parsed)
-
-    def _to_utc(self, value: datetime) -> datetime:
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
 
     def _request(self, url: str, params: dict[str, int]) -> dict | None:
         """Execute a rate-limited GET request with retry on 429."""

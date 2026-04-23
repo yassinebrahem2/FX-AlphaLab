@@ -744,9 +744,9 @@ class TestForexFactoryCalendarCollector:
 
     def test_inherits_from_base_collector(self):
         """Test that ForexFactoryCalendarCollector inherits from BaseCollector."""
-        from src.ingestion.collectors.base_collector import BaseCollector
+        from src.ingestion.collectors.tabular_collector import TabularCollector
 
-        assert issubclass(ForexFactoryCalendarCollector, BaseCollector)
+        assert issubclass(ForexFactoryCalendarCollector, TabularCollector)
 
     def test_export_csv_method_inherited(self, collector):
         """Test that export_csv() method is inherited from BaseCollector."""
