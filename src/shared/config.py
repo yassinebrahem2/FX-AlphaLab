@@ -9,6 +9,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _load_groq_api_keys() -> list[str]:
+    keys: list[str] = []
+    idx = 1
+    while True:
+        env_key = f"GROQ_API_KEY_{idx}"
+        value = os.getenv(env_key)
+        if value is None:
+            break
+        keys.append(value)
+        idx += 1
+    return keys
+
+
 class Config:
     """Application configuration."""
 
@@ -26,6 +39,7 @@ class Config:
 
     # API Keys
     FRED_API_KEY: str | None = os.getenv("FRED_API_KEY")
+    GROQ_API_KEYS: list[str] = _load_groq_api_keys()
 
     # Google Cloud (BigQuery for GDELT)
     GOOGLE_APPLICATION_CREDENTIALS: str | None = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -42,6 +56,7 @@ class Config:
     # Data collection settings
     SCRAPING_DELAY: float = float(os.getenv("SCRAPING_DELAY", "3.0"))
     REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "30"))
+    REDDIT_LABELS_PATH: Path = DATA_DIR / "processed" / "reddit" / "labels_checkpoint.jsonl"
 
     @classmethod
     def validate(cls) -> None:
