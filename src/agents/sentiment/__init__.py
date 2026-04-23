@@ -1,3 +1,5 @@
 """Sentiment & flow intelligence agent."""
 
-__all__ = []  # W7-W8 implementation
+from src.agents.sentiment.stocktwits_node import StocktwitsSignalNode
+
+__all__ = ["StocktwitsSignalNode"]
