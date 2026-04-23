@@ -29,7 +29,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from src.ingestion.collectors.base_collector import BaseCollector
+from src.ingestion.collectors.tabular_collector import TabularCollector
 from src.shared.config import Config
 
 
@@ -44,7 +44,7 @@ class ECBDataset:
     frequency: str  # D=Daily, B=Business/event-based
 
 
-class ECBCollector(BaseCollector):
+class ECBCollector(TabularCollector):
     """Collector for ECB policy rates and EUR exchange rates.
 
     Uses the official ECB SDMX 2.1 REST API with automatic retry logic.

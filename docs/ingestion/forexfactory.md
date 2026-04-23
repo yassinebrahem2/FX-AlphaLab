@@ -143,7 +143,7 @@ if "calendar" in data:
     df = data["calendar"]
     print(f"Collected {len(df)} events")
 
-    # Export using BaseCollector method
+    # Export using TabularCollector method
     collector.export_csv(df, "economic_events")
 ```
 
@@ -559,7 +559,7 @@ If scraping fails due to website changes:
 ### Class Structure
 
 ```python
-ForexFactoryCalendarCollector(BaseCollector)
+ForexFactoryCalendarCollector(TabularCollector)
 ├── SOURCE_NAME = "forexfactory"
 ├── __init__()                       # Initialize with rate limiting
 ├── _load_robots_txt()              # Fetch robots.txt
@@ -582,8 +582,8 @@ ForexFactoryCalendarCollector(BaseCollector)
 ├── save_to_csv()                   # Export to Bronze
 ├── get_events_dataframe()          # Convert to DataFrame
 ├── validate_scraped_data()         # Data quality check
-├── collect()                       # BaseCollector interface
-├── health_check()                  # BaseCollector interface
+├── collect()                       # TabularCollector interface
+├── health_check()                  # TabularCollector interface
 └── close()                         # Cleanup Selenium resources
 ```
 
@@ -630,4 +630,4 @@ When contributing to the Forex Factory collector:
 - **Collector**: `src/ingestion/collectors/forexfactory_collector.py`
 - **Script**: `scripts/collect_forexfactory_data.py`
 - **Tests**: `tests/ingestion/test_forexfactory_collector.py`
-- **Base Class**: `src/ingestion/collectors/base_collector.py`
+- **Base Class**: `src/ingestion/collectors/tabular_collector.py`

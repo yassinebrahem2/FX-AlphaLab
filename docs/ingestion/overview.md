@@ -163,7 +163,7 @@ python -m scripts.collect_fred_data --start 2023-01-01 --end 2023-12-31 --prepro
 
 ### Programmatic Usage
 
-**Tabular collectors** (BaseCollector):
+**Tabular collectors** (TabularCollector):
 ```python
 from src.ingestion.collectors.fred_collector import FREDCollector
 from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer

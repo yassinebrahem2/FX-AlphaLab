@@ -25,8 +25,6 @@ def collector(tmp_path: Path) -> RedditCollector:
     return RedditCollector(
         output_dir=tmp_path / "data" / "raw" / "reddit",
         subreddits=["Forex"],
-        backfill=False,
-        end_date=datetime(2024, 1, 10, tzinfo=timezone.utc),
         batch_size=2,
         request_delay=0.01,
         log_file=None,
@@ -92,7 +90,10 @@ def test_collect_one_uses_single_canonical_scan(collector: RedditCollector) -> N
                 collector, "_fetch_batch", side_effect=[first_batch, second_batch]
             ) as mock_fetch:
                 with patch.object(reddit_module.time, "sleep") as mock_sleep:
-                    collector.collect_one("Forex")
+                    collector.collect_one(
+                        "Forex",
+                        end_date=datetime(2024, 1, 10, tzinfo=timezone.utc),
+                    )
 
     assert mock_state.call_count == 1
     assert mock_fetch.call_count == 2
@@ -107,6 +108,20 @@ def test_collect_one_uses_single_canonical_scan(collector: RedditCollector) -> N
     canonical_path = collector._canonical_path("Forex")
     lines = canonical_path.read_text(encoding="utf-8").splitlines()
     assert [json.loads(line)["id"] for line in lines] == ["p1", "p2", "p3"]
+
+
+def test_collect_returns_counts_by_subreddit(collector: RedditCollector) -> None:
+    with patch.object(collector, "collect_one", side_effect=[2, 0]) as mock_collect_one:
+        collector.subreddits = ["Forex", "Stocks"]
+        result = collector.collect(
+            start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            backfill=True,
+        )
+
+    assert result == {"forex": 2, "stocks": 0}
+    assert all(isinstance(value, int) and value >= 0 for value in result.values())
+    assert mock_collect_one.call_count == 2
 
 
 def test_fetch_batch_retries_json_decode_error(collector: RedditCollector) -> None:

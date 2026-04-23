@@ -146,11 +146,11 @@ except ImportError:
                 pass
 
 
-from src.ingestion.collectors.base_collector import BaseCollector
+from src.ingestion.collectors.tabular_collector import TabularCollector
 from src.shared.config import Config
 
 
-class ForexFactoryCalendarCollector(BaseCollector):
+class ForexFactoryCalendarCollector(TabularCollector):
     """
     Web scraper for Forex Factory economic calendar data.
 

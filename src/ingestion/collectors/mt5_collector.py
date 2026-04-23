@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.ingestion.collectors.base_collector import BaseCollector
+from src.ingestion.collectors.tabular_collector import TabularCollector
 from src.shared.config import Config
 
 # MT5 is optional (Windows-only, requires terminal installation)
@@ -141,7 +141,7 @@ class MT5Connector:
         return pd.DataFrame(rates)
 
 
-class MT5Collector(BaseCollector):
+class MT5Collector(TabularCollector):
     """Production-grade MT5 data collector following §3.1 Bronze contract.
 
     Fetches OHLCV data for configurable FX pairs and timeframes.
