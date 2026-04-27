@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -17,28 +16,28 @@ class GDELTSignalNode:
     - Mean |IC| vs next-day |return| = 0.035–0.073, p<0.05 across all pairs
     - Conclusion: GDELT is a volatility/regime modulator
 
-    The node reads Bronze JSONL directly. No Silver intermediary exists
-    or is needed — transformation is trivial and has no second consumer.
+    The node reads Silver Parquet directly. No additional transformation
+    layer is needed before aggregation.
     """
 
     ROLLING_WINDOW = 30
     MIN_PERIODS = 10
     MIN_DAILY_ARTICLES = 3
 
-    def __init__(self, bronze_dir: Path, log_file: Path | None = None) -> None:
+    def __init__(self, silver_dir: Path, log_file: Path | None = None) -> None:
         """Initialize GDELT signal node.
 
         Args:
-            bronze_dir: Path to data/raw/news/gdelt/ containing aggregated JSONL files
+            silver_dir: Path to data/processed/sentiment/source=gdelt/
             log_file: Optional path for log output
         """
-        self.bronze_dir = bronze_dir
+        self.silver_dir = silver_dir
         self.logger = setup_logger(self.__class__.__name__, log_file)
 
     def compute(self, start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """Compute GDELT volatility signal.
 
-        Reads Bronze JSONL files, aggregates tone and article count by day,
+        Reads Silver Parquet files, aggregates tone and article count by day,
         applies rolling z-score normalization, and returns DataFrame.
 
         Args:
@@ -53,15 +52,15 @@ class GDELTSignalNode:
             ValueError: If no matching JSONL files found in date range
         """
         # Step 1: Discover JSONL files
-        jsonl_files = self._discover_files(start_date, end_date)
-        if not jsonl_files:
+        parquet_files = self._discover_files(start_date, end_date)
+        if not parquet_files:
             raise ValueError(
-                f"No JSONL files found in {self.bronze_dir} for "
+                f"No JSONL files found in {self.silver_dir} for "
                 f"{start_date.date()} to {end_date.date()}"
             )
 
         # Step 2: Load and parse records
-        records = self._load_records(jsonl_files, start_date, end_date)
+        records = self._load_records(parquet_files, start_date, end_date)
 
         # Step 3: Daily aggregation
         daily_df = self._daily_aggregation(records)
@@ -85,7 +84,7 @@ class GDELTSignalNode:
         valid_zscores = daily_df["tone_zscore"].notna().sum()
         self.logger.info(
             "Loaded %d files, %d records, %d unique days, %d with valid tone_zscore",
-            len(jsonl_files),
+            len(parquet_files),
             len(records),
             len(daily_df),
             valid_zscores,
@@ -94,22 +93,21 @@ class GDELTSignalNode:
         return daily_df.reset_index(drop=True)
 
     def _discover_files(self, start_date: datetime, end_date: datetime) -> list[Path]:
-        """Discover JSONL files that overlap the date range.
+        """Discover Silver Parquet files that overlap the date range.
 
-        Files are named gdelt_YYYYMM_raw.jsonl. Include file if its month
-        overlaps [start_date, end_date].
+        Files are stored as year=*/month=*/sentiment_cleaned.parquet. Include
+        file if its month overlaps [start_date, end_date].
         """
-        if not self.bronze_dir.exists():
+        if not self.silver_dir.exists():
             return []
 
-        files = sorted(self.bronze_dir.glob("gdelt_*_raw.jsonl"))
+        files = sorted(self.silver_dir.glob("year=*/month=*/sentiment_cleaned.parquet"))
         overlapping = []
 
         for fpath in files:
             try:
-                yyyymm_str = fpath.stem[6:12]
-                year = int(yyyymm_str[:4])
-                month = int(yyyymm_str[4:6])
+                year = int(fpath.parent.parent.name[5:])
+                month = int(fpath.parent.name[6:])
                 month_start = pd.Timestamp(year, month, 1).date()
                 # Get last day of month
                 if month == 12:
@@ -127,77 +125,24 @@ class GDELTSignalNode:
         return overlapping
 
     def _load_records(
-        self, jsonl_files: list[Path], start_date: datetime, end_date: datetime
+        self, parquet_files: list[Path], start_date: datetime, end_date: datetime
     ) -> list[dict]:
-        """Load and parse records from JSONL files."""
+        """Load records from Silver Parquet files."""
         records = []
         start_date_obj = start_date.date()
         end_date_obj = end_date.date()
 
-        for fpath in jsonl_files:
-            with fpath.open("r", encoding="utf-8") as fh:
-                for line_number, line in enumerate(fh, start=1):
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
+        for fpath in parquet_files:
+            df = pd.read_parquet(fpath, columns=["timestamp_utc", "tone"])
+            df["date"] = df["timestamp_utc"].dt.date
+            mask = (df["date"] >= start_date_obj) & (df["date"] <= end_date_obj)
+            df = df[mask].dropna(subset=["tone"])
 
-                    try:
-                        item = json.loads(stripped)
-                    except json.JSONDecodeError as exc:
-                        self.logger.warning(
-                            "Skipping malformed JSON in %s line=%d: %s",
-                            fpath,
-                            line_number,
-                            exc,
-                        )
-                        continue
-
-                    if not isinstance(item, dict):
-                        self.logger.warning(
-                            "Skipping non-object JSON in %s line=%d",
-                            fpath,
-                            line_number,
-                        )
-                        continue
-
-                    # Extract date
-                    date_obj = self._parse_date(item)
-                    if date_obj is None:
-                        continue
-
-                    # Check if within range
-                    if not (start_date_obj <= date_obj <= end_date_obj):
-                        continue
-
-                    # Extract tone
-                    tone = self._parse_tone(item)
-                    if tone is None:
-                        continue
-
-                    records.append({"date": date_obj, "tone": tone})
+            records.extend(
+                {"date": row["date"], "tone": float(row["tone"])} for _, row in df.iterrows()
+            )
 
         return records
-
-    def _parse_date(self, record: dict) -> pd.Timestamp | None:
-        """Parse date from record, trying timestamp_published then
-        timestamp_collected."""
-        for field in ["timestamp_published", "timestamp_collected"]:
-            if field in record:
-                try:
-                    return pd.to_datetime(record[field], utc=True).date()
-                except (ValueError, TypeError):
-                    continue
-        return None
-
-    def _parse_tone(self, record: dict) -> float | None:
-        """Parse tone field as float."""
-        v2tone = record.get("v2tone")
-        if v2tone is None:
-            return None
-        try:
-            return float(str(v2tone).split(",")[0])
-        except (ValueError, TypeError, IndexError):
-            return None
 
     def _daily_aggregation(self, records: list[dict]) -> pd.DataFrame:
         """Aggregate records into daily tone_mean and article_count."""

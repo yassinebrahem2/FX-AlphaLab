@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -8,19 +7,20 @@ import pytest
 from src.agents.sentiment.gdelt_node import GDELTSignalNode
 
 
-def _write_jsonl(path: Path, rows: list[dict]) -> None:
-    """Write rows as JSONL to path."""
+def _write_parquet(path: Path, rows: list[dict]) -> None:
+    """Write rows as Parquet to path."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    df = pd.DataFrame(rows)
+    df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True)
+    df["tone"] = pd.to_numeric(df["tone"], errors="coerce").astype("float64")
+    df.to_parquet(path, engine="pyarrow", index=False)
 
 
 @pytest.fixture
 def node(tmp_path: Path) -> GDELTSignalNode:
-    """Fixture providing a GDELTSignalNode with temp bronze dir."""
-    bronze_dir = tmp_path / "bronze"
-    return GDELTSignalNode(bronze_dir=bronze_dir)
+    """Fixture providing a GDELTSignalNode with temp silver dir."""
+    silver_dir = tmp_path / "silver"
+    return GDELTSignalNode(silver_dir=silver_dir)
 
 
 def test_basic_compute(node: GDELTSignalNode) -> None:
@@ -43,14 +43,14 @@ def test_basic_compute(node: GDELTSignalNode) -> None:
             tone = base_tone + (article_idx * 0.3)
             records.append(
                 {
-                    "timestamp_published": current_date.isoformat(),
-                    "v2tone": f"{tone},0,0",
+                    "timestamp_utc": current_date,
+                    "tone": tone,
                 }
             )
 
-    # Write to JSONL (single file for Jan-Mar 2025)
-    jsonl_path = node.bronze_dir / "gdelt_202501_raw.jsonl"
-    _write_jsonl(jsonl_path, records)
+    # Write to Parquet (single file for Jan-Mar 2025)
+    parquet_path = node.silver_dir / "year=2025" / "month=01" / "sentiment_cleaned.parquet"
+    _write_parquet(parquet_path, records)
 
     # Compute for full 90-day range
     end_date = start_date + timedelta(days=89)
@@ -82,14 +82,14 @@ def test_skips_zero_tone(node: GDELTSignalNode) -> None:
     start_date = datetime(2025, 2, 1, tzinfo=timezone.utc)
     records = [
         {
-            "timestamp_published": (start_date + timedelta(days=d)).isoformat(),
-            "v2tone": f"{0.0 if d == 0 else 1.0},0,0",
+            "timestamp_utc": start_date + timedelta(days=d),
+            "tone": 0.0 if d == 0 else 1.0,
         }
         for d in range(15)
     ]
 
-    jsonl_path = node.bronze_dir / "gdelt_202502_raw.jsonl"
-    _write_jsonl(jsonl_path, records)
+    parquet_path = node.silver_dir / "year=2025" / "month=02" / "sentiment_cleaned.parquet"
+    _write_parquet(parquet_path, records)
 
     end_date = start_date + timedelta(days=14)
     result = node.compute(start_date, end_date)
@@ -110,14 +110,14 @@ def test_missing_tone_skipped(node: GDELTSignalNode) -> None:
     start_date = datetime(2025, 3, 1, tzinfo=timezone.utc)
     records = [
         {
-            "timestamp_published": (start_date + timedelta(days=d)).isoformat(),
-            "v2tone": "1.0,0,0" if d % 2 == 0 else None,
+            "timestamp_utc": start_date + timedelta(days=d),
+            "tone": 1.0 if d % 2 == 0 else None,
         }
         for d in range(20)
     ]
 
-    jsonl_path = node.bronze_dir / "gdelt_202503_raw.jsonl"
-    _write_jsonl(jsonl_path, records)
+    parquet_path = node.silver_dir / "year=2025" / "month=03" / "sentiment_cleaned.parquet"
+    _write_parquet(parquet_path, records)
 
     end_date = start_date + timedelta(days=19)
     result = node.compute(start_date, end_date)
@@ -142,13 +142,13 @@ def test_low_coverage_mask(node: GDELTSignalNode) -> None:
         for _ in range(count):
             records.append(
                 {
-                    "timestamp_published": current_date.isoformat(),
-                    "v2tone": "1.5,0,0",
+                    "timestamp_utc": current_date,
+                    "tone": 1.5,
                 }
             )
 
-    jsonl_path = node.bronze_dir / "gdelt_202504_raw.jsonl"
-    _write_jsonl(jsonl_path, records)
+    parquet_path = node.silver_dir / "year=2025" / "month=04" / "sentiment_cleaned.parquet"
+    _write_parquet(parquet_path, records)
 
     end_date = start_date + timedelta(days=29)
     result = node.compute(start_date, end_date)
@@ -169,15 +169,15 @@ def test_min_periods_warmup(node: GDELTSignalNode) -> None:
     start_date = datetime(2025, 5, 1, tzinfo=timezone.utc)
     records = [
         {
-            "timestamp_published": (start_date + timedelta(days=d)).isoformat(),
-            "v2tone": "1.0,0,0",
+            "timestamp_utc": start_date + timedelta(days=d),
+            "tone": 1.0,
         }
         for d in range(3)  # 3 articles per day × 5 days
         for _ in range(3)
     ]
 
-    jsonl_path = node.bronze_dir / "gdelt_202505_raw.jsonl"
-    _write_jsonl(jsonl_path, records)
+    parquet_path = node.silver_dir / "year=2025" / "month=05" / "sentiment_cleaned.parquet"
+    _write_parquet(parquet_path, records)
 
     end_date = start_date + timedelta(days=4)
     result = node.compute(start_date, end_date)
@@ -193,8 +193,8 @@ def test_date_filtering(node: GDELTSignalNode) -> None:
     jan_start = datetime(2025, 1, 1, tzinfo=timezone.utc)
     jan_records = [
         {
-            "timestamp_published": (jan_start + timedelta(days=d)).isoformat(),
-            "v2tone": "1.0,0,0",
+            "timestamp_utc": jan_start + timedelta(days=d),
+            "tone": 1.0,
         }
         for d in range(31)
     ]
@@ -203,8 +203,8 @@ def test_date_filtering(node: GDELTSignalNode) -> None:
     feb_start = datetime(2025, 2, 1, tzinfo=timezone.utc)
     feb_records = [
         {
-            "timestamp_published": (feb_start + timedelta(days=d)).isoformat(),
-            "v2tone": "1.0,0,0",
+            "timestamp_utc": feb_start + timedelta(days=d),
+            "tone": 1.0,
         }
         for d in range(28)
     ]
@@ -213,16 +213,25 @@ def test_date_filtering(node: GDELTSignalNode) -> None:
     mar_start = datetime(2025, 3, 1, tzinfo=timezone.utc)
     mar_records = [
         {
-            "timestamp_published": (mar_start + timedelta(days=d)).isoformat(),
-            "v2tone": "1.0,0,0",
+            "timestamp_utc": mar_start + timedelta(days=d),
+            "tone": 1.0,
         }
         for d in range(31)
     ]
 
     # Write to proper month files
-    _write_jsonl(node.bronze_dir / "gdelt_202501_raw.jsonl", jan_records)
-    _write_jsonl(node.bronze_dir / "gdelt_202502_raw.jsonl", feb_records)
-    _write_jsonl(node.bronze_dir / "gdelt_202503_raw.jsonl", mar_records)
+    _write_parquet(
+        node.silver_dir / "year=2025" / "month=01" / "sentiment_cleaned.parquet",
+        jan_records,
+    )
+    _write_parquet(
+        node.silver_dir / "year=2025" / "month=02" / "sentiment_cleaned.parquet",
+        feb_records,
+    )
+    _write_parquet(
+        node.silver_dir / "year=2025" / "month=03" / "sentiment_cleaned.parquet",
+        mar_records,
+    )
 
     # Compute for Feb only
     result = node.compute(feb_start, feb_start + timedelta(days=27))
@@ -254,8 +263,8 @@ def test_calendar_gap_filled(node: GDELTSignalNode) -> None:
         current_date = start_date + timedelta(days=d)
         records.append(
             {
-                "timestamp_published": current_date.isoformat(),
-                "v2tone": "1.0,0,0",
+                "timestamp_utc": current_date,
+                "tone": 1.0,
             }
         )
 
@@ -271,8 +280,8 @@ def test_calendar_gap_filled(node: GDELTSignalNode) -> None:
             }
         )
 
-    jsonl_path = node.bronze_dir / "gdelt_202507_raw.jsonl"
-    _write_jsonl(jsonl_path, records)
+    parquet_path = node.silver_dir / "year=2025" / "month=07" / "sentiment_cleaned.parquet"
+    _write_parquet(parquet_path, records)
 
     end_date = start_date + timedelta(days=14)
     result = node.compute(start_date, end_date)
