@@ -11,6 +11,7 @@ from src.ingestion.collectors.fed_collector import FedCollector
 from src.ingestion.collectors.fed_scraper_collector import FedScraperCollector
 from src.ingestion.collectors.forexfactory_collector import ForexFactoryCalendarCollector
 from src.ingestion.collectors.fred_collector import FREDCollector
+from src.ingestion.collectors.google_trends_collector import GoogleTrendsCollector
 from src.ingestion.collectors.mt5_collector import MT5Collector
 from src.ingestion.collectors.stocktwits_collector import StocktwitsCollector
 from src.ingestion.collectors.tabular_collector import TabularCollector
@@ -27,6 +28,7 @@ __all__ = [
     "FedScraperCollector",
     "FREDCollector",
     "ForexFactoryCalendarCollector",
+    "GoogleTrendsCollector",
     "MT5Collector",
     "TabularCollector",
     "StocktwitsCollector",
