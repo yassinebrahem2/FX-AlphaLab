@@ -96,18 +96,18 @@ class GDELTSignalNode:
     def _discover_files(self, start_date: datetime, end_date: datetime) -> list[Path]:
         """Discover JSONL files that overlap the date range.
 
-        Files are named aggregated_YYYYMM.jsonl. Include file if its month
+        Files are named gdelt_YYYYMM_raw.jsonl. Include file if its month
         overlaps [start_date, end_date].
         """
         if not self.bronze_dir.exists():
             return []
 
-        files = sorted(self.bronze_dir.glob("aggregated_*.jsonl"))
+        files = sorted(self.bronze_dir.glob("gdelt_*_raw.jsonl"))
         overlapping = []
 
         for fpath in files:
             try:
-                yyyymm_str = fpath.stem.replace("aggregated_", "")
+                yyyymm_str = fpath.stem[6:12]
                 year = int(yyyymm_str[:4])
                 month = int(yyyymm_str[4:6])
                 month_start = pd.Timestamp(year, month, 1).date()
@@ -191,11 +191,12 @@ class GDELTSignalNode:
 
     def _parse_tone(self, record: dict) -> float | None:
         """Parse tone field as float."""
-        if "tone" not in record:
+        v2tone = record.get("v2tone")
+        if v2tone is None:
             return None
         try:
-            return float(record["tone"])
-        except (ValueError, TypeError):
+            return float(str(v2tone).split(",")[0])
+        except (ValueError, TypeError, IndexError):
             return None
 
     def _daily_aggregation(self, records: list[dict]) -> pd.DataFrame:

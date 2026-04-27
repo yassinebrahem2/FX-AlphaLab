@@ -44,12 +44,12 @@ def test_basic_compute(node: GDELTSignalNode) -> None:
             records.append(
                 {
                     "timestamp_published": current_date.isoformat(),
-                    "tone": tone,
+                    "v2tone": f"{tone},0,0",
                 }
             )
 
     # Write to JSONL (single file for Jan-Mar 2025)
-    jsonl_path = node.bronze_dir / "aggregated_202501.jsonl"
+    jsonl_path = node.bronze_dir / "gdelt_202501_raw.jsonl"
     _write_jsonl(jsonl_path, records)
 
     # Compute for full 90-day range
@@ -83,12 +83,12 @@ def test_skips_zero_tone(node: GDELTSignalNode) -> None:
     records = [
         {
             "timestamp_published": (start_date + timedelta(days=d)).isoformat(),
-            "tone": 0.0 if d == 0 else 1.0,
+            "v2tone": f"{0.0 if d == 0 else 1.0},0,0",
         }
         for d in range(15)
     ]
 
-    jsonl_path = node.bronze_dir / "aggregated_202502.jsonl"
+    jsonl_path = node.bronze_dir / "gdelt_202502_raw.jsonl"
     _write_jsonl(jsonl_path, records)
 
     end_date = start_date + timedelta(days=14)
@@ -111,12 +111,12 @@ def test_missing_tone_skipped(node: GDELTSignalNode) -> None:
     records = [
         {
             "timestamp_published": (start_date + timedelta(days=d)).isoformat(),
-            "tone": 1.0 if d % 2 == 0 else None,
+            "v2tone": "1.0,0,0" if d % 2 == 0 else None,
         }
         for d in range(20)
     ]
 
-    jsonl_path = node.bronze_dir / "aggregated_202503.jsonl"
+    jsonl_path = node.bronze_dir / "gdelt_202503_raw.jsonl"
     _write_jsonl(jsonl_path, records)
 
     end_date = start_date + timedelta(days=19)
@@ -143,11 +143,11 @@ def test_low_coverage_mask(node: GDELTSignalNode) -> None:
             records.append(
                 {
                     "timestamp_published": current_date.isoformat(),
-                    "tone": 1.5,
+                    "v2tone": "1.5,0,0",
                 }
             )
 
-    jsonl_path = node.bronze_dir / "aggregated_202504.jsonl"
+    jsonl_path = node.bronze_dir / "gdelt_202504_raw.jsonl"
     _write_jsonl(jsonl_path, records)
 
     end_date = start_date + timedelta(days=29)
@@ -170,13 +170,13 @@ def test_min_periods_warmup(node: GDELTSignalNode) -> None:
     records = [
         {
             "timestamp_published": (start_date + timedelta(days=d)).isoformat(),
-            "tone": 1.0,
+            "v2tone": "1.0,0,0",
         }
         for d in range(3)  # 3 articles per day × 5 days
         for _ in range(3)
     ]
 
-    jsonl_path = node.bronze_dir / "aggregated_202505.jsonl"
+    jsonl_path = node.bronze_dir / "gdelt_202505_raw.jsonl"
     _write_jsonl(jsonl_path, records)
 
     end_date = start_date + timedelta(days=4)
@@ -194,7 +194,7 @@ def test_date_filtering(node: GDELTSignalNode) -> None:
     jan_records = [
         {
             "timestamp_published": (jan_start + timedelta(days=d)).isoformat(),
-            "tone": 1.0,
+            "v2tone": "1.0,0,0",
         }
         for d in range(31)
     ]
@@ -204,7 +204,7 @@ def test_date_filtering(node: GDELTSignalNode) -> None:
     feb_records = [
         {
             "timestamp_published": (feb_start + timedelta(days=d)).isoformat(),
-            "tone": 1.0,
+            "v2tone": "1.0,0,0",
         }
         for d in range(28)
     ]
@@ -214,15 +214,15 @@ def test_date_filtering(node: GDELTSignalNode) -> None:
     mar_records = [
         {
             "timestamp_published": (mar_start + timedelta(days=d)).isoformat(),
-            "tone": 1.0,
+            "v2tone": "1.0,0,0",
         }
         for d in range(31)
     ]
 
     # Write to proper month files
-    _write_jsonl(node.bronze_dir / "aggregated_202501.jsonl", jan_records)
-    _write_jsonl(node.bronze_dir / "aggregated_202502.jsonl", feb_records)
-    _write_jsonl(node.bronze_dir / "aggregated_202503.jsonl", mar_records)
+    _write_jsonl(node.bronze_dir / "gdelt_202501_raw.jsonl", jan_records)
+    _write_jsonl(node.bronze_dir / "gdelt_202502_raw.jsonl", feb_records)
+    _write_jsonl(node.bronze_dir / "gdelt_202503_raw.jsonl", mar_records)
 
     # Compute for Feb only
     result = node.compute(feb_start, feb_start + timedelta(days=27))
@@ -255,7 +255,7 @@ def test_calendar_gap_filled(node: GDELTSignalNode) -> None:
         records.append(
             {
                 "timestamp_published": current_date.isoformat(),
-                "tone": 1.0,
+                "v2tone": "1.0,0,0",
             }
         )
 
@@ -267,11 +267,11 @@ def test_calendar_gap_filled(node: GDELTSignalNode) -> None:
         records.append(
             {
                 "timestamp_published": current_date.isoformat(),
-                "tone": 1.0,
+                "v2tone": "1.0,0,0",
             }
         )
 
-    jsonl_path = node.bronze_dir / "aggregated_202507.jsonl"
+    jsonl_path = node.bronze_dir / "gdelt_202507_raw.jsonl"
     _write_jsonl(jsonl_path, records)
 
     end_date = start_date + timedelta(days=14)

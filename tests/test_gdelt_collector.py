@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -14,76 +15,8 @@ from src.ingestion.collectors.gdelt_collector import GDELTCollector
 def test_collector_initialization(tmp_path):
     collector = GDELTCollector(output_dir=tmp_path)
 
-    expected_path = Path("data/raw/news/gdelt")
-
-    assert collector.output_dir == expected_path
+    assert collector.output_dir == tmp_path
     assert collector.output_dir.exists()
-    assert collector.output_dir.name == "gdelt"
-
-
-# -------------------------------------------------------
-# Credibility Tier
-# -------------------------------------------------------
-def test_assign_credibility_tier():
-    collector = GDELTCollector(output_dir=Path("dummy"))
-
-    assert collector._assign_credibility_tier("reuters.com") == 1
-    assert collector._assign_credibility_tier("bloomberg.com") == 1
-    assert collector._assign_credibility_tier("wsj.com") == 2
-    assert collector._assign_credibility_tier("randomblog.com") == 3
-    assert collector._assign_credibility_tier(None) == 3
-
-
-# -------------------------------------------------------
-# URL Hashing
-# -------------------------------------------------------
-def test_hash_url_consistency():
-    collector = GDELTCollector(output_dir=Path("dummy"))
-
-    url = "https://example.com/article"
-
-    hash1 = collector._hash_url(url)
-    hash2 = collector._hash_url(url)
-
-    assert hash1 == hash2
-    assert isinstance(hash1, str)
-    assert len(hash1) == 64  # SHA256 length
-
-
-# -------------------------------------------------------
-# Parse Field
-# -------------------------------------------------------
-def test_parse_field():
-    collector = GDELTCollector(output_dir=Path("dummy"))
-
-    assert collector._parse_field("A;B;C") == ["A", "B", "C"]
-    assert collector._parse_field("SingleValue") == ["SingleValue"]
-    assert collector._parse_field("") == []
-    assert collector._parse_field(None) == []
-
-
-# -------------------------------------------------------
-# In-Memory Dedup Logic
-# -------------------------------------------------------
-def test_dedup_in_memory():
-    collector = GDELTCollector(output_dir=Path("dummy"))
-
-    urls = [
-        "https://a.com",
-        "https://a.com",
-        "https://b.com",
-    ]
-
-    hashes = set()
-    unique = []
-
-    for url in urls:
-        h = collector._hash_url(url)
-        if h not in hashes:
-            hashes.add(h)
-            unique.append(url)
-
-    assert len(unique) == 2
 
 
 # -------------------------------------------------------
@@ -151,83 +84,153 @@ def test_prioritizes_by_credibility(tmp_path):
 
     collector.client = mock_client
 
-    result = collector.collect(
-        start_date=datetime(2024, 1, 1),
-        end_date=datetime(2024, 1, 1),
-    )
+    result = collector.collect(start_date=datetime(2024, 1, 1), end_date=datetime(2024, 1, 1))
 
-    docs = result["aggregated"]
+    assert result == {"aggregated": 3}
 
-    tiers = [d["metadata"]["credibility_tier"] for d in docs]
+    output_path = tmp_path / "gdelt_202401_raw.jsonl"
+    assert output_path.exists()
 
+    with output_path.open("r", encoding="utf-8") as fh:
+        docs = [json.loads(line) for line in fh if line.strip()]
+
+    def _tier_from_domain(domain: str | None) -> int:
+        lowered = (domain or "").lower()
+        if any(d in lowered for d in {"reuters.com", "bloomberg.com", "ft.com"}):
+            return 1
+        if any(d in lowered for d in {"wsj.com", "cnbc.com"}):
+            return 2
+        return 3
+
+    tiers = [_tier_from_domain(d.get("source_domain")) for d in docs]
     assert tiers == sorted(tiers)
 
 
-# -------------------------------------------------------
-# Export JSONL
-# -------------------------------------------------------
-def test_export_jsonl_success(tmp_path):
+def test_collect_writes_jsonl(tmp_path):
     collector = GDELTCollector(output_dir=tmp_path)
 
-    data = [
-        {"url": "a", "metadata": {"credibility_tier": 1}},
-        {"url": "b", "metadata": {"credibility_tier": 2}},
+    mock_client = MagicMock()
+    mock_job = MagicMock()
+    mock_result = MagicMock()
+
+    mock_rows = [
+        {
+            "DATE": "20240301090000",
+            "SourceCommonName": "reuters.com",
+            "DocumentIdentifier": "url_1",
+            "V2Tone": "-2.42,2.34,4.77",
+            "Themes": "ECON_CURRENCY;USD",
+            "Locations": "US",
+            "Organizations": "FED",
+        },
+        {
+            "DATE": "20240301100000",
+            "SourceCommonName": "wsj.com",
+            "DocumentIdentifier": "url_2",
+            "V2Tone": "1.10,0.00,0.00",
+            "Themes": "ECON_CENTRAL_BANK;EUR",
+            "Locations": "EU",
+            "Organizations": "ECB",
+        },
     ]
 
-    path = collector.export_jsonl(data)
+    mock_job.total_bytes_processed = 0
+    mock_result.to_dataframe.return_value.to_dict.return_value = mock_rows
+    mock_job.result.return_value = mock_result
+    mock_client.query.return_value = mock_job
+    collector.client = mock_client
 
-    assert path.exists()
+    result = collector.collect(start_date=datetime(2024, 3, 1), end_date=datetime(2024, 3, 1))
 
-    with open(path, encoding="utf-8") as f:
-        lines = f.readlines()
+    n_docs = result["aggregated"]
+    assert n_docs > 0
 
-    assert len(lines) == 2
+    output_path = collector.output_dir / "gdelt_202403_raw.jsonl"
+    assert output_path.exists()
+
+    with output_path.open("r", encoding="utf-8") as fh:
+        lines = [line for line in fh if line.strip()]
+    assert len(lines) == n_docs
+
+    sample = json.loads(lines[0])
+    assert isinstance(sample["v2tone"], str)
+    assert "metadata" not in sample
 
 
-def test_export_jsonl_empty_raises(tmp_path):
+def test_collect_empty_returns_zero(tmp_path):
     collector = GDELTCollector(output_dir=tmp_path)
 
-    with pytest.raises(ValueError):
-        collector.export_jsonl([])
+    mock_client = MagicMock()
+    mock_job = MagicMock()
+    mock_result = MagicMock()
+
+    mock_job.total_bytes_processed = 0
+    mock_result.to_dataframe.return_value.to_dict.return_value = []
+    mock_job.result.return_value = mock_result
+    mock_client.query.return_value = mock_job
+    collector.client = mock_client
+
+    result = collector.collect(start_date=datetime(2024, 4, 1), end_date=datetime(2024, 4, 1))
+
+    assert result == {"aggregated": 0}
+    assert not (tmp_path / "gdelt_202404_raw.jsonl").exists()
 
 
-def test_export_to_jsonl_with_data(tmp_path):
+def test_collect_skip_existing(tmp_path):
     collector = GDELTCollector(output_dir=tmp_path)
 
-    data = [
-        {"url": "a", "metadata": {"credibility_tier": 1}},
-        {"url": "b", "metadata": {"credibility_tier": 2}},
-    ]
+    existing_path = tmp_path / "gdelt_202405_raw.jsonl"
+    with existing_path.open("w", encoding="utf-8") as fh:
+        for i in range(5):
+            fh.write(json.dumps({"url": f"existing_{i}"}) + "\n")
 
-    path = collector.export_to_jsonl(data=data)
+    mock_client = MagicMock()
+    collector.client = mock_client
 
-    assert path.exists()
-
-    with open(path, encoding="utf-8") as f:
-        lines = f.readlines()
-
-    assert len(lines) == 2
-
-
-def test_export_to_jsonl_calls_collect(tmp_path):
-    collector = GDELTCollector(output_dir=tmp_path)
-
-    mock_data = [
-        {"url": "x", "metadata": {"credibility_tier": 1}},
-    ]
-
-    collector.collect = MagicMock(return_value={"aggregated": mock_data})
-
-    path = collector.export_to_jsonl(
-        start_date=datetime(2024, 1, 1),
-        end_date=datetime(2024, 1, 1),
+    result = collector.collect(
+        start_date=datetime(2024, 5, 1),
+        end_date=datetime(2024, 5, 31),
+        backfill=False,
     )
 
-    collector.collect.assert_called_once()
+    assert result == {"aggregated": 5}
+    assert mock_client.query.call_count == 0
 
-    assert path.exists()
 
-    with open(path, encoding="utf-8") as f:
-        lines = f.readlines()
+def test_collect_force_overwrite(tmp_path):
+    collector = GDELTCollector(output_dir=tmp_path)
 
-    assert len(lines) == 1
+    existing_path = tmp_path / "gdelt_202405_raw.jsonl"
+    with existing_path.open("w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"url": "stale"}) + "\n")
+
+    mock_client = MagicMock()
+    mock_job = MagicMock()
+    mock_result = MagicMock()
+
+    mock_rows = [
+        {
+            "DATE": "20240501090000",
+            "SourceCommonName": "reuters.com",
+            "DocumentIdentifier": "fresh_url",
+            "V2Tone": "-1.0,0,0",
+            "Themes": "ECON_CURRENCY;USD",
+            "Locations": "US",
+            "Organizations": "FED",
+        }
+    ]
+
+    mock_job.total_bytes_processed = 0
+    mock_result.to_dataframe.return_value.to_dict.return_value = mock_rows
+    mock_job.result.return_value = mock_result
+    mock_client.query.return_value = mock_job
+    collector.client = mock_client
+
+    result = collector.collect(
+        start_date=datetime(2024, 5, 1),
+        end_date=datetime(2024, 5, 31),
+        backfill=True,
+    )
+
+    assert result["aggregated"] > 0
+    assert mock_client.query.call_count > 0
