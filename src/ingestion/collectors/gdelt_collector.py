@@ -1,20 +1,21 @@
 import hashlib
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from google.api_core.exceptions import GoogleAPIError
 from google.cloud import bigquery
 from google.cloud.bigquery.job import QueryJob
 
-from src.ingestion.collectors.document_collector import DocumentCollector
+from src.ingestion.collectors.base_collector import BaseCollector
 
 
-class GDELTCollector(DocumentCollector):
+class GDELTCollector(BaseCollector):
     """Collector for GDELT financial news data (Bronze layer)."""
 
     SOURCE_NAME = "gdelt"
+    DEFAULT_LOOKBACK_DAYS: int = 30
 
     TIER_1 = {"reuters.com", "bloomberg.com", "ft.com"}
     TIER_2 = {"wsj.com", "cnbc.com"}
@@ -25,15 +26,10 @@ class GDELTCollector(DocumentCollector):
         log_file: Path | None = None,
         project_id: str | None = None,
     ) -> None:
-        # Hard-enforce required path
-        base_path = Path("data/raw/news/gdelt")
-
-        super().__init__(output_dir=base_path, log_file=log_file)
+        super().__init__(output_dir=output_dir, log_file=log_file)
 
         self.project_id = project_id
         self.client: bigquery.Client | None = None
-
-        self.output_dir.mkdir(parents=True, exist_ok=True)
 
     # -------------------------------------------------------
     # Internal Lazy Client Getter (supports test injection)
@@ -92,56 +88,30 @@ class GDELTCollector(DocumentCollector):
         raise RuntimeError("Unreachable: retries exhausted without raising.")
 
     # -------------------------------------------------------
-    # Helpers
-    # -------------------------------------------------------
-    def _assign_credibility_tier(self, domain: str | None) -> int:
-        domain = (domain or "").lower()
-        if any(d in domain for d in self.TIER_1):
-            return 1
-        if any(d in domain for d in self.TIER_2):
-            return 2
-        return 3
-
-    def _hash_url(self, url: str) -> str:
-        return hashlib.sha256(url.encode("utf-8")).hexdigest()
-
-    def _parse_field(self, field_value):
-        if not field_value:
-            return []
-        return [item.strip() for item in str(field_value).split(";")]
-
-    def _parse_v2tone(self, v2tone_raw) -> float:
-        """Parse GDELT V2Tone field to overall tone score.
-
-        GDELT V2Tone is a comma-separated string where the first element is
-        the overall tone score (e.g. "-2.42,2.34,4.77,...").
-        Returns 0.0 on parse failure.
-
-        Args:
-            v2tone_raw: Raw V2Tone value from BigQuery row (str, float, or None).
-
-        Returns:
-            Overall tone score as float.
-        """
-        if v2tone_raw is None:
-            return 0.0
-        if isinstance(v2tone_raw, (int, float)):
-            return float(v2tone_raw)
-        try:
-            return float(str(v2tone_raw).split(",")[0])
-        except (ValueError, IndexError):
-            return 0.0
-
-    # -------------------------------------------------------
     # Main Collection Logic (PURE)
     # -------------------------------------------------------
     def collect(
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> dict[str, list[dict]]:
+        backfill: bool = False,
+    ) -> dict[str, int]:
         if not start_date or not end_date:
             raise ValueError("start_date and end_date must be provided.")
+
+        output_path = self.output_dir / f"gdelt_{start_date.strftime('%Y%m')}_raw.jsonl"
+
+        if output_path.exists() and not backfill:
+            with output_path.open("r", encoding="utf-8") as fh:
+                n_existing = sum(1 for line in fh if line.strip())
+            self.logger.info(
+                "Skipping collection for %s to %s: %s already exists with %d rows",
+                start_date.date(),
+                end_date.date(),
+                output_path,
+                n_existing,
+            )
+            return {"aggregated": n_existing}
 
         current_day = start_date.date()
         end_day = end_date.date()
@@ -231,59 +201,56 @@ class GDELTCollector(DocumentCollector):
                     if not url:
                         continue
 
-                    url_hash = self._hash_url(url)
+                    url_hash = hashlib.sha256(str(url).encode("utf-8")).hexdigest()
                     if url_hash in seen_hashes:
                         continue
 
                     seen_hashes.add(url_hash)
 
                     source_domain = row.get("SourceCommonName")
-                    tier = self._assign_credibility_tier(source_domain)
 
                     documents.append(
                         {
                             "source": self.SOURCE_NAME,
-                            "timestamp_collected": datetime.utcnow().isoformat(),
+                            "timestamp_collected": datetime.now(timezone.utc).isoformat(),
                             "timestamp_published": timestamp_published,
                             "url": url,
                             "source_domain": source_domain,
-                            "tone": self._parse_v2tone(row.get("V2Tone")),
-                            "themes": self._parse_field(row.get("Themes")),
-                            "locations": self._parse_field(row.get("Locations")),
-                            "organizations": self._parse_field(row.get("Organizations")),
-                            "metadata": {
-                                "credibility_tier": tier,
-                                "url_hash": url_hash,
-                            },
+                            "v2tone": str(row.get("V2Tone") or ""),
+                            "themes": str(row.get("Themes") or ""),
+                            "locations": str(row.get("Locations") or ""),
+                            "organizations": str(row.get("Organizations") or ""),
                         }
                     )
 
                 current_day += timedelta(days=1)
 
-            # -------------------------------------------------
-            # PRIORITIZATION STEP (Core Requirement)
-            # -------------------------------------------------
+            if not documents:
+                return {"aggregated": 0}
+
+            def _credibility_tier(domain: str | None) -> int:
+                lowered = (domain or "").lower()
+                if any(d in lowered for d in self.TIER_1):
+                    return 1
+                if any(d in lowered for d in self.TIER_2):
+                    return 2
+                return 3
+
             documents.sort(
                 key=lambda d: (
-                    d.get("metadata", {}).get("credibility_tier", 3),
+                    _credibility_tier(d.get("source_domain")),
                     d.get("timestamp_published", ""),
-                    d.get("metadata", {}).get("url_hash", ""),
+                    hashlib.sha256(str(d.get("url", "")).encode("utf-8")).hexdigest(),
                 )
             )
 
-            # Optional observability
-            tier_counts: dict[int, int] = {}
-            for d in documents:
-                tier = d["metadata"]["credibility_tier"]
-                tier_counts[tier] = tier_counts.get(tier, 0) + 1
+            with output_path.open("w", encoding="utf-8") as fh:
+                for record in documents:
+                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-            self.logger.info(
-                "Collected %d documents. Tier distribution: %s",
-                len(documents),
-                tier_counts,
-            )
+            self.logger.info("Collected %d documents -> %s", len(documents), output_path)
 
-            return {"aggregated": documents}
+            return {"aggregated": len(documents)}
 
         except GoogleAPIError as e:
             self.logger.error("GDELT query failed: %s", e)
@@ -300,66 +267,3 @@ class GDELTCollector(DocumentCollector):
             return True
         except GoogleAPIError:
             return False
-
-    # -------------------------------------------------------
-    # Export JSONL (GDELT-specific override)
-    # -------------------------------------------------------
-    def export_jsonl(
-        self,
-        documents: list[dict],
-        document_type: str = "aggregated",
-        collection_date: datetime | None = None,
-    ) -> Path:
-        """
-        Export aggregated GDELT documents to JSONL.
-
-        Args:
-            documents: List of document dictionaries to export.
-            document_type: Document type (default: "aggregated", parameter required for supertype compatibility).
-            collection_date: Date for filename (default: current date).
-
-        File naming:
-            aggregated_YYYYMMDD.jsonl
-        """
-
-        if not documents:
-            raise ValueError("Cannot export empty data list.")
-
-        date_str = (collection_date or datetime.utcnow()).strftime("%Y%m%d")
-
-        path = self.output_dir / f"aggregated_{date_str}.jsonl"
-
-        with open(path, "w", encoding="utf-8") as f:
-            for record in documents:
-                json.dump(record, f, ensure_ascii=False)
-                f.write("\n")
-
-        self.logger.info("Exported %d records to %s", len(documents), path)
-
-        return path
-
-    # -------------------------------------------------------
-    # Convenience Export Method
-    # -------------------------------------------------------
-    def export_to_jsonl(
-        self,
-        data: list[dict] | None = None,
-        start_date: datetime | None = None,
-        end_date: datetime | None = None,
-    ) -> Path:
-        """
-        Convenience method to collect and export GDELT aggregated data.
-
-        If data is provided:
-            Export directly.
-
-        If data is None:
-            Collect using provided date range, then export.
-        """
-
-        if data is None:
-            if not start_date or not end_date:
-                raise ValueError("Must provide start_date and end_date if data is None.")
-            result = self.collect(start_date=start_date, end_date=end_date)
-            data = result["aggregated"]
-        return self.export_jsonl(data)

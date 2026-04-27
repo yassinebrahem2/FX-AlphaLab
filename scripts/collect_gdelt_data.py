@@ -5,7 +5,7 @@ exports one Bronze JSONL file per month, and optionally runs the
 Silver preprocessor when all months are done.
 
 Output naming:
-    data/raw/news/gdelt/aggregated_YYYYMM.jsonl   (one per month)
+    data/raw/news/gdelt/gdelt_YYYYMM_raw.jsonl   (one per month)
 
 Resume behaviour:
     Already-exported months are skipped automatically.
@@ -18,9 +18,6 @@ Usage:
 
     # Custom range
     python scripts/collect_gdelt_data.py --start 2023-01-01 --end 2023-06-30
-
-    # Collect + preprocess to Silver in one shot
-    python scripts/collect_gdelt_data.py --preprocess
 
     # Dry-run: show which months would be collected, no BigQuery calls
     python scripts/collect_gdelt_data.py --dry-run
@@ -51,7 +48,6 @@ DEFAULT_START = "2021-01-01"
 DEFAULT_END = "2025-12-31"
 
 OUTPUT_DIR = Path("data/raw/news/gdelt")
-SENTIMENT_DIR = Path("data/processed/sentiment")
 MANIFEST_PATH = OUTPUT_DIR / "collection_manifest.json"
 LOG_PATH = Path("logs/collectors/gdelt_historical.log")
 
@@ -107,7 +103,7 @@ def _month_key(dt: datetime) -> str:
 
 def _jsonl_path(dt: datetime) -> Path:
     """Return Bronze JSONL path for the month containing dt."""
-    return OUTPUT_DIR / f"aggregated_{_month_key(dt)}.jsonl"
+    return OUTPUT_DIR / f"gdelt_{_month_key(dt)}_raw.jsonl"
 
 
 def _load_manifest() -> dict:
@@ -147,56 +143,42 @@ def collect_month(
         force: If True, overwrite existing JSONL file.
 
     Returns:
-        Result dict with keys: status, path, n_docs, tier_counts, error.
+        Result dict with keys: status, path, n_docs, error.
     """
     key = _month_key(chunk_start)
     path = _jsonl_path(chunk_start)
 
-    if path.exists() and not force:
-        logger.info("[%s] Already exported -> %s  (skip, use --force to re-collect)", key, path)
-        # Count existing rows for manifest accuracy
-        existing = sum(1 for _ in open(path, encoding="utf-8") if _.strip())
-        return {"status": "skipped", "path": str(path), "n_docs": existing, "tier_counts": {}}
+    existed_before = path.exists()
 
     logger.info("[%s] Collecting %s to %s", key, chunk_start.date(), chunk_end.date())
 
     try:
-        result = collector.collect(start_date=chunk_start, end_date=chunk_end)
-        documents = result["aggregated"]
+        result = collector.collect(start_date=chunk_start, end_date=chunk_end, backfill=force)
+        n_docs = result["aggregated"]
     except Exception as exc:
         logger.error("[%s] Collection failed: %s", key, exc)
         return {
             "status": "failed",
             "path": str(path),
             "n_docs": 0,
-            "tier_counts": {},
             "error": str(exc),
         }
 
-    if not documents:
+    if n_docs == 0:
         logger.warning("[%s] Collected 0 documents — no JSONL written", key)
-        return {"status": "empty", "path": str(path), "n_docs": 0, "tier_counts": {}}
+        return {"status": "empty", "path": str(path), "n_docs": 0}
 
-    # Write JSONL (one record per line)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        for doc in documents:
-            json.dump(doc, f, ensure_ascii=False)
-            f.write("\n")
-
-    tier_counts = {}
-    for doc in documents:
-        t = doc.get("metadata", {}).get("credibility_tier", 3)
-        tier_counts[str(t)] = tier_counts.get(str(t), 0) + 1
+    if existed_before and not force:
+        logger.info("[%s] Already exported -> %s  (collector skip)", key, path)
+        return {"status": "skipped", "path": str(path), "n_docs": n_docs}
 
     logger.info(
-        "[%s] Exported %d docs -> %s  (tiers: %s)",
+        "[%s] Exported %d docs -> %s",
         key,
-        len(documents),
+        n_docs,
         path,
-        tier_counts,
     )
-    return {"status": "ok", "path": str(path), "n_docs": len(documents), "tier_counts": tier_counts}
+    return {"status": "ok", "path": str(path), "n_docs": n_docs}
 
 
 # ---------------------------------------------------------------------------
@@ -219,11 +201,6 @@ def parse_args() -> argparse.Namespace:
         "--end",
         default=DEFAULT_END,
         help=f"End date YYYY-MM-DD (default: {DEFAULT_END})",
-    )
-    parser.add_argument(
-        "--preprocess",
-        action="store_true",
-        help="Run GDELTPreprocessor on all Bronze data after collection finishes",
     )
     parser.add_argument(
         "--force",
@@ -336,7 +313,6 @@ def main() -> None:
             completed += 1
             manifest["completed"][key] = {
                 "n_docs": result["n_docs"],
-                "tier_counts": result["tier_counts"],
                 "path": result["path"],
                 "collected_at": datetime.utcnow().isoformat(),
             }
@@ -348,7 +324,6 @@ def main() -> None:
             skipped += 1
             manifest["completed"][key] = {
                 "n_docs": 0,
-                "tier_counts": {},
                 "path": result["path"],
                 "collected_at": datetime.utcnow().isoformat(),
                 "note": "empty result from BigQuery",
@@ -377,37 +352,6 @@ def main() -> None:
 
     if failed:
         logger.warning("Failed months: %s", sorted(manifest["failed"].keys()))
-
-    # ------------------------------------------------------------------
-    # Optional Silver preprocessing
-    # ------------------------------------------------------------------
-    if args.preprocess:
-        logger.info("=" * 60)
-        logger.info("Running GDELTPreprocessor on all Bronze data...")
-        try:
-            from src.ingestion.preprocessors.gdelt_preprocessor import GDELTPreprocessor
-
-            pp = GDELTPreprocessor(
-                input_dir=OUTPUT_DIR,
-                output_dir=SENTIMENT_DIR,
-                log_file=LOG_PATH,
-            )
-            df = pp.preprocess()
-            paths = pp.export_partitioned(df)
-
-            logger.info("Silver preprocessing complete")
-            logger.info("  Total Silver rows : %d", len(df))
-            logger.info(
-                "  Label distribution: %s",
-                df["sentiment_label"].value_counts().to_dict(),
-            )
-            logger.info("  Partitions written: %d", len(paths))
-            for partition_key, path in sorted(paths.items()):
-                logger.info("    %s  ->  %s", partition_key, path)
-
-        except Exception as exc:
-            logger.error("Silver preprocessing failed: %s", exc)
-            sys.exit(1)
 
     sys.exit(1 if failed else 0)
 
