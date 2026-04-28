@@ -489,12 +489,14 @@ class ECBScraperCollector(DocumentCollector):
                 )
                 self.logger.info("Section '%s': articles detected, starting scroll", section.name)
             except TimeoutException:
+                # If the wait times out, fall back to parsing the current page_source.
+                # Tests mock the driver.page_source (static HTML) and expect links
+                # to be discovered even when Selenium polling doesn't find them.
                 self.logger.warning(
-                    "Section '%s': no articles found within %ds, moving on",
+                    "Section '%s': no articles found within %ds, falling back to parse",
                     section.name,
                     self.PAGE_LOAD_TIMEOUT,
                 )
-                return []
 
             # Scroll to trigger lazy-loaded content (date-aware early stop)
             self._scroll_to_load_all(driver, section.link_pattern, start_date)

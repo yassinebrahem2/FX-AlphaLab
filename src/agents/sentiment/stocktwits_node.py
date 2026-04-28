@@ -14,7 +14,6 @@ class StocktwitsSignalNode:
     HALF_LIFE_DAYS = 5
     DECAY_WINDOW_DAYS = 14
     PAIR_LIST = ["EURUSD", "GBPUSD", "USDCHF", "USDJPY"]
-    THRESHOLD = 0.58
 
     def __init__(self, checkpoint_path: Path, log_file: Path | None = None) -> None:
         self.checkpoint_path = checkpoint_path
