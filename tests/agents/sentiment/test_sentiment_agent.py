@@ -102,7 +102,7 @@ def test_get_signal_returns_sentiment_signal_type(agent):
 def test_usdjpy_active_when_signal_present(agent):
     sig = agent.get_signal(datetime(2024, 6, 15, tzinfo=timezone.utc))
     assert sig.usdjpy_stocktwits_active is True
-    assert isinstance(sig.usdjpy_stocktwits_net_sentiment, float)
+    assert isinstance(sig.usdjpy_stocktwits_vol_signal, float)
 
 
 def test_usdjpy_null_when_no_signal(mock_reddit_node, mock_gdelt_node, mock_gtrends_node):
@@ -135,7 +135,7 @@ def test_usdjpy_null_when_no_signal(mock_reddit_node, mock_gdelt_node, mock_gtre
 
     sig = agent_local.get_signal(datetime(2024, 6, 15, tzinfo=timezone.utc))
     assert sig.usdjpy_stocktwits_active is False
-    assert sig.usdjpy_stocktwits_net_sentiment is None
+    assert sig.usdjpy_stocktwits_vol_signal is None
 
 
 def test_composite_stress_flag_fires_on_two_signals(agent):
@@ -211,7 +211,7 @@ def test_compute_batch_returns_dataframe(agent):
     )
     expected_cols = [
         "timestamp_utc",
-        "usdjpy_stocktwits_net_sentiment",
+        "usdjpy_stocktwits_vol_signal",
         "usdjpy_stocktwits_active",
         "gdelt_tone_zscore",
         "gdelt_attention_zscore",

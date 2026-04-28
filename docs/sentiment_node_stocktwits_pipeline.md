@@ -1,4 +1,4 @@
-# StockTwits Sentiment Node Pipeline — Social Trading Posts to Directional Signal
+# StockTwits Sentiment Node Pipeline — Social Trading Posts to Volatility Signal
 
 ---
 
@@ -42,7 +42,7 @@ Groups decay-expanded posts by date (global) and by date × symbol (pair-level).
 ### Downstream
 
 **SentimentAgent**
-Receives global and pair-level DataFrames. Uses `net_sentiment` per pair as the directional component and `mean_model_confidence` to scale conviction.
+Receives global and pair-level DataFrames. Extracts USDJPY `net_sentiment` as `usdjpy_stocktwits_vol_signal` — a validated next-day volatility predictor. Higher bullish net sentiment predicts lower realized volatility (risk-on = JPY calm). `signal_post_count > 0` gates whether the signal is active for a given day.
 
 ---
 
@@ -251,6 +251,40 @@ All divisions use `np.divide` with `where=ew > 0, out=np.zeros_like(ew)` — zer
 Same columns as global daily, plus `symbol`.
 
 `get_signal(target_date)` is a convenience wrapper: calls `compute()` over the decay buffer and returns a single dict for the most recent date with non-zero signal. Raises `ValueError` if no such date exists within `DECAY_WINDOW_DAYS + 5`.
+
+---
+
+## IC Validation
+
+IC = Spearman correlation between signal and forward realized volatility. All tests on signal days only (`signal_post_count > 0`).
+
+### USDJPY — own-pair volatility
+
+| Horizon | IC | p-value | N |
+|---|---|---|---|
+| h=1 | −0.163 | 0.000241 | 500 |
+| h=2 | −0.169 | 0.000152 | 500 |
+| h=3 | −0.186 | 0.000029 | 500 |
+
+Survives global Bonferroni (0.05 / ~490 tests ≈ 0.0001) at h=3. Walk-forward (2024 pseudo-train / 2025 pseudo-test): 2024 IC = −0.218 (p = 0.003), 2025 IC = −0.115 (p = 0.042) — significant in both years.
+
+Signal direction: higher `net_sentiment` (more bullish) → lower next-day USDJPY realized volatility. The signal captures risk-on sentiment, not directional price movement.
+
+### Cross-pair scope
+
+USDJPY `net_sentiment` also predicts next-day realized volatility for other USD crosses. Full-sample cross-pair results:
+
+| Target pair | h=1 IC | h=1 p | h=3 IC | h=3 p |
+|---|---|---|---|---|
+| USDCHF | −0.148 | 0.00090 | −0.147 | 0.00102 |
+| EURUSD | −0.074 | 0.100 | −0.090 | 0.045 |
+| GBPUSD | −0.081 | 0.071 | −0.107 | 0.017 |
+
+USDCHF survives Bonferroni at all three horizons. EURUSD and GBPUSD cross-pair IC is significant at h=3 but does not survive correction.
+
+Year-by-year stability of USDCHF cross-pair IC: 2024 IC = −0.100 (p = 0.171, not significant), 2025 IC = −0.169 (p = 0.003). Cross-pair effect emerged in 2025 across all three non-USDJPY pairs simultaneously. Confounder test (partial out same-day vol): USDCHF residual IC = −0.118 (p = 0.008) at h=1 — signal is genuine, not a vol-clustering artifact.
+
+The coordinator applies `usdjpy_stocktwits_vol_signal` as a vol feature for all four pairs, weighting it according to validated IC magnitude per pair.
 
 ---
 

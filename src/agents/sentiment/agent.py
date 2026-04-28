@@ -20,7 +20,7 @@ class SentimentSignal:
 
     timestamp_utc: pd.Timestamp
 
-    usdjpy_stocktwits_net_sentiment: float | None
+    usdjpy_stocktwits_vol_signal: float | None
     usdjpy_stocktwits_active: bool
 
     gdelt_tone_zscore: float | None
@@ -104,11 +104,11 @@ class SentimentAgent:
                     return st_pair_net.get(key, np.nan)
                 return pd.NA
 
-            grid["usdjpy_stocktwits_net_sentiment"] = grid["timestamp_utc"].map(_net_map)
+            grid["usdjpy_stocktwits_vol_signal"] = grid["timestamp_utc"].map(_net_map)
         except Exception as exc:  # pragma: no cover - defensive
             self.logger.exception("Stocktwits node failed: %s", exc)
             grid["usdjpy_stocktwits_active"] = False
-            grid["usdjpy_stocktwits_net_sentiment"] = pd.NA
+            grid["usdjpy_stocktwits_vol_signal"] = pd.NA
 
         # GDELT
         try:
@@ -227,7 +227,9 @@ class SentimentAgent:
         # Context (optional)
         if include_context:
             try:
-                reddit_global, reddit_pair = self.reddit_node.compute(start_date, end_date)
+                reddit_global, reddit_pair = self.reddit_node.compute(
+                    start_date - timedelta(days=self.REDDIT_ACTIVITY_ROLLING_WINDOW), end_date
+                )
 
                 # compute reddit rolling zscore for global activity
                 rg = reddit_global.copy()
@@ -311,7 +313,7 @@ class SentimentAgent:
         # final column ordering
         cols = [
             "timestamp_utc",
-            "usdjpy_stocktwits_net_sentiment",
+            "usdjpy_stocktwits_vol_signal",
             "usdjpy_stocktwits_active",
             "gdelt_tone_zscore",
             "gdelt_attention_zscore",
@@ -360,7 +362,7 @@ class SentimentAgent:
         # Verify at least one upstream node has data by checking if row has any non-NaN signal values.
         # No need to re-invoke compute_batch(); already executed above.
         signal_cols = [
-            "usdjpy_stocktwits_net_sentiment",
+            "usdjpy_stocktwits_vol_signal",
             "gdelt_tone_zscore",
             "gdelt_attention_zscore",
             "macro_attention_zscore",
@@ -371,7 +373,7 @@ class SentimentAgent:
 
         return SentimentSignal(
             timestamp_utc=pd.Timestamp(r["timestamp_utc"]).tz_convert("UTC"),
-            usdjpy_stocktwits_net_sentiment=_nan_to_none(r["usdjpy_stocktwits_net_sentiment"]),
+            usdjpy_stocktwits_vol_signal=_nan_to_none(r["usdjpy_stocktwits_vol_signal"]),
             usdjpy_stocktwits_active=bool(r["usdjpy_stocktwits_active"]),
             gdelt_tone_zscore=_nan_to_none(r["gdelt_tone_zscore"]),
             gdelt_attention_zscore=_nan_to_none(r["gdelt_attention_zscore"]),
