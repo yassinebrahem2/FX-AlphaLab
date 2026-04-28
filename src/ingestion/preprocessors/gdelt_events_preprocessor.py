@@ -9,44 +9,36 @@ import pyarrow.parquet as pq
 from src.shared.utils import setup_logger
 
 
-class GDELTPreprocessor:
-    """Bronze to Silver preprocessor for GDELT news data."""
+class GDELTEventsPreprocessor:
+    """Bronze to Silver preprocessor for GDELT Events data."""
 
     SILVER_COLUMNS = [
-        "timestamp_utc",
-        "url",
-        "source_domain",
-        "source",
-        "tone",
-        "positive_score",
-        "negative_score",
-        "polarity",
-        "activity_ref_density",
-        "self_group_ref_density",
-        "word_count",
-        "themes",
-        "locations",
-        "organizations",
+        "event_date",
+        "event_id",
+        "actor1_name",
+        "actor1_country_code",
+        "actor1_type1_code",
+        "actor2_name",
+        "actor2_country_code",
+        "actor2_type1_code",
+        "event_code",
+        "event_base_code",
+        "event_root_code",
+        "quad_class",
+        "goldstein_scale",
+        "num_mentions",
+        "num_sources",
+        "num_articles",
+        "avg_tone",
+        "actor1_geo_country_code",
+        "actor2_geo_country_code",
+        "action_geo_country_code",
+        "action_geo_full_name",
+        "source_url",
     ]
 
-    FLOAT_COLUMNS = [
-        "tone",
-        "positive_score",
-        "negative_score",
-        "polarity",
-        "activity_ref_density",
-        "self_group_ref_density",
-    ]
-
-    V2TONE_FIELDS = [
-        "tone",
-        "positive_score",
-        "negative_score",
-        "polarity",
-        "activity_ref_density",
-        "self_group_ref_density",
-        "word_count",
-    ]
+    INT_COLUMNS = ["quad_class", "num_mentions", "num_sources", "num_articles"]
+    FLOAT_COLUMNS = ["goldstein_scale", "avg_tone"]
 
     def __init__(
         self,
@@ -66,7 +58,7 @@ class GDELTPreprocessor:
     ) -> dict[str, int]:
         results: dict[str, int] = {}
 
-        for chunk_start, chunk_end in self._monthly_chunks(start_date, end_date):
+        for chunk_start, _ in self._monthly_chunks(start_date, end_date):
             month_key = chunk_start.strftime("%Y%m")
             silver_path = self._silver_path(chunk_start)
 
@@ -74,7 +66,7 @@ class GDELTPreprocessor:
                 results[month_key] = self._count_existing_rows(silver_path)
                 continue
 
-            bronze_path = self.input_dir / f"gdelt_{month_key}_raw.jsonl"
+            bronze_path = self.input_dir / f"gdelt_events_{month_key}_raw.jsonl"
             if not bronze_path.exists():
                 results[month_key] = 0
                 continue
@@ -123,82 +115,46 @@ class GDELTPreprocessor:
         return results
 
     def health_check(self) -> bool:
-        if self.input_dir.exists() and any(self.input_dir.glob("gdelt_*_raw.jsonl")):
+        if self.input_dir.exists() and any(self.input_dir.glob("gdelt_events_*_raw.jsonl")):
             return True
 
         self.logger.warning("GDELT health check failed: no Bronze files in %s", self.input_dir)
         return False
 
     def _parse_record(self, raw: dict) -> dict | None:
-        url = raw.get("url")
-        if not url:
+        event_id = self._clean_str(raw.get("event_id"))
+        if not event_id:
             return None
 
-        timestamp_raw = raw.get("timestamp_published")
-        if not timestamp_raw:
+        event_date_raw = raw.get("event_date")
+        event_date = pd.to_datetime(event_date_raw, utc=True, errors="coerce")
+        if pd.isna(event_date):
             return None
-
-        try:
-            timestamp_utc = pd.to_datetime(timestamp_raw, utc=True)
-        except (ValueError, TypeError):
-            return None
-
-        if pd.isna(timestamp_utc):
-            return None
-
-        tone_fields = self._parse_v2tone(raw.get("v2tone", ""))
 
         return {
-            "timestamp_utc": timestamp_utc,
-            "url": str(url),
-            "source_domain": raw.get("source_domain"),
-            "source": raw.get("source") or "gdelt",
-            "tone": tone_fields["tone"],
-            "positive_score": tone_fields["positive_score"],
-            "negative_score": tone_fields["negative_score"],
-            "polarity": tone_fields["polarity"],
-            "activity_ref_density": tone_fields["activity_ref_density"],
-            "self_group_ref_density": tone_fields["self_group_ref_density"],
-            "word_count": tone_fields["word_count"],
-            "themes": self._split_semicolon(raw.get("themes")),
-            "locations": self._split_semicolon(raw.get("locations")),
-            "organizations": self._split_semicolon(raw.get("organizations")),
+            "event_date": event_date,
+            "event_id": event_id,
+            "actor1_name": self._clean_str(raw.get("actor1_name")),
+            "actor1_country_code": self._clean_str(raw.get("actor1_country_code")),
+            "actor1_type1_code": self._clean_str(raw.get("actor1_type1_code")),
+            "actor2_name": self._clean_str(raw.get("actor2_name")),
+            "actor2_country_code": self._clean_str(raw.get("actor2_country_code")),
+            "actor2_type1_code": self._clean_str(raw.get("actor2_type1_code")),
+            "event_code": self._clean_str(raw.get("event_code")),
+            "event_base_code": self._clean_str(raw.get("event_base_code")),
+            "event_root_code": self._clean_str(raw.get("event_root_code")),
+            "quad_class": raw.get("quad_class"),
+            "goldstein_scale": raw.get("goldstein_scale"),
+            "num_mentions": raw.get("num_mentions"),
+            "num_sources": raw.get("num_sources"),
+            "num_articles": raw.get("num_articles"),
+            "avg_tone": raw.get("avg_tone"),
+            "actor1_geo_country_code": self._clean_str(raw.get("actor1_geo_country_code")),
+            "actor2_geo_country_code": self._clean_str(raw.get("actor2_geo_country_code")),
+            "action_geo_country_code": self._clean_str(raw.get("action_geo_country_code")),
+            "action_geo_full_name": self._clean_str(raw.get("action_geo_full_name")),
+            "source_url": self._clean_str(raw.get("source_url")),
         }
-
-    def _parse_v2tone(self, raw: str) -> dict[str, float | int | None]:
-        values = {field: None for field in self.V2TONE_FIELDS}
-
-        if raw is None:
-            return values
-
-        text = str(raw).strip()
-        if not text:
-            return values
-
-        parts = [part.strip() for part in text.split(",")]
-        for index, field in enumerate(self.V2TONE_FIELDS):
-            if index >= len(parts):
-                break
-
-            token = parts[index]
-            if not token:
-                continue
-
-            try:
-                if field == "word_count":
-                    values[field] = int(float(token))
-                else:
-                    values[field] = float(token)
-            except (TypeError, ValueError):
-                values[field] = None
-
-        return values
-
-    def _split_semicolon(self, raw: str | None) -> list[str]:
-        if raw is None:
-            return []
-
-        return [token.strip() for token in str(raw).split(";") if token.strip()]
 
     def _monthly_chunks(self, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
         chunks: list[tuple[datetime, datetime]] = []
@@ -225,7 +181,7 @@ class GDELTPreprocessor:
             self.output_dir
             / f"year={dt.year}"
             / f"month={dt.month:02d}"
-            / "sentiment_cleaned.parquet"
+            / "gdelt_events_cleaned.parquet"
         )
 
     def _count_existing_rows(self, path: Path) -> int:
@@ -233,11 +189,46 @@ class GDELTPreprocessor:
 
     def _build_frame(self, records: list[dict]) -> pd.DataFrame:
         df = pd.DataFrame(records, columns=self.SILVER_COLUMNS)
-        df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True)
+        df["event_date"] = pd.to_datetime(df["event_date"], utc=True)
+
+        for column in [
+            "event_id",
+            "actor1_name",
+            "actor1_country_code",
+            "actor1_type1_code",
+            "actor2_name",
+            "actor2_country_code",
+            "actor2_type1_code",
+            "event_code",
+            "event_base_code",
+            "event_root_code",
+            "actor1_geo_country_code",
+            "actor2_geo_country_code",
+            "action_geo_country_code",
+            "action_geo_full_name",
+            "source_url",
+        ]:
+            df[column] = df[column].astype("string")
+
+        for column in self.INT_COLUMNS:
+            df[column] = pd.array(pd.to_numeric(df[column], errors="coerce"), dtype="Int64")
 
         for column in self.FLOAT_COLUMNS:
             df[column] = pd.to_numeric(df[column], errors="coerce").astype("float64")
 
-        df["word_count"] = pd.array(pd.to_numeric(df["word_count"], errors="coerce"), dtype="Int64")
+        df = df.dropna(subset=["event_date"])
         df = df.reindex(columns=self.SILVER_COLUMNS)
         return df
+
+    def _clean_str(self, value: object) -> str | None:
+        if value is None:
+            return None
+
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+
+        text = str(value).strip()
+        return text or None

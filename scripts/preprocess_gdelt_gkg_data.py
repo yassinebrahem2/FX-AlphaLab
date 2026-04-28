@@ -1,9 +1,3 @@
-"""GDELT Bronze to Silver preprocessing script.
-
-Processes monthly Bronze JSONL files from data/raw/news/gdelt and writes
-Silver Parquet files under data/processed/sentiment/source=gdelt.
-"""
-
 import argparse
 import json
 import sys
@@ -11,10 +5,9 @@ from calendar import monthrange
 from datetime import datetime
 from pathlib import Path
 
-# Ensure project root is on path when run directly
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.ingestion.preprocessors.gdelt_preprocessor import GDELTPreprocessor
+from src.ingestion.preprocessors.gdelt_gkg_preprocessor import GDELTGKGPreprocessor
 from src.shared.utils import setup_logger
 
 DEFAULT_START = "2021-01-01"
@@ -23,7 +16,7 @@ DEFAULT_END = "2025-12-31"
 INPUT_DIR = Path("data/raw/news/gdelt")
 OUTPUT_DIR = Path("data/processed/sentiment/source=gdelt")
 MANIFEST_PATH = OUTPUT_DIR / "preprocess_manifest.json"
-LOG_PATH = Path("logs/preprocessors/gdelt_preprocess.log")
+LOG_PATH = Path("logs/preprocessors/gdelt_gkg_preprocess.log")
 
 
 def _monthly_chunks(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
@@ -70,23 +63,17 @@ def _save_manifest(manifest: dict) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Preprocess GDELT Bronze data into Silver Parquet",
+        description="Preprocess GDELT GKG Bronze data into Silver Parquet",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--start",
-        default=DEFAULT_START,
-        help=f"Start date YYYY-MM-DD (default: {DEFAULT_START})",
+        "--start", default=DEFAULT_START, help=f"Start date YYYY-MM-DD (default: {DEFAULT_START})"
     )
     parser.add_argument(
-        "--end",
-        default=DEFAULT_END,
-        help=f"End date YYYY-MM-DD (default: {DEFAULT_END})",
+        "--end", default=DEFAULT_END, help=f"End date YYYY-MM-DD (default: {DEFAULT_END})"
     )
     parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Reprocess months that already have a Silver file",
+        "--force", action="store_true", help="Reprocess months that already have a Silver file"
     )
     parser.add_argument(
         "--dry-run",
@@ -100,7 +87,7 @@ def main() -> None:
     args = parse_args()
 
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    logger = setup_logger("gdelt_preprocess", LOG_PATH)
+    logger = setup_logger("gdelt_gkg_preprocess", LOG_PATH)
 
     try:
         start_dt = datetime.strptime(args.start, "%Y-%m-%d")
@@ -126,15 +113,12 @@ def main() -> None:
             bronze_path = INPUT_DIR / f"gdelt_{_month_key(chunk_start)}_raw.jsonl"
             silver_path = _silver_path(chunk_start)
             print(
-                f"{_month_key(chunk_start):<10}  {str(bronze_path):<45}  "
-                f"{'YES' if silver_path.exists() else 'no'}"
+                f"{_month_key(chunk_start):<10}  {str(bronze_path):<45}  {'YES' if silver_path.exists() else 'no'}"
             )
         return
 
-    preprocessor = GDELTPreprocessor(
-        input_dir=INPUT_DIR,
-        output_dir=OUTPUT_DIR,
-        log_file=LOG_PATH,
+    preprocessor = GDELTGKGPreprocessor(
+        input_dir=INPUT_DIR, output_dir=OUTPUT_DIR, log_file=LOG_PATH
     )
 
     manifest = _load_manifest()
