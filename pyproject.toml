@@ -34,6 +34,7 @@ dependencies = [
     "sqlalchemy",
     "pytz",
     "pyarrow",
+    "pytrends",
     "db-dtypes",
     "lxml",
     "selenium>=4.0",
