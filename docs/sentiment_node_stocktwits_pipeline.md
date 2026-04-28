@@ -88,7 +88,7 @@ The StockTwits pipeline transforms raw FX social trading posts into daily per-pa
 **What happens:** `StocktwitsCollector` queries the stream endpoint per symbol, paginates using cursor-based logic, deduplicates within each run, and writes raw posts to disk exactly as received.
 
 **Output:** JSONL files at `data/raw/news/stocktwits/`
-- Naming: `{symbol}_{YYYYMMDD}.jsonl`
+- Naming: `{symbol}_raw.jsonl`
 
 **Bronze record key fields:**
 
