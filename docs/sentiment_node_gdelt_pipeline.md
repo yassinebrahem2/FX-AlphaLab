@@ -173,6 +173,12 @@ One row per calendar day. Passed to SentimentAgent as a DataFrame.
 
 ---
 
+## Known Validation Debt
+
+Walk-forward validation (train < 2024-01-01, test ≥ 2024-01-01) has not been run for `tone_zscore` or `attention_zscore`. Current IC figures are full-sample (in-sample only). These signals ship as Tier B (regime overlay) pending out-of-sample confirmation.
+
+---
+
 ## Pipeline Summary
 
 ```
