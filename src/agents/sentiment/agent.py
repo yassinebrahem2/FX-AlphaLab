@@ -122,7 +122,13 @@ class SentimentAgent:
                 if not pd.api.types.is_datetime64_any_dtype(gdelt_df["date"])
                 else gdelt_df["date"]
             )
-            gdelt_df["date"] = gdelt_df["date"].dt.tz_localize(None).dt.normalize()
+            # Convert to UTC-naive date (handle both aware and naive)
+            if isinstance(gdelt_df["date"].dtype, pd.DatetimeTZDtype):
+                gdelt_df["date"] = (
+                    gdelt_df["date"].dt.tz_convert("UTC").dt.tz_localize(None).dt.normalize()
+                )
+            else:
+                gdelt_df["date"] = gdelt_df["date"].dt.normalize()
             gdelt_tone_series = (
                 gdelt_df.set_index("date")["tone_zscore"]
                 if "tone_zscore" in gdelt_df.columns
@@ -177,7 +183,13 @@ class SentimentAgent:
                 if not pd.api.types.is_datetime64_any_dtype(gtrends_df["date"])
                 else gtrends_df["date"]
             )
-            gtrends_df["date"] = gtrends_df["date"].dt.tz_localize(None).dt.normalize()
+            # Convert to UTC-naive date (handle both aware and naive)
+            if isinstance(gtrends_df["date"].dtype, pd.DatetimeTZDtype):
+                gtrends_df["date"] = (
+                    gtrends_df["date"].dt.tz_convert("UTC").dt.tz_localize(None).dt.normalize()
+                )
+            else:
+                gtrends_df["date"] = gtrends_df["date"].dt.normalize()
             macro_series = (
                 gtrends_df.set_index("date")["macro_attention_zscore"]
                 if "macro_attention_zscore" in gtrends_df.columns
@@ -345,62 +357,16 @@ class SentimentAgent:
                 pass
             return float(x)
 
-        # verify at least one upstream node has data for the target date
-        has_source = False
-        try:
-            _, st_pair = self.stocktwits_node.compute(target_date, target_date)
-            if not st_pair.empty:
-                st_pair = st_pair.copy()
-                st_pair["date"] = pd.to_datetime(st_pair["date"]).dt.normalize()
-                if not st_pair.loc[st_pair["date"] == pd.Timestamp(target_date).normalize()].empty:
-                    has_source = True
-        except Exception:
-            pass
-
-        try:
-            gdelt_df = self.gdelt_node.compute(
-                target_date - timedelta(days=self.GDELT_WARMUP_DAYS), target_date
-            )
-            if not gdelt_df.empty:
-                # check for any non-null zscores or article presence on date
-                gdelt_df = gdelt_df.copy()
-                gdelt_df["date"] = pd.to_datetime(gdelt_df["date"]).dt.normalize()
-                key = pd.Timestamp(target_date).normalize()
-                gd_row = gdelt_df.loc[gdelt_df["date"] == key]
-                if not gd_row.empty:
-                    has_source = True
-        except Exception:
-            pass
-
-        try:
-            gtrends_df = self.gtrends_node.compute(
-                target_date - timedelta(days=self.GDELT_WARMUP_DAYS), target_date
-            )
-            if not gtrends_df.empty:
-                gtrends_df = gtrends_df.copy()
-                gtrends_df["date"] = pd.to_datetime(gtrends_df["date"]).dt.normalize()
-                key = pd.Timestamp(target_date).normalize()
-                if not gtrends_df.loc[gtrends_df["date"] == key].empty:
-                    has_source = True
-        except Exception:
-            pass
-
-        try:
-            rg, rp = self.reddit_node.compute(target_date, target_date)
-            if not rg.empty:
-                rg = rg.copy()
-                rg["date"] = pd.to_datetime(rg["date"]).dt.normalize()
-                if not rg.loc[rg["date"] == pd.Timestamp(target_date).normalize()].empty:
-                    has_source = True
-            if not rp.empty:
-                rp = rp.copy()
-                rp["date"] = pd.to_datetime(rp["date"]).dt.normalize()
-                if not rp.loc[rp["date"] == pd.Timestamp(target_date).normalize()].empty:
-                    has_source = True
-        except Exception:
-            pass
-
-        if not has_source:
+        # Verify at least one upstream node has data by checking if row has any non-NaN signal values.
+        # No need to re-invoke compute_batch(); already executed above.
+        signal_cols = [
+            "usdjpy_stocktwits_net_sentiment",
+            "gdelt_tone_zscore",
+            "gdelt_attention_zscore",
+            "macro_attention_zscore",
+        ]
+        has_source = any(not pd.isna(r.get(col)) for col in signal_cols)
+        if not has_source and not r["usdjpy_stocktwits_active"]:
             raise ValueError(f"No sentiment data available for {target_date}")
 
         return SentimentSignal(
