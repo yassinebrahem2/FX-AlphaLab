@@ -1,4 +1,3 @@
-import json
 from calendar import monthrange
 from datetime import datetime
 from pathlib import Path
@@ -57,8 +56,7 @@ class GDELTEventsPreprocessor:
         backfill: bool = False,
     ) -> dict[str, int]:
         results: dict[str, int] = {}
-
-        for chunk_start, _ in self._monthly_chunks(start_date, end_date):
+        for chunk_start, chunk_end in self._monthly_chunks(start_date, end_date):
             month_key = chunk_start.strftime("%Y%m")
             silver_path = self._silver_path(chunk_start)
 
@@ -66,41 +64,27 @@ class GDELTEventsPreprocessor:
                 results[month_key] = self._count_existing_rows(silver_path)
                 continue
 
-            bronze_path = self.input_dir / f"gdelt_events_{month_key}_raw.jsonl"
-            if not bronze_path.exists():
+            bronze_files = self._bronze_files(chunk_start, chunk_end)
+            if not bronze_files:
                 results[month_key] = 0
                 continue
 
             records: list[dict] = []
-            with bronze_path.open("r", encoding="utf-8") as file_handle:
-                for line_number, line in enumerate(file_handle, start=1):
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
+            for bronze_path in bronze_files:
+                try:
+                    df = pd.read_parquet(bronze_path)
+                except Exception as exc:
+                    self.logger.warning("Skipping unreadable bronze file %s: %s", bronze_path, exc)
+                    continue
 
-                    try:
-                        raw = json.loads(stripped)
-                    except json.JSONDecodeError as exc:
-                        self.logger.warning(
-                            "Skipping malformed JSON in %s line=%d: %s",
-                            bronze_path,
-                            line_number,
-                            exc,
-                        )
-                        continue
+                if df.empty:
+                    continue
 
-                    if not isinstance(raw, dict):
-                        self.logger.warning(
-                            "Skipping non-object JSON in %s line=%d",
-                            bronze_path,
-                            line_number,
-                        )
-                        continue
-
+                # We expect bronze to already contain normalized records
+                for raw in df.to_dict("records"):
                     parsed = self._parse_record(raw)
                     if parsed is None:
                         continue
-
                     records.append(parsed)
 
             if not records:
@@ -115,11 +99,29 @@ class GDELTEventsPreprocessor:
         return results
 
     def health_check(self) -> bool:
-        if self.input_dir.exists() and any(self.input_dir.glob("gdelt_events_*_raw.jsonl")):
+        if self.input_dir.exists() and any(self.input_dir.rglob("*.parquet")):
             return True
 
-        self.logger.warning("GDELT health check failed: no Bronze files in %s", self.input_dir)
+        self.logger.warning(
+            "GDELT health check failed: no Bronze parquet files in %s", self.input_dir
+        )
         return False
+
+    def _bronze_files(self, chunk_start: datetime, chunk_end: datetime) -> list[Path]:
+        files: list[Path] = []
+        current = chunk_start
+        while current <= chunk_end:
+            path = (
+                self.input_dir
+                / f"{current.year}"
+                / f"{current.month:02d}"
+                / f"{current.strftime('%Y%m%d')}.parquet"
+            )
+            if path.exists():
+                files.append(path)
+            current = current.replace(day=current.day) + pd.Timedelta(days=1)
+
+        return files
 
     def _parse_record(self, raw: dict) -> dict | None:
         event_id = self._clean_str(raw.get("event_id"))
