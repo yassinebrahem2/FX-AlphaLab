@@ -3,30 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
 from src.agents.macro.calendar_node import CalendarEventsNode
 from src.agents.macro.macro_node import MacroeconomicsNode
+from src.agents.macro.signal import MacroSignal, TopCalendarEvent
 from src.shared.utils import setup_logger
-
-
-@dataclass(frozen=True)
-class MacroSignal:
-    """Monthly macro signal with 9 fields."""
-
-    pair: str
-    signal_timestamp: pd.Timestamp  # month-end from parquet (e.g., 2025-01-31)
-    module_c_direction: str  # "up" or "down"
-    macro_confidence: float
-    carry_signal_score: float
-    regime_context_score: float
-    fundamental_mispricing_score: float
-    macro_surprise_score: float  # 0.0 until CalendarEventsNode integrated
-    macro_bias_score: float
-    node_version: str  # "macro_economics_v1"
 
 
 class MacroAgent:
@@ -52,21 +36,36 @@ class MacroAgent:
         """
         Predict macro signal for a pair at a date.
 
-        Delegates to macro_node for now. Calendar events (Node 2) will fuse
-        macro_surprise_score when implemented.
-
         Args:
             pair: Currency pair (e.g., "EURUSD").
             date: Request date (UTC, naive or aware).
 
         Returns:
-            MacroSignal with all 9 fields.
+            MacroSignal with all fields, including dominant_driver and top_calendar_events.
         """
         signal = self.macro_node.predict(pair, date)
+
+        top_events: list[TopCalendarEvent] | None = None
         if self.calendar_node is not None:
             try:
-                surprise_score = self.calendar_node.predict(pair, signal.signal_timestamp)
-                signal = dataclasses.replace(signal, macro_surprise_score=surprise_score)
+                surprise_score, top_events = self.calendar_node.predict_with_context(
+                    pair, signal.signal_timestamp
+                )
+                signal = dataclasses.replace(
+                    signal,
+                    macro_surprise_score=surprise_score,
+                    top_calendar_events=top_events,
+                )
             except Exception as exc:
-                self.logger.warning("CalendarEventsNode.predict failed: %s", exc)
+                self.logger.warning("CalendarEventsNode.predict_with_context failed: %s", exc)
+
+        sub_scores = {
+            "carry_signal_score": abs(signal.carry_signal_score),
+            "regime_context_score": abs(signal.regime_context_score),
+            "fundamental_mispricing_score": abs(signal.fundamental_mispricing_score),
+            "macro_surprise_score": abs(signal.macro_surprise_score),
+        }
+        dominant_driver = max(sub_scores, key=sub_scores.__getitem__)
+        signal = dataclasses.replace(signal, dominant_driver=dominant_driver)
+
         return signal

@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from src.agents.macro.signal import MacroSignal
 from src.shared.utils import setup_logger
-
-if TYPE_CHECKING:
-    from src.agents.macro.agent import MacroSignal
 
 
 class MacroeconomicsNode:
@@ -117,9 +114,6 @@ class MacroeconomicsNode:
         # Take latest (highest timestamp)
         latest_idx = valid_signals.index.get_level_values("timestamp_utc").max()
         signal_row = valid_signals.loc[(normalized_pair, latest_idx)]
-
-        # Import here to avoid circular dependency
-        from src.agents.macro.agent import MacroSignal
 
         return MacroSignal(
             pair=pair,
