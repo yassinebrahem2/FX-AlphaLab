@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.ingestion.preprocessors.gdelt_preprocessor import GDELTPreprocessor
+from src.ingestion.preprocessors.gdelt_gkg_preprocessor import GDELTGKGPreprocessor
 
 
 def _write_jsonl(path: Path, records: list[dict]) -> None:
@@ -15,8 +15,8 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
             file_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def _make_preprocessor(tmp_path: Path) -> GDELTPreprocessor:
-    return GDELTPreprocessor(
+def _make_preprocessor(tmp_path: Path) -> GDELTGKGPreprocessor:
+    return GDELTGKGPreprocessor(
         input_dir=tmp_path / "raw" / "news" / "gdelt",
         output_dir=tmp_path / "processed" / "sentiment" / "source=gdelt",
         log_file=tmp_path / "logs" / "gdelt_preprocess.log",
@@ -28,7 +28,7 @@ def _bronze_record(**overrides: object) -> dict:
         "url": "https://example.com/article",
         "timestamp_published": "2024-01-15T12:00:00Z",
         "source_domain": "reuters.com",
-        "source": "gdelt",
+        "source": "gdelt_gkg",
         "v2tone": "1.0,2.0,3.0,4.0,5.0,6.0,7",
         "themes": "ECON_CURRENCY;USD",
         "locations": "US;New York",
@@ -234,7 +234,7 @@ def test_run_output_schema(tmp_path: Path) -> None:
     df = pd.read_parquet(silver_path)
 
     assert result == {"202401": 2}
-    assert list(df.columns) == GDELTPreprocessor.SILVER_COLUMNS
+    assert list(df.columns) == GDELTGKGPreprocessor.SILVER_COLUMNS
     assert str(df["timestamp_utc"].dtype) == "datetime64[ns, UTC]"
     assert str(df["tone"].dtype) == "float64"
     assert str(df["word_count"].dtype) == "Int64"

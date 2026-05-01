@@ -6,41 +6,40 @@ from unittest.mock import MagicMock
 import pytest
 from google.api_core.exceptions import GoogleAPIError
 
-from src.ingestion.collectors.gdelt_collector import GDELTCollector
+from src.ingestion.collectors.gdelt_gkg_collector import GDELTGKGCollector
 
 
-# -------------------------------------------------------
-# Initialization
-# -------------------------------------------------------
-def test_collector_initialization(tmp_path):
-    collector = GDELTCollector(output_dir=tmp_path)
+@pytest.fixture
+def collector(tmp_path: Path) -> GDELTGKGCollector:
+    return GDELTGKGCollector(output_dir=tmp_path)
 
+
+def test_initialization(tmp_path: Path) -> None:
+    collector = GDELTGKGCollector(output_dir=tmp_path)
+
+    assert collector.SOURCE_NAME == "gdelt_gkg"
     assert collector.output_dir == tmp_path
     assert collector.output_dir.exists()
 
 
-# -------------------------------------------------------
-# Retry Logic
-# -------------------------------------------------------
-def test_retry_logic():
-    collector = GDELTCollector(output_dir=Path("dummy"))
+def test_retry_logic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    collector = GDELTGKGCollector(output_dir=tmp_path)
 
     mock_client = MagicMock()
     collector.client = mock_client
+    mock_client.query.side_effect = [GoogleAPIError("Temporary failure"), MagicMock()]
 
-    mock_client.query.side_effect = GoogleAPIError("Temporary failure")
+    monkeypatch.setattr(
+        "src.ingestion.collectors.gdelt_gkg_collector.time.sleep", lambda _delay: None
+    )
 
-    with pytest.raises(GoogleAPIError):
-        collector._run_query_with_retry("SELECT 1", max_retries=3)
+    collector._run_query_with_retry("SELECT 1", max_retries=2)
 
-    assert mock_client.query.call_count == 3
+    assert mock_client.query.call_count == 2
 
 
-# -------------------------------------------------------
-# Prioritization by Credibility
-# -------------------------------------------------------
-def test_prioritizes_by_credibility(tmp_path):
-    collector = GDELTCollector(output_dir=tmp_path)
+def test_prioritizes_by_credibility(tmp_path: Path) -> None:
+    collector = GDELTGKGCollector(output_dir=tmp_path)
 
     mock_client = MagicMock()
     mock_job = MagicMock()
@@ -76,23 +75,19 @@ def test_prioritizes_by_credibility(tmp_path):
         },
     ]
 
-    # Mock dry-run + real query safely
     mock_job.total_bytes_processed = 0
     mock_result.to_dataframe.return_value.to_dict.return_value = mock_rows
     mock_job.result.return_value = mock_result
     mock_client.query.return_value = mock_job
 
     collector.client = mock_client
-
     result = collector.collect(start_date=datetime(2024, 1, 1), end_date=datetime(2024, 1, 1))
 
     assert result == {"aggregated": 3}
 
     output_path = tmp_path / "gdelt_202401_raw.jsonl"
-    assert output_path.exists()
-
-    with output_path.open("r", encoding="utf-8") as fh:
-        docs = [json.loads(line) for line in fh if line.strip()]
+    with output_path.open("r", encoding="utf-8") as file_handle:
+        docs = [json.loads(line) for line in file_handle if line.strip()]
 
     def _tier_from_domain(domain: str | None) -> int:
         lowered = (domain or "").lower()
@@ -106,8 +101,8 @@ def test_prioritizes_by_credibility(tmp_path):
     assert tiers == sorted(tiers)
 
 
-def test_collect_writes_jsonl(tmp_path):
-    collector = GDELTCollector(output_dir=tmp_path)
+def test_collect_writes_jsonl(tmp_path: Path) -> None:
+    collector = GDELTGKGCollector(output_dir=tmp_path)
 
     mock_client = MagicMock()
     mock_job = MagicMock()
@@ -117,7 +112,7 @@ def test_collect_writes_jsonl(tmp_path):
         {
             "DATE": "20240301090000",
             "SourceCommonName": "reuters.com",
-            "DocumentIdentifier": "url_1",
+            "DocumentIdentifier": "https://example.com/a",
             "V2Tone": "-2.42,2.34,4.77",
             "Themes": "ECON_CURRENCY;USD",
             "Locations": "US",
@@ -126,7 +121,7 @@ def test_collect_writes_jsonl(tmp_path):
         {
             "DATE": "20240301100000",
             "SourceCommonName": "wsj.com",
-            "DocumentIdentifier": "url_2",
+            "DocumentIdentifier": "https://example.com/b",
             "V2Tone": "1.10,0.00,0.00",
             "Themes": "ECON_CENTRAL_BANK;EUR",
             "Locations": "EU",
@@ -146,19 +141,19 @@ def test_collect_writes_jsonl(tmp_path):
     assert n_docs > 0
 
     output_path = collector.output_dir / "gdelt_202403_raw.jsonl"
-    assert output_path.exists()
+    with output_path.open("r", encoding="utf-8") as file_handle:
+        lines = [line for line in file_handle if line.strip()]
 
-    with output_path.open("r", encoding="utf-8") as fh:
-        lines = [line for line in fh if line.strip()]
     assert len(lines) == n_docs
 
     sample = json.loads(lines[0])
+    assert sample["source"] == "gdelt_gkg"
     assert isinstance(sample["v2tone"], str)
     assert "metadata" not in sample
 
 
-def test_collect_empty_returns_zero(tmp_path):
-    collector = GDELTCollector(output_dir=tmp_path)
+def test_collect_empty_returns_zero(tmp_path: Path) -> None:
+    collector = GDELTGKGCollector(output_dir=tmp_path)
 
     mock_client = MagicMock()
     mock_job = MagicMock()
@@ -176,13 +171,13 @@ def test_collect_empty_returns_zero(tmp_path):
     assert not (tmp_path / "gdelt_202404_raw.jsonl").exists()
 
 
-def test_collect_skip_existing(tmp_path):
-    collector = GDELTCollector(output_dir=tmp_path)
+def test_collect_skip_existing(tmp_path: Path) -> None:
+    collector = GDELTGKGCollector(output_dir=tmp_path)
 
     existing_path = tmp_path / "gdelt_202405_raw.jsonl"
-    with existing_path.open("w", encoding="utf-8") as fh:
-        for i in range(5):
-            fh.write(json.dumps({"url": f"existing_{i}"}) + "\n")
+    with existing_path.open("w", encoding="utf-8") as file_handle:
+        for index in range(5):
+            file_handle.write(json.dumps({"url": f"existing_{index}"}) + "\n")
 
     mock_client = MagicMock()
     collector.client = mock_client
@@ -197,12 +192,12 @@ def test_collect_skip_existing(tmp_path):
     assert mock_client.query.call_count == 0
 
 
-def test_collect_force_overwrite(tmp_path):
-    collector = GDELTCollector(output_dir=tmp_path)
+def test_collect_force_overwrite(tmp_path: Path) -> None:
+    collector = GDELTGKGCollector(output_dir=tmp_path)
 
     existing_path = tmp_path / "gdelt_202405_raw.jsonl"
-    with existing_path.open("w", encoding="utf-8") as fh:
-        fh.write(json.dumps({"url": "stale"}) + "\n")
+    with existing_path.open("w", encoding="utf-8") as file_handle:
+        file_handle.write(json.dumps({"url": "stale"}) + "\n")
 
     mock_client = MagicMock()
     mock_job = MagicMock()

@@ -9,8 +9,8 @@ import pyarrow.parquet as pq
 from src.shared.utils import setup_logger
 
 
-class GDELTPreprocessor:
-    """Bronze to Silver preprocessor for GDELT news data."""
+class GDELTGKGPreprocessor:
+    """Bronze to Silver preprocessor for GDELT GKG data."""
 
     SILVER_COLUMNS = [
         "timestamp_utc",
@@ -130,7 +130,7 @@ class GDELTPreprocessor:
         return False
 
     def _parse_record(self, raw: dict) -> dict | None:
-        url = raw.get("url")
+        url = self._clean_text(raw.get("url"))
         if not url:
             return None
 
@@ -150,9 +150,9 @@ class GDELTPreprocessor:
 
         return {
             "timestamp_utc": timestamp_utc,
-            "url": str(url),
-            "source_domain": raw.get("source_domain"),
-            "source": raw.get("source") or "gdelt",
+            "url": url,
+            "source_domain": self._clean_text(raw.get("source_domain")),
+            "source": self._clean_text(raw.get("source")) or "gdelt_gkg",
             "tone": tone_fields["tone"],
             "positive_score": tone_fields["positive_score"],
             "negative_score": tone_fields["negative_score"],
@@ -167,7 +167,6 @@ class GDELTPreprocessor:
 
     def _parse_v2tone(self, raw: str) -> dict[str, float | int | None]:
         values = {field: None for field in self.V2TONE_FIELDS}
-
         if raw is None:
             return values
 
@@ -235,9 +234,25 @@ class GDELTPreprocessor:
         df = pd.DataFrame(records, columns=self.SILVER_COLUMNS)
         df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True)
 
+        for column in ["url", "source_domain", "source"]:
+            df[column] = df[column].astype("string")
+
         for column in self.FLOAT_COLUMNS:
             df[column] = pd.to_numeric(df[column], errors="coerce").astype("float64")
 
         df["word_count"] = pd.array(pd.to_numeric(df["word_count"], errors="coerce"), dtype="Int64")
         df = df.reindex(columns=self.SILVER_COLUMNS)
         return df
+
+    def _clean_text(self, value: object) -> str | None:
+        if value is None:
+            return None
+
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+
+        text = str(value).strip()
+        return text or None
