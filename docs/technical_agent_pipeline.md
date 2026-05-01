@@ -32,13 +32,20 @@ Normalizes all 15 features to [0, 1] using statistics learned during training. A
 One trained model per timeframe (H1, H4, D1). Each receives a sliding window of recent bars and outputs a single probability: how likely is the next bar to close higher? Architecture: 2 stacked LSTM layers → dropout → single sigmoid output.
 
 **Multi-Timeframe Fusion**
-Combines the three probability outputs into one directional score using equal weights (empirically validated — no timeframe predicts daily direction better than the others). The D1 model anchors the output: it provides the timestamp and the volatility regime label.
+Combines the three probability outputs into one directional score using equal weights (empirically validated — no timeframe predicts daily direction better than the others). The D1 model anchors the output: it provides the timestamp, the volatility regime label, and the indicator snapshot. Per-timeframe directions are preserved as `timeframe_votes`.
+
+**Explainability**
+Two layers computed at inference with no additional cost:
+- **Indicator Snapshot** — the 5 most interpretable indicator values from the D1 close (RSI, MACD histogram sign, Bollinger Band % position, price above/below EMA200, ATR percentile rank). Describes the market state that accompanied the model's call — not gradient-based attribution.
+- **Timeframe Votes** — the individual directional vote (0/1) from each of D1, H4, H1. A unanimous 3/3 vote is more reliable than a 2/1 split, especially given the model's near-random AUC.
 
 **Signal Output**
 One `TechnicalSignal` per pair per day:
 - **Direction** — bullish or bearish
 - **Confidence** — how far the fused probability is from the decision boundary (typically low, ~0.02–0.04)
 - **Volatility Regime** — high or low, based on where today's ATR sits within the past year
+- **Indicator Snapshot** — key market state indicators at inference time
+- **Timeframe Votes** — per-timeframe directional votes
 
 ---
 
@@ -57,14 +64,18 @@ MT5 Terminal → Raw Storage → Price Normalizer → Processed Storage
                                               [ TECHNICAL AGENT ]
                                               Feature Engineering
                                                         ↓
+                                  Indicator Snapshot ←──┤ (unscaled last bar)
+                                                        ↓
                                                MinMax Scaling
                                                         ↓
                                          LSTM D1 | LSTM H4 | LSTM H1
                                                         ↓
                                          Multi-Timeframe Fusion (equal weights)
+                                         Timeframe Votes preserved
                                                         ↓
                                               TechnicalSignal
-                                         direction | confidence | volatility_regime
+                              direction | confidence | volatility_regime
+                              indicator_snapshot | timeframe_votes
                                                         ↓
                                                   Coordinator
 ```
@@ -164,6 +175,34 @@ D1 is the mandatory anchor — it provides the `volatility_regime`, timestamp, a
 
 ---
 
+## Stage 5 — Explainability
+
+Two layers are computed at inference time with no additional model calls.
+
+**Layer 1 — Indicator Snapshot** (`IndicatorSnapshot`)
+
+Five human-readable indicator values captured from the last D1 bar, before MinMax scaling.
+The LSTM is a black box — these values do not causally explain its output, but they describe
+the market state that accompanied the call, which is what the LLM narrator needs.
+
+| Field | Description |
+|-------|-------------|
+| `rsi` | RSI(14) value, 0–100. > 70 = overbought, < 30 = oversold |
+| `macd_hist` | MACD histogram. Positive = bullish momentum, negative = bearish |
+| `bb_pct` | Bollinger Band % position, 0–1. > 0.8 = near upper band (extended) |
+| `above_ema200` | bool. True = price in long-term bull structure |
+| `atr_pct_rank` | ATR 252-day percentile, 0–1. Mirrors volatility_regime |
+
+**Layer 2 — Timeframe Votes** (`dict[str, int]`)
+
+The individual directional vote from each timeframe model before fusion. Keys: "D1", "H4", "H1".
+Values: 1 = bullish, 0 = bearish.
+
+Unanimous agreement (3/3) is meaningfully more reliable than a split (2/1) given the model's
+empirically measured AUC of 0.50–0.54. A 2/1 split signals lower structural conviction.
+
+---
+
 ## Final Output — `TechnicalSignal`
 
 One signal per pair per day, passed to the Coordinator.
@@ -171,11 +210,17 @@ One signal per pair per day, passed to the Coordinator.
 | Field | Type | Description |
 |---|---|---|
 | `pair` | str | e.g. "EURUSDm" |
-| `timestamp_utc` | Timestamp | Date of the signal |
+| `timeframe` | str | "MTF" (multi-timeframe fused) |
+| `timestamp_utc` | Timestamp | Date of the signal (from D1 anchor) |
 | `direction` | int | 1 = bullish, 0 = bearish |
+| `prob_up` | float | Fused probability of next bar closing higher |
+| `prob_down` | float | 1 − prob_up |
 | `confidence` | float | 0–1, typically 0.02–0.04 (weak signal) |
 | `volatility_regime` | str | "high" or "low" (from D1 ATR percentile) |
-| `timeframe` | str | "MTF" (multi-timeframe fused) |
+| `threshold_used` | float | Decision boundary (default 0.5) |
+| `model_version` | str | Artifact version tag |
+| `indicator_snapshot` | IndicatorSnapshot | Layer 1 — key market state indicators at inference time |
+| `timeframe_votes` | dict[str, int] | Layer 2 — per-timeframe directional votes (D1/H4/H1) |
 
 ---
 
@@ -190,11 +235,15 @@ PriceNormalizer → Silver Parquet  (data/processed/ohlcv/)
        ↓
 add_features() → 15 indicators + atr_pct_rank
        ↓
+IndicatorSnapshot ← last unscaled bar (Layer 1 explainability)
+       ↓
 TechnicalAgent × 3 timeframes (D1, H4, H1)
   └── 2-layer LSTM → prob_up per timeframe
        ↓
 fuse_timeframe_signals() — equal weights (1/3 each)
+  └── timeframe_votes preserved (Layer 2 explainability)
        ↓
 TechnicalSignal → Coordinator
   direction | confidence | volatility_regime
+  indicator_snapshot | timeframe_votes
 ```

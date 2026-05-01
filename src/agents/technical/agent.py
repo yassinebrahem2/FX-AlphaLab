@@ -35,6 +35,17 @@ class TrainingMetrics:
 
 
 @dataclass(frozen=True)
+class IndicatorSnapshot:
+    """Key technical indicator values at inference time — used for explainability."""
+
+    rsi: float
+    macd_hist: float
+    bb_pct: float
+    above_ema200: bool
+    atr_pct_rank: float
+
+
+@dataclass(frozen=True)
 class TechnicalSignal:
     """Single-model directional signal for the coordinator."""
 
@@ -48,6 +59,8 @@ class TechnicalSignal:
     volatility_regime: str
     threshold_used: float
     model_version: str
+    indicator_snapshot: IndicatorSnapshot | None = None
+    timeframe_votes: dict[str, int] | None = None
 
 
 def fuse_timeframe_signals(
@@ -71,6 +84,7 @@ def fuse_timeframe_signals(
     confidence = float(np.clip(abs(fused_score) * 2.0, 0.0, 1.0))
 
     d1_signal = signals["D1"]
+    timeframe_votes = {tf: signal.direction for tf, signal in signals.items()}
     return TechnicalSignal(
         pair=d1_signal.pair,
         timeframe="MTF",
@@ -82,6 +96,8 @@ def fuse_timeframe_signals(
         volatility_regime=d1_signal.volatility_regime,
         threshold_used=d1_signal.threshold_used,
         model_version=d1_signal.model_version,
+        indicator_snapshot=d1_signal.indicator_snapshot,
+        timeframe_votes=timeframe_votes,
     )
 
 
@@ -455,6 +471,15 @@ class TechnicalAgent:
         if not isinstance(df.index, pd.DatetimeIndex):
             raise TypeError("Input dataframe must have a DatetimeIndex.")
 
+        last_row = df.iloc[-1]
+        snapshot = IndicatorSnapshot(
+            rsi=float(last_row["rsi"]),
+            macd_hist=float(last_row["macd_hist"]),
+            bb_pct=float(last_row["bb_pct"]),
+            above_ema200=bool(last_row["close"] > last_row["ema_200"]),
+            atr_pct_rank=float(last_row["atr_pct_rank"]),
+        )
+
         x_live = df[self.feature_cols].copy()
         x_live[self.feature_cols] = self.scaler.transform(x_live[self.feature_cols])
         seq = x_live.values[-self.seq_len :]
@@ -468,7 +493,7 @@ class TechnicalAgent:
         direction = int(prob_up >= self.threshold)
         prob_down = 1.0 - prob_up
         confidence = abs(prob_up - 0.5) * 2.0
-        atr_pct_rank = float(df["atr_pct_rank"].iloc[-1])
+        atr_pct_rank = float(last_row["atr_pct_rank"])
         volatility_regime = volatility_regime_label(atr_pct_rank=atr_pct_rank)
 
         return TechnicalSignal(
@@ -482,4 +507,6 @@ class TechnicalAgent:
             volatility_regime=volatility_regime,
             threshold_used=self.threshold,
             model_version=self.model_version,
+            indicator_snapshot=snapshot,
+            timeframe_votes=None,
         )
