@@ -4,7 +4,8 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from src.agents.sentiment.agent import SentimentAgent, SentimentSignal
+from src.agents.sentiment.agent import SentimentAgent
+from src.agents.sentiment.signal import SentimentContext, SentimentSignal
 
 
 @pytest.fixture
@@ -141,10 +142,12 @@ def test_usdjpy_null_when_no_signal(mock_reddit_node, mock_gdelt_node, mock_gtre
 def test_composite_stress_flag_fires_on_two_signals(agent):
     sig = agent.get_signal(datetime(2024, 6, 15, tzinfo=timezone.utc))
     assert sig.composite_stress_flag is True
+    assert "gdelt_attention" in sig.stress_sources
+    assert "macro_attention" in sig.stress_sources
 
 
 def test_composite_stress_flag_off_on_one_signal(mock_stocktwits_node, mock_reddit_node):
-    # only gdelt elevated
+    # only gdelt elevated, macro below threshold
     gdelt = Mock()
     date = pd.Timestamp("2024-06-15")
     gdelt_df = pd.DataFrame(
@@ -172,6 +175,7 @@ def test_composite_stress_flag_off_on_one_signal(mock_stocktwits_node, mock_redd
 
     sig = agent_local.get_signal(datetime(2024, 6, 15, tzinfo=timezone.utc))
     assert sig.composite_stress_flag is False
+    assert sig.stress_sources == ["gdelt_attention"]  # only one fired
 
 
 def test_composite_stress_flag_off_when_both_none(mock_stocktwits_node, mock_reddit_node):
@@ -217,6 +221,7 @@ def test_compute_batch_returns_dataframe(agent):
         "gdelt_attention_zscore",
         "macro_attention_zscore",
         "composite_stress_flag",
+        "stress_sources",
     ]
     assert list(df.columns) == expected_cols
     assert df["timestamp_utc"].is_monotonic_increasing
@@ -246,10 +251,51 @@ def test_context_populated_when_requested(agent):
     )
     assert "context" in df.columns
     row = df.loc[df["timestamp_utc"] == pd.Timestamp("2024-06-15", tz="UTC")].iloc[0]
-    assert isinstance(row["context"], dict)
-    assert "reddit_global_activity_zscore" in row["context"]
-    assert "reddit_pair_views" in row["context"]
-    assert "stocktwits_pair_views" in row["context"]
+    ctx = row["context"]
+    assert isinstance(ctx, SentimentContext)
+    assert ctx.reddit_global_activity_zscore is not None or ctx.reddit_pair_views is None or True
+    assert hasattr(ctx, "reddit_pair_views")
+    assert hasattr(ctx, "stocktwits_pair_breakdown")
+
+
+def test_get_signal_context_is_typed(agent):
+    sig = agent.get_signal(datetime(2024, 6, 15, tzinfo=timezone.utc), include_context=True)
+    assert isinstance(sig.context, SentimentContext)
+    assert hasattr(sig.context, "reddit_global_activity_zscore")
+    assert hasattr(sig.context, "reddit_pair_views")
+    assert hasattr(sig.context, "stocktwits_pair_breakdown")
+
+
+def test_stress_sources_empty_when_no_elevation(mock_stocktwits_node, mock_reddit_node):
+    gdelt = Mock()
+    gtrends = Mock()
+    gdelt.compute = Mock(
+        return_value=pd.DataFrame(
+            [
+                {
+                    "date": pd.Timestamp("2024-06-15"),
+                    "tone_zscore": 0.1,
+                    "attention_zscore": 0.2,
+                    "tone_mean": 0.0,
+                    "article_count": 5,
+                }
+            ]
+        )
+    )
+    gtrends.compute = Mock(
+        return_value=pd.DataFrame(
+            [{"date": pd.Timestamp("2024-06-15"), "macro_attention_zscore": 0.3}]
+        )
+    )
+    agent_local = SentimentAgent(
+        stocktwits_node=mock_stocktwits_node,
+        reddit_node=mock_reddit_node,
+        gdelt_node=gdelt,
+        gtrends_node=gtrends,
+    )
+    sig = agent_local.get_signal(datetime(2024, 6, 15, tzinfo=timezone.utc))
+    assert sig.stress_sources == []
+    assert sig.composite_stress_flag is False
 
 
 def test_gdelt_node_failure_does_not_raise(

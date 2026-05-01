@@ -1,9 +1,10 @@
 """Sentiment & flow intelligence agent."""
 
-from src.agents.sentiment.agent import SentimentAgent, SentimentSignal
+from src.agents.sentiment.agent import SentimentAgent
 from src.agents.sentiment.gdelt_node import GDELTSignalNode
 from src.agents.sentiment.google_trends_node import GoogleTrendsSignalNode
 from src.agents.sentiment.reddit_node import RedditSignalNode
+from src.agents.sentiment.signal import SentimentContext, SentimentSignal
 from src.agents.sentiment.stocktwits_node import StocktwitsSignalNode
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "RedditSignalNode",
     "SentimentAgent",
     "SentimentSignal",
+    "SentimentContext",
 ]
