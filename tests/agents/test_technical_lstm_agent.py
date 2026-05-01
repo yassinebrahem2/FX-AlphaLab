@@ -5,7 +5,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.agents.technical.agent import TechnicalAgent, TechnicalSignal, fuse_timeframe_signals
+from src.agents.technical.agent import (
+    IndicatorSnapshot,
+    TechnicalAgent,
+    TechnicalSignal,
+    fuse_timeframe_signals,
+)
 
 
 def _make_ohlcv_df(rows: int = 1600) -> pd.DataFrame:
@@ -65,6 +70,11 @@ def test_fit_save_load_predict_roundtrip(tmp_path: Path) -> None:
     assert abs((signal.prob_up + signal.prob_down) - 1.0) < 1e-6
     assert 0.0 <= signal.confidence <= 1.0
     assert signal.volatility_regime in {"high", "low"}
+    assert isinstance(signal.indicator_snapshot, IndicatorSnapshot)
+    assert 0.0 <= signal.indicator_snapshot.rsi <= 100.0
+    assert isinstance(signal.indicator_snapshot.above_ema200, bool)
+    assert 0.0 <= signal.indicator_snapshot.atr_pct_rank <= 1.0
+    assert signal.timeframe_votes is None
 
 
 def test_fuse_timeframe_signals() -> None:
@@ -121,6 +131,8 @@ def test_fuse_timeframe_signals() -> None:
     assert abs(fused.prob_up - expected_prob_up) < 1e-9
     assert abs(fused.confidence - expected_confidence) < 1e-9
     assert fused.volatility_regime == "high"
+    assert fused.timeframe_votes == {"D1": 1, "H4": 1, "H1": 0}
+    assert fused.indicator_snapshot is None  # per-tf signals in this test have no snapshot
 
 
 def test_fuse_timeframe_signals_requires_d1() -> None:
