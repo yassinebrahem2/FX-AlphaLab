@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.agents.macro import MacroAgent, MacroSignal
+from src.agents.macro import MacroAgent, MacroSignal, TopCalendarEvent
 
 
 @pytest.fixture
@@ -48,14 +48,15 @@ def agent_with_mock_data(mock_signal_df: pd.DataFrame) -> MacroAgent:
 
 
 def test_macro_agent_imports() -> None:
-    """Test MacroAgent and MacroSignal imports."""
+    """Test MacroAgent, MacroSignal, and TopCalendarEvent imports."""
     assert MacroAgent is not None
     assert MacroSignal is not None
+    assert TopCalendarEvent is not None
 
-    # Verify MacroSignal is a dataclass
     import dataclasses
 
     assert dataclasses.is_dataclass(MacroSignal)
+    assert dataclasses.is_dataclass(TopCalendarEvent)
 
 
 def test_predict_returns_macro_signal(agent_with_mock_data: MacroAgent) -> None:
@@ -73,6 +74,13 @@ def test_predict_returns_macro_signal(agent_with_mock_data: MacroAgent) -> None:
     assert isinstance(signal.macro_surprise_score, float)
     assert isinstance(signal.macro_bias_score, float)
     assert signal.node_version == "macro_economics_v1"
+    assert signal.dominant_driver in {
+        "carry_signal_score",
+        "regime_context_score",
+        "fundamental_mispricing_score",
+        "macro_surprise_score",
+    }
+    assert signal.top_calendar_events is None  # Node 2 not active in this test
 
 
 def test_temporal_lookup_maps_mid_month_to_prior_month_end(
@@ -110,6 +118,18 @@ def test_date_before_coverage_raises_key_error(agent_with_mock_data: MacroAgent)
 
 
 def test_calendar_node_seam_macro_surprise_is_zero(agent_with_mock_data: MacroAgent) -> None:
-    """Test: macro_surprise_score is 0.0 (Node 2 placeholder)."""
+    """Test: macro_surprise_score is 0.0 when Node 2 is not active."""
     signal = agent_with_mock_data.predict("EURUSD", pd.Timestamp("2024-12-15", tz="UTC"))
     assert signal.macro_surprise_score == 0.0
+
+
+def test_dominant_driver_selection(agent_with_mock_data: MacroAgent) -> None:
+    """Test: dominant_driver is the sub-score with highest absolute value."""
+    # Mock data for Dec 2024 EURUSD: carry=0.15, regime=0.45, fundamental=0.28, surprise=0.0
+    # Expected dominant: regime_context_score (0.45 is largest abs)
+    signal = agent_with_mock_data.predict("EURUSD", pd.Timestamp("2024-12-15", tz="UTC"))
+    assert signal.dominant_driver == "regime_context_score"
+
+    # Mock data for Nov 2024 EURUSD: carry=-0.22, regime=0.52, fundamental=0.31, surprise=0.0
+    signal_nov = agent_with_mock_data.predict("EURUSD", pd.Timestamp("2024-11-15", tz="UTC"))
+    assert signal_nov.dominant_driver == "regime_context_score"

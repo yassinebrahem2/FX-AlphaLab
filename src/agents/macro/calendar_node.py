@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
 
+from src.agents.macro.signal import TopCalendarEvent
 from src.shared.utils import setup_logger
 
 
@@ -21,6 +22,7 @@ class CalendarEventsNode:
     IMPACT_WEIGHT = {"high": 1.0, "medium": 0.5, "low": 0.25, "non-economic": 0.0}
     LGB_PAIRS = {"EURUSD", "USDCHF"}
     CB_PAIRS = {"GBPUSD", "USDJPY"}
+    TOP_K_EVENTS = 5
 
     ROOT = Path(__file__).resolve().parents[3]
     ARTIFACTS_DIR = ROOT / "models" / "production" / "macro"
@@ -390,6 +392,7 @@ class CalendarEventsNode:
                 "event_name",
                 "country",
                 "has_surprise_data",
+                "surprise_raw",
                 "surprise_direction",
                 "country_sign",
                 "impact_weight",
@@ -402,11 +405,19 @@ class CalendarEventsNode:
             self.logger.info("Calendar events scored for %s: %d", pair, int(counts.get(pair, 0)))
 
     def predict(self, pair: str, signal_month_end: pd.Timestamp) -> float:
+        score, _ = self.predict_with_context(pair, signal_month_end)
+        return score
+
+    def predict_with_context(
+        self, pair: str, signal_month_end: pd.Timestamp
+    ) -> tuple[float, list[TopCalendarEvent]]:
         if pair not in self.COVERED_PAIRS:
-            return 0.0
+            return 0.0, []
 
         if self._event_scores is None:
-            raise RuntimeError("CalendarEventsNode.load() must be called before predict().")
+            raise RuntimeError(
+                "CalendarEventsNode.load() must be called before predict_with_context()."
+            )
 
         ts = pd.Timestamp(signal_month_end)
         if ts.tzinfo is None:
@@ -423,10 +434,10 @@ class CalendarEventsNode:
             & (df["timestamp_utc"] >= month_start)
             & (df["timestamp_utc"] <= month_end)
             & (df["has_surprise_data"] == 1)
-        ]
+        ].copy()
 
         if window.empty:
-            return 0.0
+            return 0.0, []
 
         score_i = (
             window["prob"]
@@ -436,10 +447,28 @@ class CalendarEventsNode:
         )
         total_weight = (window["prob"] * window["impact_weight"]).sum()
         if float(total_weight) <= 1e-9:
-            return 0.0
+            return 0.0, []
+
+        window = window.copy()
+        window["_score_i"] = score_i
+        window["_contribution"] = window["_score_i"] / float(total_weight)
+
+        top_rows = window.reindex(window["_contribution"].abs().nlargest(self.TOP_K_EVENTS).index)
+        top_events: list[TopCalendarEvent] = [
+            TopCalendarEvent(
+                event_name=str(row["event_name"]),
+                country=str(row["country"]),
+                surprise_direction=float(row["surprise_direction"]),
+                surprise_magnitude=float(abs(row["surprise_raw"])),
+                impact_weight=float(row["impact_weight"]),
+                prob=float(row["prob"]),
+                contribution=float(row["_contribution"]),
+            )
+            for _, row in top_rows.iterrows()
+        ]
 
         result = float(score_i.sum() / total_weight)
-        return float(np.clip(result, -1.0, 1.0))
+        return float(np.clip(result, -1.0, 1.0)), top_events
 
     @staticmethod
     def _build_frame(df: pd.DataFrame, cols: list[str], cat_cols: list[str]) -> pd.DataFrame:
