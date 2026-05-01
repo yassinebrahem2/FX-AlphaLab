@@ -32,6 +32,7 @@ dependencies = [
     "fredapi",
     "feedparser",
     "sqlalchemy",
+    "google-api-core",
     "pytz",
     "pyarrow",
     "pytrends",

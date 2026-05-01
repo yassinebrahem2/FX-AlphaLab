@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+import requests
 
 from src.ingestion.collectors.gdelt_events_collector import GDELTEventsCollector
 
@@ -60,14 +61,14 @@ def test_collect_backfill_overwrites(tmp_path: Path) -> None:
             {
                 0: "1",
                 1: "20240102",
-                6: "US",
-                16: "DE",
-                25: "061",
-                29: "1",
-                30: "0.1",
-                31: "1",
+                7: "USA",
+                17: "DEU",
+                27: "061",
+                30: "1",
+                31: "0.1",
                 32: "1",
                 33: "1",
+                34: "1",
                 57: "http://example.com",
             }
         )
@@ -90,11 +91,11 @@ def test_collect_writes_parquet(tmp_path: Path) -> None:
     collector = GDELTEventsCollector(output_dir=tmp_path, sleep_between=0)
     rows = []
     # build 5 rows where two match zone filter
-    rows.append(_make_row({0: "1", 1: "20240103", 6: "US", 16: "", 57: "http://a"}))
-    rows.append(_make_row({0: "2", 1: "20240103", 6: "", 16: "DEU", 57: "http://b"}))
+    rows.append(_make_row({0: "1", 1: "20240103", 7: "USA", 17: "", 57: "http://a"}))
+    rows.append(_make_row({0: "2", 1: "20240103", 7: "", 17: "DEU", 57: "http://b"}))
     rows.append(_make_row({0: "3", 1: "20240103", 6: "", 16: "", 57: "http://c"}))
     rows.append(_make_row({0: "4", 1: "20240103", 6: "", 16: "", 57: "http://d"}))
-    rows.append(_make_row({0: "5", 1: "20240103", 6: "USA", 16: "", 57: "http://e"}))
+    rows.append(_make_row({0: "5", 1: "20240103", 7: "USA", 17: "", 57: "http://e"}))
     content = _make_zip(rows)
 
     with patch("requests.get") as mock_get:
@@ -123,7 +124,7 @@ def test_collect_404_writes_empty_sentinel(tmp_path: Path) -> None:
 
 def test_collect_request_error_writes_empty_sentinel(tmp_path: Path) -> None:
     collector = GDELTEventsCollector(output_dir=tmp_path, sleep_between=0)
-    with patch("requests.get", side_effect=Exception("boom")):
+    with patch("requests.get", side_effect=requests.RequestException("boom")):
         result = collector.collect(start_date=datetime(2024, 1, 5), end_date=datetime(2024, 1, 5))
 
     assert result == {"20240105": 0}
@@ -137,8 +138,8 @@ def test_collect_zone_filter(tmp_path: Path) -> None:
     collector = GDELTEventsCollector(output_dir=tmp_path, sleep_between=0)
     rows = []
     # two zone rows two non-zone
-    rows.append(_make_row({0: "1", 1: "20240106", 6: "USA", 16: ""}))
-    rows.append(_make_row({0: "2", 1: "20240106", 6: "", 16: "DEU"}))
+    rows.append(_make_row({0: "1", 1: "20240106", 7: "USA", 17: ""}))
+    rows.append(_make_row({0: "2", 1: "20240106", 7: "", 17: "DEU"}))
     rows.append(_make_row({0: "3", 1: "20240106", 6: "", 16: ""}))
     rows.append(_make_row({0: "4", 1: "20240106", 6: "", 16: ""}))
     content = _make_zip(rows)
@@ -157,10 +158,10 @@ def test_collect_quadclass_not_filtered(tmp_path: Path) -> None:
     collector = GDELTEventsCollector(output_dir=tmp_path, sleep_between=0)
     rows = []
     # create zone-matching rows with different QuadClass values
-    rows.append(_make_row({0: "1", 1: "20240107", 6: "USA", 29: "1"}))
-    rows.append(_make_row({0: "2", 1: "20240107", 6: "USA", 29: "2"}))
-    rows.append(_make_row({0: "3", 1: "20240107", 6: "USA", 29: "3"}))
-    rows.append(_make_row({0: "4", 1: "20240107", 6: "USA", 29: "4"}))
+    rows.append(_make_row({0: "1", 1: "20240107", 7: "USA", 30: "1"}))
+    rows.append(_make_row({0: "2", 1: "20240107", 7: "USA", 30: "2"}))
+    rows.append(_make_row({0: "3", 1: "20240107", 7: "USA", 30: "3"}))
+    rows.append(_make_row({0: "4", 1: "20240107", 7: "USA", 30: "4"}))
     content = _make_zip(rows)
 
     with patch("requests.get") as mock_get:
@@ -189,5 +190,5 @@ def test_health_check_server_error(tmp_path: Path) -> None:
 
 def test_health_check_exception(tmp_path: Path) -> None:
     collector = GDELTEventsCollector(output_dir=tmp_path)
-    with patch("requests.head", side_effect=Exception("boom")):
+    with patch("requests.head", side_effect=requests.RequestException("boom")):
         assert collector.health_check() is False
