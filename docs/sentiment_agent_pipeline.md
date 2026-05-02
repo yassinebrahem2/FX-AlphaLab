@@ -35,7 +35,7 @@ Reads weekly Silver RSV, forward-fills to daily, applies 52-week rolling z-score
 Loads daily Reddit signal parquet. Used only when `include_context=True` — not part of the main signal path. Provides rolling 30-day activity z-score and pair-level risk sentiment for human-readable context. IC vs forward vol and direction is near-zero — this node is explicitly reactive, not predictive.
 
 **SentimentAgent (aggregator)**
-Calls all four nodes over the requested date range. Assembles results into a per-day `SentimentSignal`. Computes `composite_stress_flag` as an attention convergence signal: fires when both `gdelt_attention_zscore` and `macro_attention_zscore` exceed the stress threshold (default 1.0) simultaneously. Reddit context is attached to the output only when requested via `include_context=True`.
+Calls all four nodes over the requested date range. Assembles results into a per-day `SentimentSignal`. Computes `composite_stress_flag` as an attention convergence signal: fires when both `gdelt_attention_zscore` and `macro_attention_zscore` exceed the stress threshold (default 1.0) simultaneously. Derives `stress_sources` (Layer 1 explainability) — a named list of which sources fired. Reddit context is attached to the output only when requested via `include_context=True`.
 
 ---
 
@@ -79,12 +79,14 @@ RedditSignalNode
 [ SENTIMENT AGENT ]
   composite_stress_flag = (gdelt_attention_zscore > 1.0)
                         AND (macro_attention_zscore > 1.0)
+  stress_sources ← Layer 1 (which sources fired)       ← always populated
+  SentimentContext ← Layer 2 (per-source breakdown)    ← include_context only
         ↓
 SentimentSignal
   usdjpy_stocktwits_vol_signal | usdjpy_stocktwits_active
   gdelt_tone_zscore | gdelt_attention_zscore
   macro_attention_zscore | composite_stress_flag
-  context (optional)
+  stress_sources (Layer 1) | context: SentimentContext (Layer 2, optional)
         ↓
 Coordinator
 ```
@@ -167,7 +169,7 @@ Survives global Bonferroni correction at h=3. Walk-forward: 2024 IC=−0.218 (p=
 
 **IC result:** Near-zero across all directional and volatility tests. Reddit is predominantly reactive — strongest lag is −1 (markets move, Reddit reacts). Predictive lag +1 rho ≈ 0.054 vs EURUSD absolute return; does not survive BH correction. Excluded from the alpha and regime signal paths.
 
-**Deployment:** not called unless `include_context=True`. When active, populates the `context` dict in `SentimentSignal` with `reddit_global_activity_zscore` and per-pair `risk_off_score`, `risk_on_score`, `sentiment_strength_wmean`. Used for human-readable signal explainability at the coordinator level.
+**Deployment:** not called unless `include_context=True`. When active, populates `SentimentContext.reddit_pair_views` with per-pair `risk_off_score`, `risk_on_score`, `sentiment_strength_wmean`, and `SentimentContext.reddit_global_activity_zscore`. Used for human-readable signal explainability at the coordinator level.
 
 ---
 
@@ -183,20 +185,48 @@ Fires when both independent attention signals — news flow surge (GDELT) and re
 
 ---
 
+## Explainability
+
+Two layers computed at prediction time.
+
+**Layer 1 — `stress_sources: list[str]`** (always populated)
+
+Which z-scores exceeded `STRESS_ZSCORE_THRESHOLD = 1.0`. Makes `composite_stress_flag` interpretable rather than opaque. Possible values:
+
+| Value | Meaning |
+|---|---|
+| `[]` | Neither source elevated; flag is False |
+| `["gdelt_attention"]` | Only GDELT elevated; flag still False |
+| `["macro_attention"]` | Only GTrends elevated; flag still False |
+| `["gdelt_attention", "macro_attention"]` | Both elevated; flag is True |
+
+**Layer 2 — `context: SentimentContext | None`** (populated when `include_context=True`)
+
+Typed breakdown of per-source signals. `None` by default — Reddit computation is expensive and not needed for alpha generation.
+
+| Field | Type | Description |
+|---|---|---|
+| `reddit_global_activity_zscore` | float \| None | Rolling 30d z-score of global Reddit post count |
+| `reddit_pair_views` | dict[str, dict] \| None | Tier C: per-pair Reddit breakdown (risk_off, risk_on, strength_wmean) |
+| `stocktwits_pair_breakdown` | dict[str, dict] \| None | All 4 pairs: bullish_score, bearish_score, net_sentiment |
+
+---
+
 ## Final Output — `SentimentSignal`
 
 One signal per day (not per pair), passed to the Coordinator.
 
-| Field | Type | Description |
-|---|---|---|
-| `timestamp_utc` | Timestamp | UTC day the signal represents |
-| `usdjpy_stocktwits_vol_signal` | float \| None | USDJPY net_sentiment when signal_post_count > 0, else None |
-| `usdjpy_stocktwits_active` | bool | True when StockTwits signal_post_count > 0 |
-| `gdelt_tone_zscore` | float \| NaN | 30d rolling z-score of GDELT tone. Negative = elevated macro negativity |
-| `gdelt_attention_zscore` | float \| NaN | 30d rolling z-score of GDELT article count |
-| `macro_attention_zscore` | float \| NaN | 52w rolling z-score of Google Trends macro keywords |
-| `composite_stress_flag` | bool | True when both attention z-scores exceed threshold simultaneously |
-| `context` | dict \| None | Optional. Reddit activity z-score + per-pair StockTwits/Reddit views |
+| Field | Type | Tier | Description |
+|---|---|---|---|
+| `timestamp_utc` | Timestamp | — | UTC day the signal represents |
+| `usdjpy_stocktwits_vol_signal` | float \| None | A | USDJPY net_sentiment when signal_post_count > 0, else None |
+| `usdjpy_stocktwits_active` | bool | A | True when StockTwits signal_post_count > 0 |
+| `gdelt_tone_zscore` | float \| None | B | 30d rolling z-score of GDELT tone. Negative = elevated macro negativity |
+| `gdelt_attention_zscore` | float \| None | B | 30d rolling z-score of GDELT article count |
+| `macro_attention_zscore` | float \| None | B | 52w rolling z-score of Google Trends macro keywords |
+| `composite_stress_flag` | bool | B | True when both attention z-scores exceed threshold simultaneously |
+| `stress_sources` | list[str] | B/L1 | Layer 1 — which sources triggered the stress flag |
+| `context` | SentimentContext \| None | C/L2 | Layer 2 — typed per-source breakdown (include_context only) |
 
 ---
 
@@ -224,13 +254,13 @@ RedditSignalNode
   └── 30d activity z-score · pair-level risk sentiment
        ↓
 SentimentAgent.compute_batch()
-  └── composite_stress_flag = gdelt_attention > 1.0 AND macro_attention > 1.0
+  ├── composite_stress_flag = gdelt_attention > 1.0 AND macro_attention > 1.0
+  ├── stress_sources  ← Layer 1 (always populated)
+  └── SentimentContext  ← Layer 2 (include_context=True only)
        ↓
-SentimentSignal
+SentimentSignal → Coordinator
   usdjpy_stocktwits_vol_signal (Tier A · vol predictor)
   gdelt_tone_zscore · gdelt_attention_zscore (Tier B · regime)
   macro_attention_zscore · composite_stress_flag (Tier B · regime)
-  context (Tier C · explainability · optional)
-       ↓
-Coordinator
+  stress_sources (Layer 1) | context: SentimentContext (Layer 2 · optional)
 ```

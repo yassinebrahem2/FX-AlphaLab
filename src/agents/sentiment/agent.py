@@ -6,7 +6,6 @@ per-pair signal rows. Use get_signal(date) for single-day lookup and compute_bat
 for range queries.
 """
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,25 +15,9 @@ import pandas as pd
 from src.agents.sentiment.gdelt_node import GDELTSignalNode
 from src.agents.sentiment.google_trends_node import GoogleTrendsSignalNode
 from src.agents.sentiment.reddit_node import RedditSignalNode
+from src.agents.sentiment.signal import SentimentContext, SentimentSignal
 from src.agents.sentiment.stocktwits_node import StocktwitsSignalNode
 from src.shared.utils import setup_logger
-
-
-@dataclass(frozen=True)
-class SentimentSignal:
-    """Signal payload produced by SentimentAgent for a single UTC day."""
-
-    timestamp_utc: pd.Timestamp
-
-    usdjpy_stocktwits_vol_signal: float | None
-    usdjpy_stocktwits_active: bool
-
-    gdelt_tone_zscore: float | None
-    gdelt_attention_zscore: float | None
-    macro_attention_zscore: float | None
-    composite_stress_flag: bool
-
-    context: dict | None
 
 
 class SentimentAgent:
@@ -225,10 +208,21 @@ class SentimentAgent:
             except Exception:
                 return False
 
+        gdelt_elevated = grid["gdelt_attention_zscore"].apply(_is_elevated)
+        macro_elevated = grid["macro_attention_zscore"].apply(_is_elevated)
         grid["composite_stress_flag"] = (
-            grid["gdelt_attention_zscore"].apply(_is_elevated).astype(int)
-            + grid["macro_attention_zscore"].apply(_is_elevated).astype(int)
+            gdelt_elevated.astype(int) + macro_elevated.astype(int)
         ) >= 2
+
+        def _stress_sources(row):
+            sources = []
+            if gdelt_elevated.loc[row.name]:
+                sources.append("gdelt_attention")
+            if macro_elevated.loc[row.name]:
+                sources.append("macro_attention")
+            return sources
+
+        grid["stress_sources"] = grid.apply(_stress_sources, axis=1)
 
         # Context (optional)
         if include_context:
@@ -272,13 +266,12 @@ class SentimentAgent:
                 def _build_context_row(ts):
                     key = pd.Timestamp(ts).normalize().to_pydatetime().date()
                     reddit_z = reddit_z_map.get(key, pd.NA)
-                    # reddit_pair_views
                     rp_rows = (
                         reddit_pair[reddit_pair["date"] == pd.Timestamp(key)]
                         if not reddit_pair.empty
                         else pd.DataFrame()
                     )
-                    reddit_pair_views = {}
+                    reddit_pair_views: dict[str, dict] = {}
                     for _, r in rp_rows.iterrows():
                         reddit_pair_views[r["pair"]] = {
                             "signal_post_count": float(r.get("signal_post_count", 0.0)),
@@ -294,22 +287,22 @@ class SentimentAgent:
                         if not st_pair.empty
                         else pd.DataFrame()
                     )
-                    stocktwits_pair_views = {}
+                    stocktwits_pair_breakdown: dict[str, dict] = {}
                     for _, s in sp_rows.iterrows():
-                        stocktwits_pair_views[s["symbol"]] = {
+                        stocktwits_pair_breakdown[s["symbol"]] = {
                             "signal_post_count": float(s.get("signal_post_count", 0.0)),
                             "bullish_score": float(s.get("bullish_score", 0.0)),
                             "bearish_score": float(s.get("bearish_score", 0.0)),
                             "net_sentiment": float(s.get("net_sentiment", 0.0)),
                         }
 
-                    return {
-                        "reddit_global_activity_zscore": (
+                    return SentimentContext(
+                        reddit_global_activity_zscore=(
                             float(reddit_z) if not pd.isna(reddit_z) else None
                         ),
-                        "reddit_pair_views": reddit_pair_views,
-                        "stocktwits_pair_views": stocktwits_pair_views,
-                    }
+                        reddit_pair_views=reddit_pair_views or None,
+                        stocktwits_pair_breakdown=stocktwits_pair_breakdown or None,
+                    )
 
                 grid["context"] = grid["timestamp_utc"].map(_build_context_row)
             except Exception as exc:
@@ -325,6 +318,7 @@ class SentimentAgent:
             "gdelt_attention_zscore",
             "macro_attention_zscore",
             "composite_stress_flag",
+            "stress_sources",
         ]
         if include_context:
             cols.append("context")
@@ -377,6 +371,13 @@ class SentimentAgent:
         if not has_source and not r["usdjpy_stocktwits_active"]:
             raise ValueError(f"No sentiment data available for {target_date}")
 
+        stress_sources: list[str] = list(r["stress_sources"]) if "stress_sources" in r.index else []
+
+        raw_context = r["context"] if "context" in r.index else None
+        context: SentimentContext | None = None
+        if isinstance(raw_context, SentimentContext):
+            context = raw_context
+
         return SentimentSignal(
             timestamp_utc=pd.Timestamp(r["timestamp_utc"]).tz_convert("UTC"),
             usdjpy_stocktwits_vol_signal=_nan_to_none(r["usdjpy_stocktwits_vol_signal"]),
@@ -385,5 +386,6 @@ class SentimentAgent:
             gdelt_attention_zscore=_nan_to_none(r["gdelt_attention_zscore"]),
             macro_attention_zscore=_nan_to_none(r["macro_attention_zscore"]),
             composite_stress_flag=bool(r["composite_stress_flag"]),
-            context=(r["context"] if "context" in r.index and not pd.isna(r["context"]) else None),
+            stress_sources=stress_sources,
+            context=context,
         )
