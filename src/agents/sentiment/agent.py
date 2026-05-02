@@ -1,4 +1,10 @@
-"""Sentiment aggregator and signal dataclass for FX coordinator."""
+"""Sentiment aggregator and signal dataclass for FX coordinator.
+
+SentimentAgent produces a global daily signal, not a per-pair signal. It does not
+inherit BaseAgent. The coordinator is responsible for joining SentimentSignal to
+per-pair signal rows. Use get_signal(date) for single-day lookup and compute_batch()
+for range queries.
+"""
 
 from datetime import datetime, timedelta
 from pathlib import Path

@@ -7,13 +7,14 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.agents.base import BaseAgent
 from src.agents.macro.calendar_node import CalendarEventsNode
 from src.agents.macro.macro_node import MacroeconomicsNode
 from src.agents.macro.signal import MacroSignal, TopCalendarEvent
 from src.shared.utils import setup_logger
 
 
-class MacroAgent:
+class MacroAgent(BaseAgent):
     """Orchestrator for macro analysis: delegates to nodes."""
 
     def __init__(

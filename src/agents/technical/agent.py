@@ -18,8 +18,13 @@ from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Dataset
 
+from src.agents.base import BaseAgent
 from src.agents.technical.features import add_features, get_feature_names, volatility_regime_label
 from src.shared.utils import setup_logger
+
+
+def _normalize_pair(pair: str) -> str:
+    return pair[:-1] if pair.endswith("m") else pair
 
 
 @dataclass(frozen=True)
@@ -140,7 +145,7 @@ class LSTMModel(nn.Module):
         return out.squeeze(-1)
 
 
-class TechnicalAgent:
+class TechnicalAgent(BaseAgent):
     """Train/infer LSTM directional model using features from features.py."""
 
     def __init__(
@@ -159,6 +164,7 @@ class TechnicalAgent:
         num_layers: int = 2,
         dropout: float = 0.3,
         model_version: str = "lstm_v1",
+        data_dir: Path | None = None,
     ) -> None:
         self.pair = pair
         self.timeframe = timeframe
@@ -174,6 +180,9 @@ class TechnicalAgent:
         self.num_layers = num_layers
         self.dropout = dropout
         self.model_version = model_version
+
+        _root = Path(__file__).resolve().parents[3]
+        self.data_dir = data_dir or (_root / "data" / "processed" / "ohlcv")
 
         self.feature_cols = get_feature_names()
         self.target_col = "target"
@@ -455,8 +464,35 @@ class TechnicalAgent:
         agent.feature_cols = artifact["feature_cols"]
         return agent
 
-    def predict(self, raw_df: pd.DataFrame) -> TechnicalSignal:
-        """Generate one technical signal from latest available sequence."""
+    def predict(self, pair: str, date: pd.Timestamp) -> TechnicalSignal:
+        """Load Silver OHLCV data for pair/date and run inference."""
+        if _normalize_pair(pair) != _normalize_pair(self.pair):
+            raise ValueError(f"This agent is bound to '{self.pair}'; cannot predict for '{pair}'.")
+
+        parquets = sorted(self.data_dir.glob(f"ohlcv_{self.pair}_{self.timeframe}_*.parquet"))
+        if not parquets:
+            raise FileNotFoundError(
+                f"No OHLCV parquet for {self.pair}/{self.timeframe} in {self.data_dir}"
+            )
+
+        frames = [pd.read_parquet(p) for p in parquets]
+        df = pd.concat(frames)
+        df.index = pd.to_datetime(df.index)
+        df.columns = df.columns.str.lower()
+        df = df.sort_index()
+
+        # Strip timezone from cutoff so comparison is always tz-naive
+        ts = pd.Timestamp(date)
+        if ts.tzinfo is not None:
+            ts = ts.tz_convert("UTC").tz_localize(None)
+
+        # 252 (atr_pct_rank rolling) + seq_len + buffer = ~400 bars minimum
+        df = df[df.index <= ts].tail(400)
+
+        return self._predict_from_df(df)
+
+    def _predict_from_df(self, raw_df: pd.DataFrame) -> TechnicalSignal:
+        """Generate one technical signal from an already-loaded OHLCV DataFrame."""
         if self.model is None or self.scaler is None:
             raise ValueError(
                 "Model artifact is not loaded. Train or load a model before predict()."
