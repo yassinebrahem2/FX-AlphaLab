@@ -242,6 +242,22 @@ def test_m_suffix_stripped(agent: GeopoliticalAgent) -> None:
     assert signal_with_suffix == signal_without_suffix
 
 
+def test_compute_batch_returns_dataframe(agent: GeopoliticalAgent) -> None:
+    """Test compute_batch() returns a DataFrame with date and pair columns."""
+    df = agent.compute_batch(
+        pairs=["EURUSD"],
+        start_date=pd.Timestamp("2023-02-02", tz="UTC"),
+        end_date=pd.Timestamp("2023-02-06", tz="UTC"),
+    )
+
+    assert isinstance(df, pd.DataFrame)
+    assert "date" in df.columns
+    assert "pair" in df.columns
+    assert "signal" in df.columns
+    assert len(df) > 0
+    assert all(df["pair"] == "EURUSD")
+
+
 def test_zone_feature_builder_run(
     mock_clean_silver_df: pd.DataFrame,
     monkeypatch: pytest.MonkeyPatch,

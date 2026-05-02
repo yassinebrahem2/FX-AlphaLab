@@ -60,7 +60,7 @@ def test_fit_save_load_predict_roundtrip(tmp_path: Path) -> None:
     assert saved_path.suffix == ".pkl"
 
     loaded_agent = TechnicalAgent.load(saved_path)
-    signal = loaded_agent.predict(df)
+    signal = loaded_agent._predict_from_df(df)
 
     assert signal.pair == "EURUSDm"
     assert signal.timeframe == "D1"

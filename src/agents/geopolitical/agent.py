@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 
+from src.agents.base import BaseAgent
 from src.agents.geopolitical.signal import (
     DIRECTED_EDGES,
     ZONE_COUNTRIES,
@@ -109,7 +110,7 @@ PAIR_ZONES: dict[str, tuple[str, str]] = {
 }
 
 
-class GeopoliticalAgent:
+class GeopoliticalAgent(BaseAgent):
     """Run GAT-based geopolitical risk inference on GDELT zone features."""
 
     RISK_REGIME_THRESHOLD: float = 1.0

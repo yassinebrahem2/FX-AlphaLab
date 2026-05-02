@@ -123,6 +123,22 @@ def test_calendar_node_seam_macro_surprise_is_zero(agent_with_mock_data: MacroAg
     assert signal.macro_surprise_score == 0.0
 
 
+def test_compute_batch_returns_dataframe(agent_with_mock_data: MacroAgent) -> None:
+    """Test compute_batch() returns a DataFrame with date and pair columns."""
+    df = agent_with_mock_data.compute_batch(
+        pairs=["EURUSD"],
+        start_date=pd.Timestamp("2024-11-15", tz="UTC"),
+        end_date=pd.Timestamp("2024-11-20", tz="UTC"),
+    )
+
+    assert isinstance(df, pd.DataFrame)
+    assert "date" in df.columns
+    assert "pair" in df.columns
+    assert "signal" in df.columns
+    assert len(df) > 0
+    assert all(df["pair"] == "EURUSD")
+
+
 def test_dominant_driver_selection(agent_with_mock_data: MacroAgent) -> None:
     """Test: dominant_driver is the sub-score with highest absolute value."""
     # Mock data for Dec 2024 EURUSD: carry=0.15, regime=0.45, fundamental=0.28, surprise=0.0
