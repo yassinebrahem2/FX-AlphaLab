@@ -36,6 +36,50 @@ class GDELTEventsPreprocessor:
         "source_url",
     ]
 
+    # Maps raw GDELT column names → Silver snake_case names
+    BRONZE_RENAME = {
+        "GLOBALEVENTID": "event_id",
+        "SQLDATE": "event_date",
+        "Actor1Name": "actor1_name",
+        "Actor1CountryCode": "actor1_country_code",
+        "Actor1Type1Code": "actor1_type1_code",
+        "Actor2Name": "actor2_name",
+        "Actor2CountryCode": "actor2_country_code",
+        "Actor2Type1Code": "actor2_type1_code",
+        "EventCode": "event_code",
+        "EventBaseCode": "event_base_code",
+        "EventRootCode": "event_root_code",
+        "QuadClass": "quad_class",
+        "GoldsteinScale": "goldstein_scale",
+        "NumMentions": "num_mentions",
+        "NumSources": "num_sources",
+        "NumArticles": "num_articles",
+        "AvgTone": "avg_tone",
+        "Actor1Geo_CountryCode": "actor1_geo_country_code",
+        "Actor2Geo_CountryCode": "actor2_geo_country_code",
+        "ActionGeo_CountryCode": "action_geo_country_code",
+        "ActionGeo_FullName": "action_geo_full_name",
+        "SOURCEURL": "source_url",
+    }
+
+    STRING_COLUMNS = [
+        "event_id",
+        "actor1_name",
+        "actor1_country_code",
+        "actor1_type1_code",
+        "actor2_name",
+        "actor2_country_code",
+        "actor2_type1_code",
+        "event_code",
+        "event_base_code",
+        "event_root_code",
+        "actor1_geo_country_code",
+        "actor2_geo_country_code",
+        "action_geo_country_code",
+        "action_geo_full_name",
+        "source_url",
+    ]
+
     INT_COLUMNS = ["quad_class", "num_mentions", "num_sources", "num_articles"]
     FLOAT_COLUMNS = ["goldstein_scale", "avg_tone"]
 
@@ -62,50 +106,93 @@ class GDELTEventsPreprocessor:
 
             if silver_path.exists() and not backfill:
                 results[month_key] = self._count_existing_rows(silver_path)
+                self.logger.info(
+                    "Skipping %s (already exists, %d rows)", month_key, results[month_key]
+                )
                 continue
 
             bronze_files = self._bronze_files(chunk_start, chunk_end)
             if not bronze_files:
+                self.logger.warning("No bronze files for %s", month_key)
                 results[month_key] = 0
                 continue
 
-            records: list[dict] = []
+            chunks: list[pd.DataFrame] = []
             for bronze_path in bronze_files:
                 try:
-                    df = pd.read_parquet(bronze_path)
+                    df = pd.read_parquet(bronze_path, columns=self._available_columns(bronze_path))
                 except Exception as exc:
                     self.logger.warning("Skipping unreadable bronze file %s: %s", bronze_path, exc)
                     continue
+                if not df.empty:
+                    chunks.append(df)
 
-                if df.empty:
-                    continue
-
-                # We expect bronze to already contain normalized records
-                for raw in df.to_dict("records"):
-                    parsed = self._parse_record(raw)
-                    if parsed is None:
-                        continue
-                    records.append(parsed)
-
-            if not records:
+            if not chunks:
                 results[month_key] = 0
                 continue
 
-            df = self._build_frame(records)
+            df = pd.concat(chunks, ignore_index=True)
+            df = self._transform(df)
+
+            if df.empty:
+                results[month_key] = 0
+                continue
+
             silver_path.parent.mkdir(parents=True, exist_ok=True)
             df.to_parquet(silver_path, engine="pyarrow", index=False)
             results[month_key] = len(df)
+            self.logger.info("Wrote %s: %d rows", month_key, len(df))
 
         return results
 
     def health_check(self) -> bool:
         if self.input_dir.exists() and any(self.input_dir.rglob("*.parquet")):
             return True
-
         self.logger.warning(
             "GDELT health check failed: no Bronze parquet files in %s", self.input_dir
         )
         return False
+
+    def _transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        # Rename raw GDELT columns to Silver snake_case names
+        df = df.rename(columns={k: v for k, v in self.BRONZE_RENAME.items() if k in df.columns})
+
+        # Ensure all expected columns exist (fill missing with NA)
+        for col in self.SILVER_COLUMNS:
+            if col not in df.columns:
+                df[col] = pd.NA
+
+        # Vectorized datetime parse + drop unparseable rows
+        df["event_date"] = pd.to_datetime(df["event_date"], utc=True, errors="coerce")
+        df = df.dropna(subset=["event_date", "event_id"])
+
+        # Drop rows where event_id is empty string
+        df = df[df["event_id"].astype(str).str.strip() != ""]
+
+        for col in self.STRING_COLUMNS:
+            df[col] = (
+                df[col].astype(str).str.strip().replace({"nan": pd.NA, "None": pd.NA, "": pd.NA})
+            )
+            df[col] = df[col].astype("string")
+
+        for col in self.INT_COLUMNS:
+            df[col] = pd.array(pd.to_numeric(df[col], errors="coerce"), dtype="Int64")
+
+        for col in self.FLOAT_COLUMNS:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+
+        return df.reindex(columns=self.SILVER_COLUMNS)
+
+    def _available_columns(self, path: Path) -> list[str] | None:
+        """Return only the Bronze columns we care about, or None to read all."""
+        try:
+            schema = pq.read_schema(path)
+            available = set(schema.names)
+            wanted = set(self.BRONZE_RENAME.keys())
+            overlap = wanted & available
+            return list(overlap) if overlap else None
+        except Exception:
+            return None
 
     def _bronze_files(self, chunk_start: datetime, chunk_end: datetime) -> list[Path]:
         files: list[Path] = []
@@ -120,43 +207,7 @@ class GDELTEventsPreprocessor:
             if path.exists():
                 files.append(path)
             current = current.replace(day=current.day) + pd.Timedelta(days=1)
-
         return files
-
-    def _parse_record(self, raw: dict) -> dict | None:
-        event_id = self._clean_str(raw.get("event_id"))
-        if not event_id:
-            return None
-
-        event_date_raw = raw.get("event_date")
-        event_date = pd.to_datetime(event_date_raw, utc=True, errors="coerce")
-        if pd.isna(event_date):
-            return None
-
-        return {
-            "event_date": event_date,
-            "event_id": event_id,
-            "actor1_name": self._clean_str(raw.get("actor1_name")),
-            "actor1_country_code": self._clean_str(raw.get("actor1_country_code")),
-            "actor1_type1_code": self._clean_str(raw.get("actor1_type1_code")),
-            "actor2_name": self._clean_str(raw.get("actor2_name")),
-            "actor2_country_code": self._clean_str(raw.get("actor2_country_code")),
-            "actor2_type1_code": self._clean_str(raw.get("actor2_type1_code")),
-            "event_code": self._clean_str(raw.get("event_code")),
-            "event_base_code": self._clean_str(raw.get("event_base_code")),
-            "event_root_code": self._clean_str(raw.get("event_root_code")),
-            "quad_class": raw.get("quad_class"),
-            "goldstein_scale": raw.get("goldstein_scale"),
-            "num_mentions": raw.get("num_mentions"),
-            "num_sources": raw.get("num_sources"),
-            "num_articles": raw.get("num_articles"),
-            "avg_tone": raw.get("avg_tone"),
-            "actor1_geo_country_code": self._clean_str(raw.get("actor1_geo_country_code")),
-            "actor2_geo_country_code": self._clean_str(raw.get("actor2_geo_country_code")),
-            "action_geo_country_code": self._clean_str(raw.get("action_geo_country_code")),
-            "action_geo_full_name": self._clean_str(raw.get("action_geo_full_name")),
-            "source_url": self._clean_str(raw.get("source_url")),
-        }
 
     def _monthly_chunks(self, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
         chunks: list[tuple[datetime, datetime]] = []
@@ -188,49 +239,3 @@ class GDELTEventsPreprocessor:
 
     def _count_existing_rows(self, path: Path) -> int:
         return pq.read_metadata(path).num_rows
-
-    def _build_frame(self, records: list[dict]) -> pd.DataFrame:
-        df = pd.DataFrame(records, columns=self.SILVER_COLUMNS)
-        df["event_date"] = pd.to_datetime(df["event_date"], utc=True)
-
-        for column in [
-            "event_id",
-            "actor1_name",
-            "actor1_country_code",
-            "actor1_type1_code",
-            "actor2_name",
-            "actor2_country_code",
-            "actor2_type1_code",
-            "event_code",
-            "event_base_code",
-            "event_root_code",
-            "actor1_geo_country_code",
-            "actor2_geo_country_code",
-            "action_geo_country_code",
-            "action_geo_full_name",
-            "source_url",
-        ]:
-            df[column] = df[column].astype("string")
-
-        for column in self.INT_COLUMNS:
-            df[column] = pd.array(pd.to_numeric(df[column], errors="coerce"), dtype="Int64")
-
-        for column in self.FLOAT_COLUMNS:
-            df[column] = pd.to_numeric(df[column], errors="coerce").astype("float64")
-
-        df = df.dropna(subset=["event_date"])
-        df = df.reindex(columns=self.SILVER_COLUMNS)
-        return df
-
-    def _clean_str(self, value: object) -> str | None:
-        if value is None:
-            return None
-
-        try:
-            if pd.isna(value):
-                return None
-        except (TypeError, ValueError):
-            pass
-
-        text = str(value).strip()
-        return text or None

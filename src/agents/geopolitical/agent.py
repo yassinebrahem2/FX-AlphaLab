@@ -28,6 +28,7 @@ from src.shared.utils import setup_logger
 N_NODES = 5
 ADJ_FULL = torch.ones(N_NODES, N_NODES)
 FEATURE_NAMES = ["log_count", "goldstein", "conflict_frac", "avg_tone", "log_mentions"]
+_DEFAULT_DELTA_WIN = 5
 
 
 class _GATLayerV2(nn.Module):
@@ -113,10 +114,11 @@ PAIR_ZONES: dict[str, tuple[str, str]] = {
 class GeopoliticalAgent(BaseAgent):
     """Run GAT-based geopolitical risk inference on GDELT zone features."""
 
-    RISK_REGIME_THRESHOLD: float = 1.0
+    RISK_REGIME_THRESHOLD: float = 0.50
     ROLL_WIN: int = 30
     MIN_HIST: int = 10
     TOP_K_EVENTS: int = 5
+    _delta_win: int = _DEFAULT_DELTA_WIN
 
     def __init__(
         self,
@@ -147,6 +149,8 @@ class GeopoliticalAgent(BaseAgent):
         df = df.sort_values("date").reset_index(drop=True)
 
         config = self._load_config()
+        self._delta_win = int(config.get("delta_win", _DEFAULT_DELTA_WIN))
+
         states = torch.load(self.model_states_path, weights_only=True, map_location="cpu")
         models: list[_GATZoneRiskV2] = []
         for state in states:
@@ -156,13 +160,15 @@ class GeopoliticalAgent(BaseAgent):
                 n_heads=int(config.get("n_heads", 4)),
                 dropout=float(config.get("dropout", 0.2)),
             )
-            model.load_state_dict(state)
+            missing, unexpected = model.load_state_dict(state, strict=False)
+            if unexpected:
+                raise RuntimeError(f"Unexpected keys in state_dict: {unexpected}")
             model.eval()
             models.append(model)
 
         self._data = df
         self._models = models
-        self.logger.info("Loaded zone features: %d rows", len(df))
+        self.logger.info("Loaded zone features: %d rows, delta_win=%d", len(df), self._delta_win)
 
     def predict(self, pair: str, date: pd.Timestamp) -> GeopoliticalSignal:
         """Produce GeopoliticalSignal for a pair on a given UTC date."""
@@ -197,14 +203,8 @@ class GeopoliticalAgent(BaseAgent):
         history = self._history_window(gdelt_date)
 
         today_features = self._row_to_matrix(today_row)
-        if history.shape[0] < self.MIN_HIST:
-            z_features = np.zeros_like(today_features, dtype="float64")
-        else:
-            mu = history.mean(axis=0)
-            sigma = history.std(axis=0).clip(min=1e-8)
-            z_features = (today_features - mu) / sigma
-
-        zone_risk = self._ensemble_zone_risk(z_features)
+        z_input, z_features = self._build_input_features(today_features, history)
+        zone_risk = self._ensemble_zone_risk(z_input)
 
         base_risk = zone_risk[ZONE_NODE_IDX[base_zone]]
         quote_risk = zone_risk[ZONE_NODE_IDX[quote_zone]]
@@ -250,10 +250,47 @@ class GeopoliticalAgent(BaseAgent):
 
     def _history_window(self, gdelt_date: date) -> np.ndarray:
         assert self._data is not None
-        history_df = self._data[self._data["date"] < gdelt_date].tail(self.ROLL_WIN)
+        n = self.ROLL_WIN + self._delta_win
+        history_df = self._data[self._data["date"] < gdelt_date].tail(n)
         if history_df.empty:
             return np.zeros((0, len(ZONE_NODES), len(FEATURE_NAMES)), dtype="float64")
         return self._frame_to_matrix(history_df)
+
+    def _build_input_features(
+        self, today_raw: np.ndarray, history_raw: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return (z_input [5, D], z_levels [5, 5]) where D=5 (levels only) or 10 (levels+delta).
+
+        Replicates training: concatenate raw levels+delta, then rolling z-score the combined.
+        z_levels is always [5, 5] (level z-scores only) — used for explanations.
+        """
+        # Append today to history so we can compute delta consistently
+        all_raw = np.concatenate([history_raw, today_raw[np.newaxis]], axis=0)  # [T+1, 5, 5]
+        t_all = len(all_raw)
+
+        # Delta: X[t] - mean(X[t-delta_win : t])
+        delta_all = np.zeros_like(all_raw, dtype="float64")
+        for t in range(t_all):
+            hist_slice = all_raw[max(0, t - self._delta_win) : t]
+            delta_all[t] = all_raw[t] - hist_slice.mean(axis=0) if len(hist_slice) > 0 else 0.0
+
+        # Combined: [T+1, 5, 10]
+        combined_all = np.concatenate([all_raw, delta_all], axis=-1)
+
+        # z-score today using last ROLL_WIN combined history rows
+        combined_history = combined_all[:-1][-self.ROLL_WIN :]
+        combined_today = combined_all[-1]  # [5, 10]
+
+        if len(combined_history) < self.MIN_HIST:
+            z_input = np.zeros_like(combined_today, dtype="float64")
+        else:
+            mu = combined_history.mean(axis=0)
+            sigma = combined_history.std(axis=0).clip(min=1e-8)
+            z_input = (combined_today - mu) / sigma
+
+        # Level-only z-scores for explanations (first 5 dims)
+        z_levels = z_input[:, : len(FEATURE_NAMES)]
+        return z_input, z_levels
 
     def _row_to_matrix(self, row: pd.Series) -> np.ndarray:
         matrix = np.zeros((len(ZONE_NODES), len(FEATURE_NAMES)), dtype="float64")

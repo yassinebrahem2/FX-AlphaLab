@@ -18,8 +18,12 @@ def find_parquet(pair: str, tf: str) -> Path:
     """
     Scans DATA_DIR for a parquet file matching pair and timeframe.
     Handles naming pattern: ohlcv_{pair}_{tf}_{start}_{end}.parquet
+    Tries without 'm' suffix first, then falls back to with 'm' suffix.
     """
-    matches = list(DATA_DIR.glob(f"ohlcv_{pair}_{tf}_*.parquet"))
+    base = pair[:-1] if pair.endswith("m") else pair
+    matches = list(DATA_DIR.glob(f"ohlcv_{base}_{tf}_*.parquet"))
+    if not matches:
+        matches = list(DATA_DIR.glob(f"ohlcv_{base}m_{tf}_*.parquet"))
     if len(matches) == 0:
         raise FileNotFoundError(f"No parquet found for {pair} {tf} in {DATA_DIR}")
     if len(matches) > 1:

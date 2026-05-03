@@ -30,14 +30,14 @@ def validate_schema(df: pd.DataFrame, expected_columns: list[str], dataset_name:
         issues.append(f"Extra columns: {extra_cols}")
 
     # Check timestamp format (ISO 8601 UTC)
-    if 'timestamp_utc' in df.columns:
+    if "timestamp_utc" in df.columns:
         try:
-            pd.to_datetime(df['timestamp_utc'])
+            pd.to_datetime(df["timestamp_utc"])
         except Exception as e:
             issues.append(f"Invalid timestamp format: {e}")
 
         # Check if timestamps end with 'Z' (UTC marker)
-        if not df['timestamp_utc'].iloc[0].endswith('Z'):
+        if not df["timestamp_utc"].iloc[0].endswith("Z"):
             issues.append("Timestamps missing UTC 'Z' suffix")
 
     # Check for missing values
@@ -46,16 +46,16 @@ def validate_schema(df: pd.DataFrame, expected_columns: list[str], dataset_name:
         issues.append(f"Missing values found: {null_counts[null_counts > 0].to_dict()}")
 
     # Check value column is numeric
-    if 'value' in df.columns:
-        if not pd.api.types.is_numeric_dtype(df['value']):
+    if "value" in df.columns:
+        if not pd.api.types.is_numeric_dtype(df["value"]):
             issues.append("'value' column is not numeric")
 
     return {
-        'dataset': dataset_name,
-        'rows': len(df),
-        'columns': list(df.columns),
-        'issues': issues,
-        'valid': len(issues) == 0
+        "dataset": dataset_name,
+        "rows": len(df),
+        "columns": list(df.columns),
+        "issues": issues,
+        "valid": len(issues) == 0,
     }
 
 
@@ -65,23 +65,23 @@ def validate_data_quality(df: pd.DataFrame, series_id: str) -> dict:
     warnings = []
 
     # Check for duplicates
-    if 'timestamp_utc' in df.columns:
-        dup_count = df.duplicated(subset=['timestamp_utc']).sum()
+    if "timestamp_utc" in df.columns:
+        dup_count = df.duplicated(subset=["timestamp_utc"]).sum()
         if dup_count > 0:
             issues.append(f"{dup_count} duplicate timestamps found")
 
     # Check temporal ordering
-    if 'timestamp_utc' in df.columns:
-        timestamps = pd.to_datetime(df['timestamp_utc'])
+    if "timestamp_utc" in df.columns:
+        timestamps = pd.to_datetime(df["timestamp_utc"])
         if not timestamps.is_monotonic_increasing:
             issues.append("Timestamps are not in chronological order")
 
     # Check value ranges
-    if 'value' in df.columns:
-        min_val = df['value'].min()
-        max_val = df['value'].max()
-        mean_val = df['value'].mean()
-        std_val = df['value'].std()
+    if "value" in df.columns:
+        min_val = df["value"].min()
+        max_val = df["value"].max()
+        mean_val = df["value"].mean()
+        std_val = df["value"].std()
 
         if series_id == "VIXCLS":
             # VIX typically 10-80, extreme events can push >80
@@ -97,8 +97,8 @@ def validate_data_quality(df: pd.DataFrame, series_id: str) -> dict:
                 warnings.append(f"Credit spread max ({max_val:.2f}%) extremely high")
 
     # Check data completeness (should have observations for most business days)
-    if 'timestamp_utc' in df.columns:
-        timestamps = pd.to_datetime(df['timestamp_utc'])
+    if "timestamp_utc" in df.columns:
+        timestamps = pd.to_datetime(df["timestamp_utc"])
         date_range = (timestamps.max() - timestamps.min()).days
         expected_obs = date_range * 5 / 7  # Approximate business days
         coverage = len(df) / expected_obs
@@ -106,36 +106,32 @@ def validate_data_quality(df: pd.DataFrame, series_id: str) -> dict:
             warnings.append(f"Data coverage {coverage:.1%} - possible gaps")
 
     return {
-        'series_id': series_id,
-        'statistics': {
-            'min': min_val,
-            'max': max_val,
-            'mean': mean_val,
-            'std': std_val
-        } if 'value' in df.columns else {},
-        'issues': issues,
-        'warnings': warnings,
-        'quality_score': 'PASS' if len(issues) == 0 else 'FAIL'
+        "series_id": series_id,
+        "statistics": (
+            {"min": min_val, "max": max_val, "mean": mean_val, "std": std_val}
+            if "value" in df.columns
+            else {}
+        ),
+        "issues": issues,
+        "warnings": warnings,
+        "quality_score": "PASS" if len(issues) == 0 else "FAIL",
     }
 
 
 def main():
-    print("="*70)
+    print("=" * 70)
     print("DATA QUALITY VALIDATION: Risk Aversion Indicators")
-    print("="*70)
+    print("=" * 70)
 
     # Define paths
     bronze_dir = Config.DATA_DIR / "raw" / "fred"
     silver_dir = Config.DATA_DIR / "processed" / "macro"
 
     # Expected schemas
-    bronze_schema = ['date', 'value', 'series_id', 'frequency', 'units', 'source']
-    silver_schema = ['timestamp_utc', 'series_id', 'value', 'source', 'frequency', 'units']
+    bronze_schema = ["date", "value", "series_id", "frequency", "units", "source"]
+    silver_schema = ["timestamp_utc", "series_id", "value", "source", "frequency", "units"]
 
-    datasets = [
-        ('VIXCLS', 'VIX Index'),
-        ('BAMLH0A0HYM2', 'US High-Yield Credit Spreads')
-    ]
+    datasets = [("VIXCLS", "VIX Index"), ("BAMLH0A0HYM2", "US High-Yield Credit Spreads")]
 
     all_valid = True
 
@@ -159,11 +155,11 @@ def main():
         print(f"  Rows: {bronze_validation['rows']}")
         print(f"  Columns: {', '.join(bronze_validation['columns'])}")
 
-        if bronze_validation['valid']:
+        if bronze_validation["valid"]:
             print("  ✅ Schema: VALID")
         else:
             print("  ❌ Schema: INVALID")
-            for issue in bronze_validation['issues']:
+            for issue in bronze_validation["issues"]:
                 print(f"     - {issue}")
             all_valid = False
 
@@ -182,11 +178,11 @@ def main():
         print(f"  Rows: {silver_validation['rows']}")
         print(f"  Columns: {', '.join(silver_validation['columns'])}")
 
-        if silver_validation['valid']:
+        if silver_validation["valid"]:
             print("  ✅ Schema: VALID")
         else:
             print("  ❌ Schema: INVALID")
-            for issue in silver_validation['issues']:
+            for issue in silver_validation["issues"]:
                 print(f"     - {issue}")
             all_valid = False
 
@@ -196,29 +192,31 @@ def main():
 
         print(f"  Quality Score: {quality['quality_score']}")
         print("  Statistics:")
-        for key, val in quality['statistics'].items():
+        for key, val in quality["statistics"].items():
             print(f"    {key}: {val:.2f}")
 
-        if quality['issues']:
+        if quality["issues"]:
             print("  ❌ Issues:")
-            for issue in quality['issues']:
+            for issue in quality["issues"]:
                 print(f"     - {issue}")
             all_valid = False
         else:
             print("  ✅ No critical issues")
 
-        if quality['warnings']:
+        if quality["warnings"]:
             print("  ⚠️  Warnings:")
-            for warning in quality['warnings']:
+            for warning in quality["warnings"]:
                 print(f"     - {warning}")
 
         # Compare Bronze vs Silver row counts
-        if bronze_validation['rows'] != silver_validation['rows']:
-            print(f"\n  ⚠️  Row count mismatch: Bronze={bronze_validation['rows']}, Silver={silver_validation['rows']}")
+        if bronze_validation["rows"] != silver_validation["rows"]:
+            print(
+                f"\n  ⚠️  Row count mismatch: Bronze={bronze_validation['rows']}, Silver={silver_validation['rows']}"
+            )
 
         # Check date ranges match
-        bronze_dates = pd.to_datetime(bronze_df['date'])
-        silver_dates = pd.to_datetime(silver_df['timestamp_utc'])
+        bronze_dates = pd.to_datetime(bronze_df["date"])
+        silver_dates = pd.to_datetime(silver_df["timestamp_utc"])
 
         print("\n  Date Coverage:")
         print(f"    Bronze: {bronze_dates.min().date()} to {bronze_dates.max().date()}")

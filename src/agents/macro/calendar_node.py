@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from pathlib import Path
 
 import joblib
@@ -12,6 +15,8 @@ from src.shared.utils import setup_logger
 
 
 class CalendarEventsNode:
+    CACHE_VERSION = 1
+
     COVERED_PAIRS = {"EURUSD", "GBPUSD", "USDCHF", "USDJPY"}
     PAIR_COUNTRY_SIGN = {
         "EURUSD": {"US": -1},
@@ -29,6 +34,10 @@ class CalendarEventsNode:
     EVENTS_PATH = ROOT / "data" / "processed" / "events" / "events_2021-01-01_2025-12-31.csv"
     PRICE_DIR = ROOT / "data" / "processed" / "ohlcv"
     VIX_PATH = ROOT / "data" / "processed" / "macro" / "macro_VIXCLS_2021-01-01_2026-02-21.csv"
+    CACHE_PARQUET = ROOT / "data" / "processed" / "macro" / "calendar_event_scores.parquet"
+    CACHE_FINGERPRINT = (
+        ROOT / "data" / "processed" / "macro" / "calendar_event_scores_fingerprint.json"
+    )
 
     def __init__(
         self,
@@ -45,11 +54,87 @@ class CalendarEventsNode:
         self.logger = setup_logger(self.__class__.__name__, log_file)
         self._event_scores: pd.DataFrame | None = None
 
+    def _compute_fingerprint(self) -> str:
+        h = hashlib.sha256()
+        h.update(f"CACHE_VERSION={self.CACHE_VERSION}\n".encode())
+
+        code_stat = Path(__file__).stat()
+        h.update(f"{Path(__file__)}:{code_stat.st_mtime}:{code_stat.st_size}\n".encode())
+
+        fixed_paths = [
+            self.events_path,
+            self.vix_path,
+            self.artifacts_dir / "lgb_models.joblib",
+            self.artifacts_dir / "catboost_models.joblib",
+        ]
+        for path in fixed_paths:
+            if path.exists():
+                s = path.stat()
+                h.update(f"{path}:{s.st_mtime}:{s.st_size}\n".encode())
+            else:
+                h.update(f"{path}:missing\n".encode())
+
+        for path in sorted(self.price_dir.glob("ohlcv_*_D1_*.parquet")):
+            s = path.stat()
+            h.update(f"{path}:{s.st_mtime}:{s.st_size}\n".encode())
+
+        return h.hexdigest()
+
+    def _try_load_cache(self, fingerprint: str) -> pd.DataFrame | None:
+        if not self.CACHE_PARQUET.exists() or not self.CACHE_FINGERPRINT.exists():
+            return None
+        try:
+            with open(self.CACHE_FINGERPRINT) as f:
+                saved = json.load(f)
+            if saved.get("fingerprint") != fingerprint:
+                self.logger.info("Calendar event scores cache miss (inputs changed).")
+                return None
+            df = pd.read_parquet(self.CACHE_PARQUET)
+            df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True)
+            self.logger.info("Calendar event scores loaded from cache (%d rows).", len(df))
+            return df
+        except Exception as exc:
+            self.logger.warning("Cache read failed (%s); recomputing.", exc)
+            return None
+
+    def _save_cache(self, df: pd.DataFrame, fingerprint: str) -> None:
+        try:
+            self.CACHE_PARQUET.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.CACHE_PARQUET.with_suffix(".parquet.tmp")
+            df.to_parquet(tmp, engine="pyarrow", index=False)
+            os.replace(tmp, self.CACHE_PARQUET)
+            with open(self.CACHE_FINGERPRINT, "w") as f:
+                json.dump({"fingerprint": fingerprint, "rows": len(df)}, f)
+            self.logger.info("Calendar event scores cache saved (%d rows).", len(df))
+        except Exception as exc:
+            self.logger.warning("Cache save failed (%s); will recompute next run.", exc)
+
     def load(self) -> None:
+        fingerprint = self._compute_fingerprint()
+        cached = self._try_load_cache(fingerprint)
+        if cached is not None:
+            self._event_scores = cached
+            counts = self._event_scores.groupby("pair").size().to_dict()
+            for pair in sorted(self.COVERED_PAIRS):
+                self.logger.info(
+                    "Calendar events scored for %s: %d", pair, int(counts.get(pair, 0))
+                )
+            return
+
         lgb_path = self.artifacts_dir / "lgb_models.joblib"
         cb_path = self.artifacts_dir / "catboost_models.joblib"
 
+        self.logger.info("[1/6] Loading model artifacts...")
+        _n_threads = os.cpu_count() or 4
         lgb_models: dict[str, dict] = joblib.load(lgb_path)
+        for _artifact in lgb_models.values():
+            try:
+                for _name, _step in _artifact["pipeline"].steps:
+                    if hasattr(_step, "num_leaves"):  # LGBMClassifier
+                        _step.set_params(n_jobs=_n_threads)
+            except Exception:
+                pass
+
         cb_models: dict[str, dict] = {}
 
         catboost_available = True
@@ -57,6 +142,11 @@ class CalendarEventsNode:
             import catboost  # noqa: F401
 
             cb_models = joblib.load(cb_path)
+            for _artifact in cb_models.values():
+                try:
+                    _artifact["model"].set_params(thread_count=_n_threads)
+                except Exception:
+                    pass
         except Exception as exc:
             catboost_available = False
             self.logger.warning(
@@ -64,6 +154,7 @@ class CalendarEventsNode:
                 exc,
             )
 
+        self.logger.info("[2/6] Loading events and price data...")
         events = pd.read_csv(self.events_path)
         events["timestamp_utc"] = pd.to_datetime(events["timestamp_utc"], utc=True, errors="coerce")
         events = events.dropna(subset=["timestamp_utc"]).copy()
@@ -100,6 +191,7 @@ class CalendarEventsNode:
         ]
 
         for pair in sorted(self.COVERED_PAIRS):
+            self.logger.info("  price features: %s", pair)
             files = sorted(self.price_dir.glob(f"ohlcv_{pair}*_D1_*.parquet"))
             if not files:
                 self.logger.warning(
@@ -153,6 +245,7 @@ class CalendarEventsNode:
             shifted[price_feature_cols] = shifted[price_feature_cols].shift(1)
             pair_prices[pair] = shifted
 
+        self.logger.info("[3/6] Merging events with price features...")
         merged_parts: list[pd.DataFrame] = []
         for pair in sorted(self.COVERED_PAIRS):
             ep = ev[ev["pair"] == pair].copy()
@@ -236,6 +329,7 @@ class CalendarEventsNode:
 
         scored = pd.concat(merged_parts, ignore_index=True)
 
+        self.logger.info("[4/6] Joining VIX features (%d events)...", len(scored))
         vix = pd.read_csv(self.vix_path)
         vix = vix[vix["series_id"] == "VIXCLS"].copy()
         vix["timestamp_utc"] = pd.to_datetime(vix["timestamp_utc"], utc=True, errors="coerce")
@@ -310,19 +404,13 @@ class CalendarEventsNode:
         surp_abs = surp.abs()
         surp_z = scored["surprise_z"].fillna(0.0)
 
-        def _pair_q67(p: str) -> float:
-            return vol_thresholds.get(p, (0.0, 0.0))[1]
-
-        def _pair_q33(p: str) -> float:
-            return vol_thresholds.get(p, (0.0, 0.0))[0]
-
+        q67_map = {p: vol_thresholds.get(p, (0.0, 0.0))[1] for p in self.COVERED_PAIRS}
+        q33_map = {p: vol_thresholds.get(p, (0.0, 0.0))[0] for p in self.COVERED_PAIRS}
         vol_high = (
-            scored["rolling_vol_20d"].fillna(0.0)
-            > scored["pair"].map(lambda p: _pair_q67(str(p))).fillna(0.0)
+            scored["rolling_vol_20d"].fillna(0.0) > scored["pair"].map(q67_map).fillna(0.0)
         ).astype(float)
         vol_low = (
-            scored["rolling_vol_20d"].fillna(0.0)
-            < scored["pair"].map(lambda p: _pair_q33(str(p))).fillna(0.0)
+            scored["rolling_vol_20d"].fillna(0.0) < scored["pair"].map(q33_map).fillna(0.0)
         ).astype(float)
 
         scored["ia_surprise_x_vol_high"] = surp_abs * vol_high
@@ -344,8 +432,10 @@ class CalendarEventsNode:
         num_cols_all = scored.select_dtypes(include=[np.number]).columns
         scored[num_cols_all] = scored[num_cols_all].fillna(0.0)
 
+        self.logger.info("[5/6] Scoring events with models...")
         scored["prob"] = 0.0
         for pair in sorted(self.COVERED_PAIRS):
+            self.logger.info("  scoring: %s", pair)
             pair_mask = scored["pair"] == pair
             pair_df = scored.loc[pair_mask].copy()
 
@@ -399,6 +489,9 @@ class CalendarEventsNode:
                 "prob",
             ]
         ].copy()
+
+        self.logger.info("[6/6] Saving cache...")
+        self._save_cache(self._event_scores, fingerprint)
 
         counts = self._event_scores.groupby("pair").size().to_dict()
         for pair in sorted(self.COVERED_PAIRS):

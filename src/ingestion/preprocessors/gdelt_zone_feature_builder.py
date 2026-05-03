@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from src.agents.geopolitical.signal import DIRECTED_EDGES, ZONE_COUNTRIES, ZONE_NODES
 from src.shared.utils import setup_logger
@@ -31,7 +32,14 @@ class GDELTZoneFeatureBuilder:
             self.logger.warning("No clean Silver parquet files found in %s", self.clean_silver_dir)
             return 0
 
-        frames = []
+        # Load existing output once to know which dates are already done
+        existing_dates: set = set()
+        if self.output_path.exists() and not backfill:
+            existing = pd.read_parquet(self.output_path)
+            existing["date"] = pd.to_datetime(existing["date"]).dt.date
+            existing_dates = set(existing["date"])
+
+        new_rows: list[dict] = []
         for path in paths:
             try:
                 df = pd.read_parquet(path)
@@ -42,33 +50,34 @@ class GDELTZoneFeatureBuilder:
                 continue
             df = df.copy()
             df["event_day"] = pd.to_datetime(df["event_date"], utc=True).dt.floor("D")
-            frames.append(df)
+            for day, day_df in df.dropna(subset=["event_day"]).groupby("event_day"):
+                if day.date() in existing_dates:
+                    continue
+                new_rows.append(self._compute_day_features(day_df, day))
 
-        if not frames:
-            return 0
+            # Flush after each month so progress is durable
+            if new_rows:
+                self._append_rows(new_rows)
+                self.logger.info(
+                    "Flushed %d new days (last: %s)", len(new_rows), new_rows[-1]["date"]
+                )
+                existing_dates.update(r["date"] for r in new_rows)
+                new_rows = []
 
-        events = pd.concat(frames, ignore_index=True)
-        days = sorted(events["event_day"].dropna().unique())
-        if not days:
-            return 0
+        total = pq.read_metadata(self.output_path).num_rows if self.output_path.exists() else 0
+        return total
 
-        rows = [self._compute_day_features(events, day) for day in days]
-        output_df = pd.DataFrame(rows)
-
-        if self.output_path.exists() and not backfill:
+    def _append_rows(self, rows: list[dict]) -> None:
+        new_df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+        if self.output_path.exists():
             existing = pd.read_parquet(self.output_path)
-            existing = existing.copy()
             existing["date"] = pd.to_datetime(existing["date"]).dt.date
-            new_dates = set(output_df["date"]) - set(existing["date"])
-            if not new_dates:
-                return len(existing)
-            output_df = pd.concat(
-                [existing, output_df[output_df["date"].isin(new_dates)]], ignore_index=True
-            )
-
-        output_df = output_df.sort_values("date").reset_index(drop=True)
-        output_df.to_parquet(self.output_path, engine="pyarrow", index=False)
-        return len(output_df)
+            combined = pd.concat([existing, new_df], ignore_index=True)
+            combined = combined.sort_values("date").reset_index(drop=True)
+        else:
+            combined = new_df
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        combined.to_parquet(self.output_path, engine="pyarrow", index=False)
 
     def health_check(self) -> bool:
         if self.clean_silver_dir.exists() and any(self.clean_silver_dir.rglob("*.parquet")):
@@ -103,9 +112,8 @@ class GDELTZoneFeatureBuilder:
         return paths
 
     def _compute_day_features(
-        self, events: pd.DataFrame, day: pd.Timestamp
+        self, day_df: pd.DataFrame, day: pd.Timestamp
     ) -> dict[str, float | datetime.date]:
-        day_df = events[events["event_day"] == day]
         row: dict[str, float | datetime.date] = {"date": day.date()}
 
         for zone in ZONE_NODES:

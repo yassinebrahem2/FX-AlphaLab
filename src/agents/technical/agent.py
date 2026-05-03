@@ -469,7 +469,10 @@ class TechnicalAgent(BaseAgent):
         if _normalize_pair(pair) != _normalize_pair(self.pair):
             raise ValueError(f"This agent is bound to '{self.pair}'; cannot predict for '{pair}'.")
 
-        parquets = sorted(self.data_dir.glob(f"ohlcv_{self.pair}_{self.timeframe}_*.parquet"))
+        _base = self.pair[:-1] if self.pair.endswith("m") else self.pair
+        parquets = sorted(self.data_dir.glob(f"ohlcv_{_base}_{self.timeframe}_*.parquet"))
+        if not parquets:
+            parquets = sorted(self.data_dir.glob(f"ohlcv_{_base}m_{self.timeframe}_*.parquet"))
         if not parquets:
             raise FileNotFoundError(
                 f"No OHLCV parquet for {self.pair}/{self.timeframe} in {self.data_dir}"
@@ -477,7 +480,12 @@ class TechnicalAgent(BaseAgent):
 
         frames = [pd.read_parquet(p) for p in parquets]
         df = pd.concat(frames)
+        # timestamp_utc is stored as a column, not the index — promote it
+        if "timestamp_utc" in df.columns:
+            df = df.set_index("timestamp_utc")
         df.index = pd.to_datetime(df.index)
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
         df.columns = df.columns.str.lower()
         df = df.sort_index()
 
