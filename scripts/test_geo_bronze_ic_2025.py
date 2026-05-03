@@ -22,8 +22,8 @@ from scipy import stats
 ROOT = Path(__file__).resolve().parents[1]
 BRONZE_DIR = ROOT / "data/raw/gdelt_events"
 
-from src.agents.geopolitical.agent import ADJ_FULL, _GATZoneRiskV2  # noqa: E402
-from src.agents.geopolitical.signal import ZONE_COUNTRIES, ZONE_NODES  # noqa: E402
+from src.agents.geopolitical.agent import ADJ_FULL, _GATZoneRiskV2
+from src.agents.geopolitical.signal import ZONE_COUNTRIES, ZONE_NODES
 
 PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"]
 # base_zone_idx, quote_zone_idx per pair — from config pair_node_idx

@@ -77,7 +77,7 @@ print(
 print("\nZone features for 2025-06-01 (sample diagnostic):")
 zf = pd.read_parquet(ROOT / "data/processed/geopolitical/zone_features_daily.parquet")
 zf["date"] = pd.to_datetime(zf["date"]).dt.date
-import datetime  # noqa: E402
+import datetime
 
 sample = zf[zf["date"] == datetime.date(2025, 6, 1)]
 if not sample.empty:

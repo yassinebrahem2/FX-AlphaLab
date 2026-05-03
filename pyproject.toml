@@ -98,6 +98,10 @@ exclude = [
 select = ["E", "F", "W", "I", "N", "UP"]
 ignore = ["E501"]
 
+[tool.ruff.per-file-ignores]
+"scripts/*" = ["E402"]
+"src/ingestion/preprocessors/macro_signal_builder.py" = ["N806"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"

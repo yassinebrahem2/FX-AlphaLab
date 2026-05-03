@@ -13,7 +13,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 BRONZE_DIR = ROOT / "data/raw/gdelt_events"
 
-from src.agents.geopolitical.signal import ZONE_COUNTRIES, ZONE_NODES  # noqa: E402
+from src.agents.geopolitical.signal import ZONE_COUNTRIES, ZONE_NODES
 
 zf = pd.read_parquet(ROOT / "data/processed/geopolitical/zone_features_daily.parquet")
 zf["date"] = pd.to_datetime(zf["date"]).dt.date

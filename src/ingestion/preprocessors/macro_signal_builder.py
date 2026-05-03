@@ -65,10 +65,10 @@ def _kalman_smooth(series: np.ndarray) -> np.ndarray:
     if n == 0:
         return x
 
-    F = np.array([[1.0, 1.0], [0.0, 1.0]])  # noqa: N806
-    H = np.array([[1.0, 0.0]])  # noqa: N806
-    Q = np.array([[1e-4, 0.0], [0.0, 1e-3]])  # noqa: N806
-    R = np.array([[1e-2]])  # noqa: N806
+    F = np.array([[1.0, 1.0], [0.0, 1.0]])
+    H = np.array([[1.0, 0.0]])
+    Q = np.array([[1e-4, 0.0], [0.0, 1e-3]])
+    R = np.array([[1e-2]])
 
     valid = np.isfinite(x)
     if not valid.any():
@@ -76,7 +76,7 @@ def _kalman_smooth(series: np.ndarray) -> np.ndarray:
 
     first = int(np.flatnonzero(valid)[0])
     state = np.array([x[first], 0.0])
-    P = np.eye(2)  # noqa: N806
+    P = np.eye(2)
 
     pred_s = np.zeros((n, 2))
     pred_c = np.zeros((n, 2, 2))
@@ -85,20 +85,20 @@ def _kalman_smooth(series: np.ndarray) -> np.ndarray:
 
     for t in range(n):
         state = F @ state
-        P = F @ P @ F.T + Q  # noqa: N806
+        P = F @ P @ F.T + Q
         pred_s[t], pred_c[t] = state, P
         if np.isfinite(x[t]):
             y_obs = np.array([x[t]]) - H @ state
-            S = H @ P @ H.T + R  # noqa: N806
-            K = P @ H.T @ np.linalg.inv(S)  # noqa: N806
+            S = H @ P @ H.T + R
+            K = P @ H.T @ np.linalg.inv(S)
             state = state + (K @ y_obs).ravel()
-            P = (np.eye(2) - K @ H) @ P  # noqa: N806
+            P = (np.eye(2) - K @ H) @ P
         filt_s[t], filt_c[t] = state, P
 
     sm_s = filt_s.copy()
     sm_c = filt_c.copy()
     for t in range(n - 2, -1, -1):
-        C = filt_c[t] @ F.T @ np.linalg.inv(pred_c[t + 1])  # noqa: N806
+        C = filt_c[t] @ F.T @ np.linalg.inv(pred_c[t + 1])
         sm_s[t] = filt_s[t] + C @ (sm_s[t + 1] - pred_s[t + 1])
         sm_c[t] = filt_c[t] + C @ (sm_c[t + 1] - pred_c[t + 1]) @ C.T
 
@@ -579,13 +579,13 @@ class MacroSignalBuilder:
         if len(df) < artifact.best_lag + 2:
             raise ValueError(f"Insufficient history for {artifact.pair}: {len(df)} rows")
 
-        X_raw = df.reindex(columns=artifact.feature_cols).fillna(0.0)  # noqa: N806
+        X_raw = df.reindex(columns=artifact.feature_cols).fillna(0.0)
         for col in artifact.feature_cols:
             X_raw[col] = _kalman_smooth(
                 pd.to_numeric(X_raw[col], errors="coerce").to_numpy(dtype=float)
             )
 
-        X_scaled = artifact.scaler.transform(X_raw)  # noqa: N806
+        X_scaled = artifact.scaler.transform(X_raw)
         top_k = artifact.var_top_indices
         y = df["log_return"].to_numpy(dtype=float)
         timestamps = pd.to_datetime(df["timestamp_utc"], utc=True)

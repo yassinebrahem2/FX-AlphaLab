@@ -16,17 +16,17 @@ warnings.filterwarnings("ignore")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import pandas as pd  # noqa: E402
+import pandas as pd
 
-from src.agents.geopolitical.agent import GeopoliticalAgent  # noqa: E402
-from src.agents.macro.agent import MacroAgent  # noqa: E402
-from src.agents.macro.calendar_node import CalendarEventsNode  # noqa: E402
-from src.agents.sentiment.agent import SentimentAgent  # noqa: E402
-from src.agents.sentiment.gdelt_node import GDELTSignalNode  # noqa: E402
-from src.agents.sentiment.google_trends_node import GoogleTrendsSignalNode  # noqa: E402
-from src.agents.sentiment.reddit_node import RedditSignalNode  # noqa: E402
-from src.agents.sentiment.stocktwits_node import StocktwitsSignalNode  # noqa: E402
-from src.agents.technical.agent import TechnicalAgent, fuse_timeframe_signals  # noqa: E402
+from src.agents.geopolitical.agent import GeopoliticalAgent
+from src.agents.macro.agent import MacroAgent
+from src.agents.macro.calendar_node import CalendarEventsNode
+from src.agents.sentiment.agent import SentimentAgent
+from src.agents.sentiment.gdelt_node import GDELTSignalNode
+from src.agents.sentiment.google_trends_node import GoogleTrendsSignalNode
+from src.agents.sentiment.reddit_node import RedditSignalNode
+from src.agents.sentiment.stocktwits_node import StocktwitsSignalNode
+from src.agents.technical.agent import TechnicalAgent, fuse_timeframe_signals
 
 PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"]
 PAIRS_M = [p + "m" for p in PAIRS]
