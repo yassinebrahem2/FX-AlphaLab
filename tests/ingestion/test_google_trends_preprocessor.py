@@ -36,7 +36,7 @@ def test_column_naming_renames_keywords_to_theme_prefixed_snake_case(tmp_path: P
         ["CPI", "eurozone inflation", "bond yields"],
     )
 
-    preprocessor.run(force=True)
+    preprocessor.run(backfill=True)
     frame = pd.read_parquet(preprocessor.output_dir / "google_trends_weekly.parquet")
 
     assert [
@@ -51,7 +51,7 @@ def test_theme_extraction_from_filename(tmp_path: Path) -> None:
     preprocessor = _make_preprocessor(tmp_path)
     _write_trends_csv(preprocessor.input_dir / "trends_macro_indicators_0.csv", ["CPI"])
 
-    preprocessor.run(force=True)
+    preprocessor.run(backfill=True)
     frame = pd.read_parquet(preprocessor.output_dir / "google_trends_weekly.parquet")
 
     assert "macro_indicators__cpi" in frame.columns
@@ -61,7 +61,7 @@ def test_all_keyword_columns_are_float64(tmp_path: Path) -> None:
     preprocessor = _make_preprocessor(tmp_path)
     _write_trends_csv(preprocessor.input_dir / "trends_fx_pairs_0.csv", ["EURUSD", "GBPUSD"])
 
-    preprocessor.run(force=True)
+    preprocessor.run(backfill=True)
     frame = pd.read_parquet(preprocessor.output_dir / "google_trends_weekly.parquet")
 
     assert str(frame["fx_pairs__eurusd"].dtype) == "float64"
@@ -72,7 +72,7 @@ def test_date_column_is_datetime64_ns(tmp_path: Path) -> None:
     preprocessor = _make_preprocessor(tmp_path)
     _write_trends_csv(preprocessor.input_dir / "trends_risk_sentiment_0.csv", ["VIX"])
 
-    preprocessor.run(force=True)
+    preprocessor.run(backfill=True)
     frame = pd.read_parquet(preprocessor.output_dir / "google_trends_weekly.parquet")
 
     assert str(frame["date"].dtype) == "datetime64[ns]"
@@ -82,13 +82,13 @@ def test_output_written_to_correct_silver_path(tmp_path: Path) -> None:
     preprocessor = _make_preprocessor(tmp_path)
     _write_trends_csv(preprocessor.input_dir / "trends_central_banks_0.csv", ["ECB"])
 
-    result = preprocessor.run(force=True)
+    result = preprocessor.run(backfill=True)
 
     assert result == {"google_trends_weekly": 4}
     assert (preprocessor.output_dir / "google_trends_weekly.parquet").exists()
 
 
-def test_force_false_skips_rebuild_when_silver_exists(tmp_path: Path, monkeypatch) -> None:
+def test_backfill_false_skips_rebuild_when_silver_exists(tmp_path: Path, monkeypatch) -> None:
     preprocessor = _make_preprocessor(tmp_path)
     _write_trends_csv(preprocessor.input_dir / "trends_central_banks_0.csv", ["ECB"])
     silver_path = preprocessor.output_dir / "google_trends_weekly.parquet"
@@ -101,12 +101,12 @@ def test_force_false_skips_rebuild_when_silver_exists(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(pd, "read_csv", fail_read_csv)
 
-    result = preprocessor.run(force=False)
+    result = preprocessor.run(backfill=False)
 
     assert result == {"google_trends_weekly": 1}
 
 
-def test_force_true_overwrites_existing_silver(tmp_path: Path) -> None:
+def test_backfill_true_overwrites_existing_silver(tmp_path: Path) -> None:
     preprocessor = _make_preprocessor(tmp_path)
     _write_trends_csv(preprocessor.input_dir / "trends_fx_pairs_0.csv", ["EURUSD"])
     silver_path = preprocessor.output_dir / "google_trends_weekly.parquet"
@@ -114,7 +114,7 @@ def test_force_true_overwrites_existing_silver(tmp_path: Path) -> None:
         {"date": pd.date_range("2024-01-07", periods=1, freq="W-SUN"), "old": [1.0]}
     ).to_parquet(silver_path, engine="pyarrow", index=False)
 
-    result = preprocessor.run(force=True)
+    result = preprocessor.run(backfill=True)
     frame = pd.read_parquet(silver_path)
 
     assert result == {"google_trends_weekly": 4}
@@ -130,7 +130,7 @@ def test_outer_merge_preserves_union_of_dates(tmp_path: Path) -> None:
         preprocessor.input_dir / "trends_central_banks_0.csv", ["ECB"], start="2024-01-14"
     )
 
-    result = preprocessor.run(force=True)
+    result = preprocessor.run(backfill=True)
     frame = pd.read_parquet(preprocessor.output_dir / "google_trends_weekly.parquet")
 
     assert result == {"google_trends_weekly": 5}
@@ -141,7 +141,7 @@ def test_run_returns_row_count(tmp_path: Path) -> None:
     preprocessor = _make_preprocessor(tmp_path)
     _write_trends_csv(preprocessor.input_dir / "trends_macro_indicators_0.csv", ["CPI"])
 
-    result = preprocessor.run(force=True)
+    result = preprocessor.run(backfill=True)
 
     assert result == {"google_trends_weekly": 4}
 

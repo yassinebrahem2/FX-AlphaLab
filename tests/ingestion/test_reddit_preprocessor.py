@@ -224,7 +224,7 @@ def test_run_applies_filters_incremental_checkpoint_and_returns_written_count(
 
     preprocessor._label_one = _fake_label  # type: ignore[method-assign]
 
-    written = preprocessor.run()
+    written = preprocessor.run(backfill=False)
 
     assert written == 2
     assert calls == ["7", "8"]
@@ -279,6 +279,77 @@ def test_load_groq_api_keys_stops_at_first_missing(monkeypatch) -> None:
     keys = config_module._load_groq_api_keys()
 
     assert keys == ["a", "b"]
+
+
+def test_run_backfill_true_relabels_all_posts(preprocessor, tmp_path: Path):
+    """Test that backfill=True relabels all posts, including those in checkpoint."""
+    raw_path = preprocessor.raw_dir / "forex_raw.jsonl"
+    checkpoint = preprocessor.checkpoint_path
+
+    post_a = {
+        "id": "7",
+        "subreddit": "Forex",
+        "title": "EURUSD technical setup for this session",
+        "selftext": "",
+        "score": 42,
+        "created_utc": 1700000000,
+        "author": "trader_a",
+        "removed_by_category": None,
+        "link_flair_text": "Charts",
+    }
+    post_b = {
+        "id": "8",
+        "subreddit": "Forex",
+        "title": "View",
+        "selftext": "I am long USDJPY with a clear thesis into CPI.",
+        "author": "trader_b",
+        "removed_by_category": None,
+        "link_flair_text": "",
+    }
+
+    rows = [post_a, post_b]
+    _write_jsonl(raw_path, rows)
+
+    # Pre-populate checkpoint with both posts already labeled
+    _write_jsonl(
+        checkpoint,
+        [
+            {"id": "7", "existing": True},
+            {"id": "8", "existing": True},
+        ],
+    )
+
+    calls: list[str] = []
+
+    def _fake_label(row: dict) -> dict:
+        calls.append(row["id"])
+        return {
+            "id": row["id"],
+            "reasoning": "ok",
+            "content_type": "NOISE",
+            "sarcasm_irony_score": 0,
+            "sentiment_strength": 0,
+            "target_pair": None,
+            "risk_sentiment": "NEUTRAL",
+            "target_clarity": 0,
+            "stance_clarity": "NONE",
+        }
+
+    preprocessor._label_one = _fake_label  # type: ignore[method-assign]
+
+    # With backfill=True, both posts should be relabeled (not skipped even though in checkpoint)
+    written = preprocessor.run(backfill=True)
+
+    assert written == 2
+    assert calls == ["7", "8"]
+
+    # Checkpoint should be overwritten (write mode), not appended to
+    lines = preprocessor.checkpoint_path.read_text(encoding="utf-8").splitlines()
+    # With backfill, only the new labels are written (checkpoint was overwritten)
+    assert len(lines) == 2
+    parsed = [json.loads(line) for line in lines]
+    out_ids = [row["id"] for row in parsed]
+    assert out_ids == ["7", "8"]
 
 
 def test_missing_prompt_file_raises(tmp_path: Path):

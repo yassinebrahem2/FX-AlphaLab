@@ -244,7 +244,7 @@ class TestCalendarPreprocessor:
 
     def test_preprocess(self, preprocessor, sample_bronze_csv):
         """Test preprocessing Bronze data to Silver."""
-        result = preprocessor.preprocess()
+        result = preprocessor.preprocess(backfill=True)
 
         assert "events" in result
         df = result["events"]
@@ -477,7 +477,7 @@ class TestIntegration:
 
         # Preprocess
         preprocessor = CalendarPreprocessor(input_dir=bronze_dir, output_dir=silver_dir)
-        result = preprocessor.preprocess()
+        result = preprocessor.preprocess(backfill=True)
 
         assert "events" in result
         df = result["events"]
@@ -485,24 +485,123 @@ class TestIntegration:
         # Validate
         assert preprocessor.validate(df) is True
 
-        # Export
-        from datetime import datetime
+        # Verify output file exists
+        assert (silver_dir / "events.parquet").exists()
 
-        output_path = preprocessor.export(
-            df,
-            identifier="2024-02-08_2024-02-08",
-            start_date=datetime(2024, 2, 8),
-            end_date=datetime(2024, 2, 8),
-            format="csv",
+        # Verify Silver DataFrame
+        assert len(df) == 1
+        assert df.iloc[0]["country"] == "US"
+        assert df.iloc[0]["event_name"] == "Non-Farm Payrolls"
+        assert df.iloc[0]["impact"] == "high"
+        assert df.iloc[0]["actual"] == 150_000.0
+        assert df.iloc[0]["source"] == "investing.com"
+
+    def test_backfill_false_skips_when_silver_exists(self, tmp_path):
+        """Test that backfill=False skips processing when output file already exists."""
+        input_dir = tmp_path / "raw" / "calendar"
+        output_dir = tmp_path / "processed" / "events"
+        input_dir.mkdir(parents=True)
+        output_dir.mkdir(parents=True)
+
+        # Create a fake existing events.parquet
+        fake_events_df = pd.DataFrame(
+            [
+                {
+                    "timestamp_utc": "2024-01-01T00:00:00Z",
+                    "event_id": "fake_id",
+                    "country": "XX",
+                    "event_name": "FAKE",
+                    "impact": "low",
+                    "actual": None,
+                    "forecast": None,
+                    "previous": None,
+                    "source": "fake",
+                }
+            ]
         )
+        fake_events_df.to_parquet(output_dir / "events.parquet", engine="pyarrow", index=False)
 
-        assert output_path.exists()
+        preprocessor = CalendarPreprocessor(input_dir=input_dir, output_dir=output_dir)
+        result = preprocessor.preprocess(backfill=False)
 
-        # Verify Silver CSV
-        df_silver = pd.read_csv(output_path)
-        assert len(df_silver) == 1
-        assert df_silver.iloc[0]["country"] == "US"
-        assert df_silver.iloc[0]["event_name"] == "Non-Farm Payrolls"
-        assert df_silver.iloc[0]["impact"] == "high"
-        assert df_silver.iloc[0]["actual"] == 150_000.0
-        assert df_silver.iloc[0]["source"] == "investing.com"
+        # Should return empty dict and not reprocess
+        assert result == {}
+        # File should still be the fake one (not overwritten)
+        df_on_disk = pd.read_parquet(output_dir / "events.parquet")
+        assert len(df_on_disk) == 1
+        assert df_on_disk.iloc[0]["event_name"] == "FAKE"
+
+    def test_backfill_true_overwrites_existing_silver(self, tmp_path):
+        """Test that backfill=True rewrites output even if it already exists."""
+        input_dir = tmp_path / "raw" / "calendar"
+        output_dir = tmp_path / "processed" / "events"
+        input_dir.mkdir(parents=True)
+        output_dir.mkdir(parents=True)
+
+        # Create a fake existing events.parquet
+        fake_events_df = pd.DataFrame(
+            [
+                {
+                    "timestamp_utc": "2024-01-01T00:00:00Z",
+                    "event_id": "fake_id",
+                    "country": "XX",
+                    "event_name": "FAKE",
+                    "impact": "low",
+                    "actual": None,
+                    "forecast": None,
+                    "previous": None,
+                    "source": "fake",
+                }
+            ]
+        )
+        fake_events_df.to_parquet(output_dir / "events.parquet", engine="pyarrow", index=False)
+
+        # Create valid Bronze data
+        bronze_csv = input_dir / "forexfactory_calendar_2024-02-08.csv"
+        with open(bronze_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "date",
+                    "time",
+                    "country",
+                    "event",
+                    "impact",
+                    "actual",
+                    "forecast",
+                    "previous",
+                    "event_url",
+                    "scraped_at",
+                    "source",
+                ],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "date": "2024-02-08",
+                    "time": "13:30",
+                    "country": "United States",
+                    "event": "Non-Farm Payrolls",
+                    "impact": "High",
+                    "actual": "150K",
+                    "forecast": "180K",
+                    "previous": "160K",
+                    "event_url": "https://example.com",
+                    "scraped_at": "2024-02-08T12:00:00Z",
+                    "source": "investing.com",
+                }
+            )
+
+        preprocessor = CalendarPreprocessor(input_dir=input_dir, output_dir=output_dir)
+        result = preprocessor.preprocess(backfill=True)
+
+        # Should return the new data, not skip
+        assert "events" in result
+        df = result["events"]
+        assert len(df) == 1
+        assert df.iloc[0]["event_name"] == "Non-Farm Payrolls"
+
+        # File on disk should be overwritten with new data
+        df_on_disk = pd.read_parquet(output_dir / "events.parquet")
+        assert len(df_on_disk) == 1
+        assert df_on_disk.iloc[0]["event_name"] == "Non-Farm Payrolls"
