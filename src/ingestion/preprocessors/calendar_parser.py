@@ -332,6 +332,7 @@ class CalendarPreprocessor(BasePreprocessor):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        backfill: bool = False,
     ) -> dict[str, pd.DataFrame]:
         """Transform Bronze calendar data to Silver schema.
 
@@ -343,14 +344,26 @@ class CalendarPreprocessor(BasePreprocessor):
         - Event ID generation
         - Column standardization
         - Deduplication
+        - Writes consolidated output to events.parquet
 
         Args:
             start_date: Start of the processing window (filters by date)
             end_date: End of the processing window (filters by date)
+            backfill: If False (default) and output file exists, skips processing.
+                     If True, forces reprocessing and overwrites output.
 
         Returns:
             Dictionary with single key 'events' containing standardized DataFrame
         """
+        output_path = self.output_dir / "events.parquet"
+
+        # Skip-if-exists logic
+        if output_path.exists() and not backfill:
+            self.logger.info(
+                "events.parquet already exists, skipping preprocessing (backfill=False)"
+            )
+            return {}
+
         # Find all Bronze CSV files (Forex Factory calendar data)
         csv_files = list(self.input_dir.glob("forexfactory_*.csv"))
 
@@ -410,6 +423,14 @@ class CalendarPreprocessor(BasePreprocessor):
         df_events = df_events.sort_values("timestamp_utc").reset_index(drop=True)
 
         self.logger.info(f"Successfully processed {len(df_events)} unique events")
+
+        # Write atomically to events.parquet
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = output_path.with_suffix(".tmp.parquet")
+        df_events.to_parquet(tmp_path, engine="pyarrow", index=False)
+        tmp_path.replace(output_path)
+
+        self.logger.info("Wrote events data to %s (%d rows)", output_path, len(df_events))
 
         return {"events": df_events}
 

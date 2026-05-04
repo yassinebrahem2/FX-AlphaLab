@@ -109,6 +109,7 @@ class MacroNormalizer(BasePreprocessor):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        backfill: bool = False,
     ) -> dict[str, pd.DataFrame]:
         """Transform Bronze macro data to Silver schema.
 
@@ -117,23 +118,26 @@ class MacroNormalizer(BasePreprocessor):
         - Type validation (value must be numeric)
         - Deduplication by (timestamp_utc, series_id)
         - Filtering by date range
+        - Consolidates all series into single Silver file (macro_all.parquet)
 
         Args:
             start_date: Optional start date filter.
             end_date: Optional end date filter.
+            backfill: If False (default) and output file exists, skips processing.
+                     If True, forces reprocessing and overwrites output.
 
         Returns:
-            Dictionary mapping series_id to Silver DataFrame.
-
-        Example:
-            >>> normalizer = MacroNormalizer(input_dir, output_dir)
-            >>> data = normalizer.preprocess(
-            ...     start_date=datetime(2023, 1, 1),
-            ...     end_date=datetime(2023, 12, 31)
-            ... )
-            >>> dff_df = data["DFF"]
-            >>> ecb_dfr_df = data["ECB_DFR"]
+            Dictionary with single key 'macro_all' containing consolidated Silver DataFrame.
         """
+        output_path = self.output_dir / "macro_all.parquet"
+
+        # Skip-if-exists logic
+        if output_path.exists() and not backfill:
+            self.logger.info(
+                "macro_all.parquet already exists, skipping preprocessing (backfill=False)"
+            )
+            return {}
+
         self.logger.info("Starting macro preprocessing from %s", self.input_dir)
 
         result = {}
@@ -156,7 +160,31 @@ class MacroNormalizer(BasePreprocessor):
             result.update(source_data)
 
         self.logger.info("Preprocessing complete: %d series processed", len(result))
-        return result
+
+        # Consolidate all per-series DataFrames into one long-format DataFrame
+        if not result:
+            self.logger.warning("No data to consolidate")
+            return {}
+
+        all_dfs = list(result.values())
+        consolidated_df = pd.concat(all_dfs, ignore_index=True)
+
+        # Sort by series_id and timestamp_utc
+        consolidated_df = consolidated_df.sort_values(["series_id", "timestamp_utc"]).reset_index(
+            drop=True
+        )
+
+        # Write atomically to macro_all.parquet
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = output_path.with_suffix(".tmp.parquet")
+        consolidated_df.to_parquet(tmp_path, engine="pyarrow", index=False)
+        tmp_path.replace(output_path)
+
+        self.logger.info(
+            "Wrote consolidated macro data to %s (%d rows)", output_path, len(consolidated_df)
+        )
+
+        return {"macro_all": consolidated_df}
 
     def _preprocess_fred(
         self,
