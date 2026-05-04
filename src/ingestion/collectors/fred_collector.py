@@ -42,7 +42,7 @@ from pathlib import Path
 import pandas as pd
 from fredapi import Fred
 
-from src.ingestion.collectors.tabular_collector import TabularCollector
+from src.ingestion.collectors.base_collector import BaseCollector
 from src.shared.config import Config
 
 
@@ -57,7 +57,7 @@ class FREDSeries:
     units: str
 
 
-class FREDCollector(TabularCollector):
+class FREDCollector(BaseCollector):
     """Collector for FRED macroeconomic indicators - Bronze Layer (Raw Data).
 
     Uses the official FRED API via fredapi package.
@@ -80,6 +80,7 @@ class FREDCollector(TabularCollector):
     """
 
     SOURCE_NAME = "fred"
+    DEFAULT_LOOKBACK_DAYS = 730
 
     # Rate limiting: 120 calls/min = 1 call every 0.5 seconds
     MIN_REQUEST_INTERVAL = 0.5  # seconds
@@ -175,25 +176,29 @@ class FREDCollector(TabularCollector):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> dict[str, pd.DataFrame]:
+        backfill: bool = False,
+    ) -> dict[str, int]:
         """Collect all predefined FRED series (Bronze - raw data).
+
+        Fetches data and writes to Bronze CSV files internally.
 
         Args:
             start_date: Start of range (default: 2 years ago).
             end_date: End of range (default: today).
+            backfill: If True, re-fetch even if today's file exists. If False, skip existing.
 
         Returns:
-            Dictionary mapping series name to raw DataFrame with columns:
-            [date, value, series_id, frequency, units, source]
+            Dictionary mapping series name to row count written.
+            Returns 0 for series skipped due to existing files (when backfill=False).
 
         Raises:
             ValueError: If start_date is after end_date.
 
         Example:
             >>> collector = FREDCollector()
-            >>> data = collector.collect(start_date=datetime(2023, 1, 1))
-            >>> for name, df in data.items():
-            >>>     collector.export_csv(df, name)
+            >>> row_counts = collector.collect(start_date=datetime(2023, 1, 1))
+            >>> print(row_counts)
+            {'federal_funds_rate': 250, 'unemployment_rate': 0}  # 0 = skipped (already exists)
         """
         start = start_date or datetime.now() - timedelta(days=730)
         end = end_date or datetime.now()
@@ -205,14 +210,28 @@ class FREDCollector(TabularCollector):
 
         result = {}
         for series in self._ALL_SERIES:
+            # Check if today's file already exists
+            today_file = (
+                self.output_dir
+                / f"{self.SOURCE_NAME}_{series.name}_{datetime.now().strftime('%Y%m%d')}.csv"
+            )
+            if today_file.exists() and not backfill:
+                self.logger.debug("Skipping %s - file already exists: %s", series.name, today_file)
+                result[series.name] = 0
+                continue
+
             df = self.get_series(series.series_id, start_date=start, end_date=end)
             if not df.empty:
-                result[series.name] = df
-                self.logger.info("Collected %s: %d observations", series.series_id, len(df))
+                path = self._write_csv(df, series.name)
+                result[series.name] = len(df)
+                self.logger.info(
+                    "Collected and wrote %s: %d observations to %s", series.series_id, len(df), path
+                )
             else:
                 self.logger.warning("No data for %s", series.series_id)
+                result[series.name] = 0
 
-        self.logger.info("Done — collected %d series", len(result))
+        self.logger.info("Done — collected %d series", len([v for v in result.values() if v > 0]))
         return result
 
     def health_check(self) -> bool:
@@ -233,6 +252,25 @@ class FREDCollector(TabularCollector):
         except Exception as e:
             self.logger.error("FRED health check failed: %s", e)
             return False
+
+    def _write_csv(self, df: pd.DataFrame, dataset_name: str) -> Path:
+        """Write Bronze CSV with §3.1 naming: {SOURCE_NAME}_{dataset_name}_{YYYYMMDD}.csv.
+
+        Args:
+            df: DataFrame to write.
+            dataset_name: Dataset identifier (e.g., "financial_stress").
+
+        Returns:
+            Path to the written file.
+        """
+        from datetime import datetime as _dt
+
+        filename = f"{self.SOURCE_NAME}_{dataset_name}_{_dt.now().strftime('%Y%m%d')}.csv"
+        path = self.output_dir / filename
+        tmp = path.with_suffix(".tmp")
+        df.to_csv(tmp, index=False, encoding="utf-8")
+        tmp.replace(path)
+        return path
 
     # ------------------------------------------------------------------
     # FRED-specific collection methods
@@ -376,44 +414,6 @@ class FREDCollector(TabularCollector):
 
         self.logger.info("Successfully fetched %d/%d series", len(result), len(series_ids))
         return result
-
-    def export_all_to_csv(
-        self,
-        data: dict[str, pd.DataFrame] | None = None,
-        start_date: datetime | None = None,
-        end_date: datetime | None = None,
-    ) -> dict[str, Path]:
-        """Collect all series and export each to Bronze CSV (§3.1).
-
-        Args:
-            data: Pre-collected data dict (if None, will collect).
-            start_date: Start date for collection if data is None.
-            end_date: End date for collection if data is None.
-
-        Returns:
-            Dictionary mapping series name to exported file path.
-
-        Example:
-            >>> collector = FREDCollector()
-            >>> paths = collector.export_all_to_csv(start_date=datetime(2023, 1, 1))
-            >>> print(paths["financial_stress"])
-            .../fred_financial_stress_20260210.csv
-        """
-        if data is None:
-            start = start_date or datetime.now() - timedelta(days=730)
-            end = end_date or datetime.now()
-            data = self.collect(start_date=start, end_date=end)
-
-        paths = {}
-        for name, df in data.items():
-            try:
-                # Use BaseCollector.export_csv() for §3.1 naming
-                path = self.export_csv(df, name)
-                paths[name] = path
-            except Exception as e:
-                self.logger.error("Failed to export %s: %s", name, e)
-
-        return paths
 
     # ------------------------------------------------------------------
     # Caching

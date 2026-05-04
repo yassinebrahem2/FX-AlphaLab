@@ -1,5 +1,10 @@
 """Federal Reserve RSS Feed Collector - Bronze Layer (Raw Data Collection).
 
+.. note::
+    NOT IN LIVE PIPELINE — This collector is not used in the current production
+    inference pipeline. It is retained for reference and historical data collection.
+    Do not migrate or update without a deliberate architecture decision.
+
 **DEPRECATED**: This collector is deprecated in favor of FedScraperCollector.
 
 Deprecation Reasons:

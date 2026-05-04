@@ -1,6 +1,11 @@
 """
 Bank of England (BoE) News Collector.
 
+.. note::
+    NOT IN LIVE PIPELINE — This collector is not used in the current production
+    inference pipeline. It is retained for reference and historical data collection.
+    Do not migrate or update without a deliberate architecture decision.
+
 Collects press releases, MPC statements, speeches, and policy decisions from:
 - RSS feed: https://www.bankofengland.co.uk/rss/news
 - Official pages linked from RSS entries

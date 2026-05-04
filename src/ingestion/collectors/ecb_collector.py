@@ -29,7 +29,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from src.ingestion.collectors.tabular_collector import TabularCollector
+from src.ingestion.collectors.base_collector import BaseCollector
 from src.shared.config import Config
 
 
@@ -44,7 +44,7 @@ class ECBDataset:
     frequency: str  # D=Daily, B=Business/event-based
 
 
-class ECBCollector(TabularCollector):
+class ECBCollector(BaseCollector):
     """Collector for ECB policy rates and EUR exchange rates.
 
     Uses the official ECB SDMX 2.1 REST API with automatic retry logic.
@@ -57,6 +57,7 @@ class ECBCollector(TabularCollector):
     """
 
     SOURCE_NAME = "ecb"
+    DEFAULT_LOOKBACK_DAYS = 730
 
     BASE_URL = "https://data-api.ecb.europa.eu/service"
     DEFAULT_TIMEOUT = 30
@@ -100,33 +101,36 @@ class ECBCollector(TabularCollector):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> dict[str, pd.DataFrame]:
+        backfill: bool = False,
+    ) -> dict[str, int]:
         """Collect raw policy rates and exchange rates for the given date range.
 
-        Returns raw DataFrames with all ECB source fields preserved + source column.
+        Fetches data and writes to Bronze CSV files internally.
 
         Args:
             start_date: Start of range (default: 2 years ago).
             end_date: End of range (default: today).
+            backfill: If True, re-fetch even if today's files exist. If False, skip existing.
 
         Returns:
-            {"policy_rates": DataFrame, "exchange_rates": DataFrame}
-            Each DataFrame has all original ECB columns + "source" column.
+            {"policy_rates": row_count, "exchange_rates": row_count}
+            Each value is 0 if skipped (already exists and backfill=False), otherwise rows written.
         """
         start = start_date or datetime.now() - timedelta(days=730)
         end = end_date or datetime.now()
         self.logger.info("Collecting ECB data %s to %s", start.date(), end.date())
 
-        policy_rates = self.collect_policy_rates(start, end)
+        policy_rows = self.collect_policy_rates(start, end, backfill=backfill)
         time.sleep(self.REQUEST_DELAY)
-        exchange_rates = self.collect_exchange_rates(start, end)
+        exchange_rows = self.collect_exchange_rates(start, end, backfill=backfill)
 
+        result = {"policy_rates": policy_rows, "exchange_rates": exchange_rows}
         self.logger.info(
             "Done — policy_rates=%d rows, exchange_rates=%d rows",
-            len(policy_rates),
-            len(exchange_rates),
+            policy_rows,
+            exchange_rows,
         )
-        return {"policy_rates": policy_rates, "exchange_rates": exchange_rates}
+        return result
 
     def health_check(self) -> bool:
         """Check ECB API availability by requesting today's exchange rates."""
@@ -138,6 +142,29 @@ class ECBCollector(TabularCollector):
             return False
 
     # ------------------------------------------------------------------
+    # Private: CSV writing
+    # ------------------------------------------------------------------
+
+    def _write_csv(self, df: pd.DataFrame, dataset_name: str) -> Path:
+        """Write Bronze CSV with §3.1 naming: {SOURCE_NAME}_{dataset_name}_{YYYYMMDD}.csv.
+
+        Args:
+            df: DataFrame to write.
+            dataset_name: Dataset identifier (e.g., "policy_rates").
+
+        Returns:
+            Path to the written file.
+        """
+        from datetime import datetime as _dt
+
+        filename = f"{self.SOURCE_NAME}_{dataset_name}_{_dt.now().strftime('%Y%m%d')}.csv"
+        path = self.output_dir / filename
+        tmp = path.with_suffix(".tmp")
+        df.to_csv(tmp, index=False, encoding="utf-8")
+        tmp.replace(path)
+        return path
+
+    # ------------------------------------------------------------------
     # ECB-specific collection methods
     # ------------------------------------------------------------------
 
@@ -145,8 +172,9 @@ class ECBCollector(TabularCollector):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> pd.DataFrame:
-        """Collect raw ECB key policy rates.
+        backfill: bool = False,
+    ) -> int:
+        """Collect raw ECB key policy rates and write to Bronze CSV.
 
         The FM (event-based) dataflow does not support incremental updates
         via updatedAfter; the full range is always fetched.
@@ -154,13 +182,23 @@ class ECBCollector(TabularCollector):
         Args:
             start_date: Start date (default: 2 years ago).
             end_date: End date (default: today).
+            backfill: If True, re-fetch even if file exists. If False, skip existing.
 
         Returns:
-            DataFrame with all ECB source columns + "source" column.
-            No transformation applied - raw data only.
+            Row count written to CSV, or 0 if skipped.
         """
         start = start_date or datetime.now() - timedelta(days=730)
         end = end_date or datetime.now()
+
+        # Check if today's file exists
+        today_file = (
+            self.output_dir
+            / f"{self.SOURCE_NAME}_policy_rates_{datetime.now().strftime('%Y%m%d')}.csv"
+        )
+        if today_file.exists() and not backfill:
+            self.logger.debug("Skipping policy_rates - file already exists: %s", today_file)
+            return 0
+
         raw = self._fetch(
             self.POLICY_RATES,
             start_period=start.strftime("%Y-%m-%d"),
@@ -169,28 +207,44 @@ class ECBCollector(TabularCollector):
         # Add source column for Bronze layer
         if not raw.empty:
             raw["source"] = self.SOURCE_NAME
-        return raw
+            path = self._write_csv(raw, "policy_rates")
+            self.logger.info("Wrote %d policy_rates rows to %s", len(raw), path)
+            return len(raw)
+        else:
+            self.logger.warning("No policy_rates data returned")
+            return 0
 
     def collect_exchange_rates(
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         updated_after: datetime | None = None,
-    ) -> pd.DataFrame:
-        """Collect raw EUR reference exchange rates.
+        backfill: bool = False,
+    ) -> int:
+        """Collect raw EUR reference exchange rates and write to Bronze CSV.
 
         Args:
             start_date: Start date (default: 2 years ago).
             end_date: End date (default: today).
             updated_after: ISO 8601 timestamp; if set, only revisions since
                 this time are returned (incremental mode).
+            backfill: If True, re-fetch even if file exists. If False, skip existing.
 
         Returns:
-            DataFrame with all ECB source columns + "source" column.
-            No transformation applied - raw data only.
+            Row count written to CSV, or 0 if skipped.
         """
         start = start_date or datetime.now() - timedelta(days=730)
         end = end_date or datetime.now()
+
+        # Check if today's file exists
+        today_file = (
+            self.output_dir
+            / f"{self.SOURCE_NAME}_exchange_rates_{datetime.now().strftime('%Y%m%d')}.csv"
+        )
+        if today_file.exists() and not backfill:
+            self.logger.debug("Skipping exchange_rates - file already exists: %s", today_file)
+            return 0
+
         raw = self._fetch(
             self.EXCHANGE_RATES,
             start_period=start.strftime("%Y-%m-%d"),
@@ -200,7 +254,12 @@ class ECBCollector(TabularCollector):
         # Add source column for Bronze layer
         if not raw.empty:
             raw["source"] = self.SOURCE_NAME
-        return raw
+            path = self._write_csv(raw, "exchange_rates")
+            self.logger.info("Wrote %d exchange_rates rows to %s", len(raw), path)
+            return len(raw)
+        else:
+            self.logger.warning("No exchange_rates data returned")
+            return 0
 
     def incremental_update(self, last_update: datetime) -> dict[str, pd.DataFrame]:
         """Fetch data updated since last_update.

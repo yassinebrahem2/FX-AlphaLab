@@ -744,21 +744,9 @@ class TestForexFactoryCalendarCollector:
 
     def test_inherits_from_base_collector(self):
         """Test that ForexFactoryCalendarCollector inherits from BaseCollector."""
-        from src.ingestion.collectors.tabular_collector import TabularCollector
+        from src.ingestion.collectors.base_collector import BaseCollector
 
-        assert issubclass(ForexFactoryCalendarCollector, TabularCollector)
-
-    def test_export_csv_method_inherited(self, collector):
-        """Test that export_csv() method is inherited from BaseCollector."""
-        import pandas as pd
-
-        df = pd.DataFrame([{"date": "2024-02-12", "event": "Test", "source": "test"}])
-
-        output_path = collector.export_csv(df, "test_dataset")
-
-        assert output_path.exists()
-        assert "forexfactory_test_dataset_" in output_path.name
-        assert output_path.suffix == ".csv"
+        assert issubclass(ForexFactoryCalendarCollector, BaseCollector)
 
 
 class TestRateLimiting:
@@ -875,15 +863,117 @@ class TestBaseCollectorInterface:
                 start_date=datetime(2024, 2, 12), end_date=datetime(2024, 2, 12)
             )
 
-            # Verify return type
+            # Verify return type: dict[str, int]
             assert isinstance(result, dict)
             assert "calendar" in result
-            assert isinstance(result["calendar"], __import__("pandas").DataFrame)
+            assert isinstance(result["calendar"], int)
+            assert result["calendar"] > 0  # Should have written 1 row
 
-            # Verify source column exists
-            df = result["calendar"]
+            # Verify CSV was written
+            today_str = datetime.now().strftime("%Y%m%d")
+            csv_path = tmp_path / f"forexfactory_calendar_{today_str}.csv"
+            assert csv_path.exists()
+
+            # Verify CSV content
+            import pandas as pd
+
+            df = pd.read_csv(csv_path)
+            assert len(df) == 1
             assert "source" in df.columns
             assert df["source"].iloc[0] == "forexfactory.com"
+
+    def test_collect_backfill_false_skips_existing_file(self, tmp_path):
+        """Test that backfill=False skips collection when today's file exists."""
+        from datetime import datetime
+
+        collector = ForexFactoryCalendarCollector(
+            min_delay=0.1,
+            max_delay=0.2,
+            output_dir=tmp_path,
+        )
+
+        # Mock the collect_events method
+        with patch.object(collector, "collect_events") as mock_collect_events:
+            mock_collect_events.return_value = [
+                {
+                    "date": "2024-02-12",
+                    "time": "8:30am",
+                    "currency": "USD",
+                    "event": "CPI m/m",
+                    "impact": "High",
+                    "actual": "0.3%",
+                    "forecast": "0.3%",
+                    "previous": "0.4%",
+                }
+            ]
+
+            # First collect - should write files
+            result_1 = collector.collect(
+                start_date=datetime(2024, 2, 12),
+                end_date=datetime(2024, 2, 12),
+                backfill=False,
+            )
+            assert result_1["calendar"] > 0
+
+            # Verify CSV was written
+            today_str = datetime.now().strftime("%Y%m%d")
+            csv_path = tmp_path / f"forexfactory_calendar_{today_str}.csv"
+            assert csv_path.exists()
+
+            # Second collect with backfill=False - should skip existing files
+            result_2 = collector.collect(
+                start_date=datetime(2024, 2, 12),
+                end_date=datetime(2024, 2, 12),
+                backfill=False,
+            )
+            assert result_2["calendar"] == 0  # Skipped (0 rows)
+
+            # collect_events should only be called once (first collect)
+            assert mock_collect_events.call_count == 1
+
+    def test_collect_backfill_true_re_fetches(self, tmp_path):
+        """Test that backfill=True re-fetches even when file exists."""
+        from datetime import datetime
+
+        collector = ForexFactoryCalendarCollector(
+            min_delay=0.1,
+            max_delay=0.2,
+            output_dir=tmp_path,
+        )
+
+        # Mock the collect_events method
+        with patch.object(collector, "collect_events") as mock_collect_events:
+            mock_collect_events.return_value = [
+                {
+                    "date": "2024-02-12",
+                    "time": "8:30am",
+                    "currency": "USD",
+                    "event": "CPI m/m",
+                    "impact": "High",
+                    "actual": "0.3%",
+                    "forecast": "0.3%",
+                    "previous": "0.4%",
+                }
+            ]
+
+            # First collect with backfill=True
+            result_1 = collector.collect(
+                start_date=datetime(2024, 2, 12),
+                end_date=datetime(2024, 2, 12),
+                backfill=True,
+            )
+            assert result_1["calendar"] > 0
+            first_call_count = mock_collect_events.call_count
+
+            # Second collect with backfill=True - should re-fetch
+            result_2 = collector.collect(
+                start_date=datetime(2024, 2, 12),
+                end_date=datetime(2024, 2, 12),
+                backfill=True,
+            )
+            assert result_2["calendar"] > 0  # Data written
+            # collect_events should be called again
+            assert mock_collect_events.call_count == first_call_count + 1
 
 
 class TestErrorHandling:

@@ -331,20 +331,24 @@ class TestCollect:
         # Use tmp_path for cache to avoid interference
         cache_dir = tmp_path / "cache"
         collector = FREDCollector(api_key="test_key", output_dir=tmp_path, cache_dir=cache_dir)
-        data = collector.collect(start_date=start, end_date=end)
+        row_counts = collector.collect(start_date=start, end_date=end)
 
-        assert len(data) == 4
-        assert "financial_stress" in data
-        assert "federal_funds_rate" in data
-        assert "cpi" in data
-        assert "unemployment_rate" in data
+        # New behavior: collect() returns dict[str, int] with row counts
+        assert len(row_counts) == 4
+        assert "financial_stress" in row_counts
+        assert "federal_funds_rate" in row_counts
+        assert "cpi" in row_counts
+        assert "unemployment_rate" in row_counts
 
-        for name, df in data.items():
-            assert not df.empty
-            # Bronze format: date (not timestamp_utc)
-            assert "date" in df.columns
-            assert "value" in df.columns
-            assert "source" in df.columns
+        # Verify all returned values are integers (row counts)
+        for name, row_count in row_counts.items():
+            assert isinstance(row_count, int)
+            assert row_count > 0  # Should have written data
+
+        # Verify CSV files were written
+        today_str = datetime.now().strftime("%Y%m%d")
+        assert (tmp_path / f"fred_financial_stress_{today_str}.csv").exists()
+        assert (tmp_path / f"fred_federal_funds_rate_{today_str}.csv").exists()
 
     @patch("src.ingestion.collectors.fred_collector.Fred")
     def test_collect_default_date_range(self, mock_fred_class, tmp_path):
@@ -356,9 +360,12 @@ class TestCollect:
         mock_fred_class.return_value = mock_fred
 
         collector = FREDCollector(api_key="test_key", output_dir=tmp_path)
-        data = collector.collect()
+        row_counts = collector.collect()
 
-        assert len(data) > 0
+        # New behavior: collect() returns dict[str, int]
+        assert len(row_counts) > 0
+        for row_count in row_counts.values():
+            assert isinstance(row_count, int)
 
 
 # ---------------------------------------------------------------------------
@@ -492,10 +499,10 @@ class TestCaching:
 
 
 class TestCSVExport:
-    """Test CSV export functionality."""
+    """Test CSV export functionality (called internally by collect())."""
 
     @patch("src.ingestion.collectors.fred_collector.Fred")
-    def test_export_all_to_csv(self, mock_fred_class, tmp_path):
+    def test_collect_writes_csv_files(self, mock_fred_class, tmp_path):
         mock_fred = Mock()
 
         def mock_get_info(series_id):
@@ -513,16 +520,99 @@ class TestCSVExport:
         mock_fred_class.return_value = mock_fred
 
         collector = FREDCollector(api_key="test_key", output_dir=tmp_path)
-        paths = collector.export_all_to_csv(start_date=start, end_date=end)
+        row_counts = collector.collect(start_date=start, end_date=end)
 
-        assert len(paths) == 4
-        for name, path in paths.items():
-            assert path.exists()
-            assert path.suffix == ".csv"
-            assert path.name.startswith("fred_")
+        # Verify CSVs were written
+        today_str = datetime.now().strftime("%Y%m%d")
+        assert len(row_counts) == 4
+        assert all(
+            isinstance(row_count, int) and row_count > 0 for row_count in row_counts.values()
+        )
+        for name in ["financial_stress", "federal_funds_rate", "cpi", "unemployment_rate"]:
+            csv_path = tmp_path / f"fred_{name}_{today_str}.csv"
+            assert csv_path.exists()
             # Verify file is readable
-            df = pd.read_csv(path)
+            df = pd.read_csv(csv_path)
             assert not df.empty
+            assert "source" in df.columns
+            assert df["source"].iloc[0] == "fred"
+
+    @patch("src.ingestion.collectors.fred_collector.Fred")
+    def test_collect_backfill_false_skips_existing_file(self, mock_fred_class, tmp_path):
+        """Test that backfill=False skips collection when today's file exists."""
+        mock_fred = Mock()
+        mock_fred.get_series_info.return_value = SAMPLE_SERIES_INFO_DFF
+        start = datetime(2023, 1, 1)
+        end = datetime(2023, 1, 10)
+        mock_fred.get_series.return_value = make_sample_series_data(start, end)
+        mock_fred_class.return_value = mock_fred
+
+        collector = FREDCollector(api_key="test_key", output_dir=tmp_path)
+
+        # First collect - should write files
+        row_counts_1 = collector.collect(start_date=start, end_date=end, backfill=False)
+        assert all(count > 0 for count in row_counts_1.values())
+
+        # Verify CSVs were written
+        today_str = datetime.now().strftime("%Y%m%d")
+        written_files_1 = list(tmp_path.glob(f"fred_*_{today_str}.csv"))
+        assert len(written_files_1) > 0
+
+        # Second collect with backfill=False - should skip existing files
+        row_counts_2 = collector.collect(start_date=start, end_date=end, backfill=False)
+        # All should be skipped (0 rows)
+        assert all(count == 0 for count in row_counts_2.values())
+
+        # File count should not change (no new files written)
+        written_files_2 = list(tmp_path.glob(f"fred_*_{today_str}.csv"))
+        assert len(written_files_2) == len(written_files_1)
+
+    @patch("src.ingestion.collectors.fred_collector.Fred")
+    def test_collect_backfill_true_re_fetches(self, mock_fred_class, tmp_path):
+        """Test that backfill=True re-fetches even when file exists."""
+        mock_fred = Mock()
+
+        def mock_get_info(series_id):
+            return {
+                "STLFSI4": SAMPLE_SERIES_INFO_STLFSI4,
+                "DFF": SAMPLE_SERIES_INFO_DFF,
+                "CPIAUCSL": {
+                    "id": "CPIAUCSL",
+                    "title": "Consumer Price Index",
+                    "frequency_short": "M",
+                    "units": "Index",
+                },
+                "UNRATE": SAMPLE_SERIES_INFO_UNRATE,
+            }[series_id]
+
+        mock_fred.get_series_info.side_effect = mock_get_info
+        start = datetime(2023, 1, 1)
+        end = datetime(2023, 1, 10)
+
+        def mock_get_series(series_id, observation_start, observation_end):
+            freq = "D" if series_id == "DFF" else "W"
+            return make_sample_series_data(start, end, freq=freq)
+
+        mock_fred.get_series.side_effect = mock_get_series
+        mock_fred_class.return_value = mock_fred
+
+        collector = FREDCollector(api_key="test_key", output_dir=tmp_path)
+
+        # First collect with backfill=True
+        row_counts_1 = collector.collect(start_date=start, end_date=end, backfill=True)
+        assert any(count > 0 for count in row_counts_1.values())
+
+        # Get file modification times
+        today_str = datetime.now().strftime("%Y%m%d")
+        files_1 = {f: f.stat().st_mtime for f in tmp_path.glob(f"fred_*_{today_str}.csv")}
+
+        # Second collect with backfill=True - should re-fetch and overwrite
+        row_counts_2 = collector.collect(start_date=start, end_date=end, backfill=True)
+        assert any(count > 0 for count in row_counts_2.values())  # Data written
+
+        # Files should still exist with same count
+        files_2 = {f: f.stat().st_mtime for f in tmp_path.glob(f"fred_*_{today_str}.csv")}
+        assert len(files_2) == len(files_1)  # Same number of files
 
 
 # ---------------------------------------------------------------------------

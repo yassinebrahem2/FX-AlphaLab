@@ -14,7 +14,6 @@ from src.ingestion.collectors.fred_collector import FREDCollector
 from src.ingestion.collectors.google_trends_collector import GoogleTrendsCollector
 from src.ingestion.collectors.mt5_collector import MT5Collector
 from src.ingestion.collectors.stocktwits_collector import StocktwitsCollector
-from src.ingestion.collectors.tabular_collector import TabularCollector
 
 __all__ = [
     "BaseCollector",
@@ -30,6 +29,9 @@ __all__ = [
     "ForexFactoryCalendarCollector",
     "GoogleTrendsCollector",
     "MT5Collector",
-    "TabularCollector",
     "StocktwitsCollector",
 ]
+
+# Retain imports for backward compatibility but marked as legacy:
+# - TabularCollector: used by MT5Collector (non-pipeline), deprecated in favor of BaseCollector
+# - DocumentCollector: used by 6 news collectors (all non-pipeline), deprecated in favor of BaseCollector

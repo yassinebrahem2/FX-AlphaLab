@@ -1,5 +1,10 @@
 """Bank of England Sitemap-Based Scraper Collector.
 
+.. note::
+    NOT IN LIVE PIPELINE — This collector is not used in the current production
+    inference pipeline. It is retained for reference and historical data collection.
+    Do not migrate or update without a deliberate architecture decision.
+
 Collects historical BoE documents (2021-present) using XML sitemap API.
 Provides efficient historical backfill compared to RSS feeds (~10-14 days).
 

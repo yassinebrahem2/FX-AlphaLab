@@ -146,11 +146,11 @@ except ImportError:
                 pass
 
 
-from src.ingestion.collectors.tabular_collector import TabularCollector
+from src.ingestion.collectors.base_collector import BaseCollector
 from src.shared.config import Config
 
 
-class ForexFactoryCalendarCollector(TabularCollector):
+class ForexFactoryCalendarCollector(BaseCollector):
     """
     Web scraper for Forex Factory economic calendar data.
 
@@ -201,6 +201,7 @@ class ForexFactoryCalendarCollector(TabularCollector):
     """
 
     SOURCE_NAME = "forexfactory"
+    DEFAULT_LOOKBACK_DAYS = 90
     BASE_URL = "https://www.forexfactory.com"
     CALENDAR_URL = "https://www.forexfactory.com/calendar"
 
@@ -1644,19 +1645,31 @@ class ForexFactoryCalendarCollector(TabularCollector):
         self,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> dict[str, pd.DataFrame]:
+        backfill: bool = False,
+    ) -> dict[str, int]:
         """
         Collect economic calendar events from Forex Factory.
 
         Implements BaseCollector.collect() interface.
+        Fetches data and writes to Bronze CSV file internally.
 
         Args:
             start_date: Start of the collection window (default: today)
             end_date: End of the collection window (default: today)
+            backfill: If True, re-fetch even if today's file exists. If False, skip existing.
 
         Returns:
-            Dictionary with single key 'calendar' containing raw DataFrame
+            Dictionary with 'calendar' key mapping to row count written.
+            Returns 0 if skipped due to existing file (when backfill=False).
         """
+        # Check if today's file already exists
+        today_file = (
+            self.output_dir / f"{self.SOURCE_NAME}_calendar_{datetime.now().strftime('%Y%m%d')}.csv"
+        )
+        if today_file.exists() and not backfill:
+            self.logger.debug("Skipping calendar - file already exists: %s", today_file)
+            return {"calendar": 0}
+
         # Convert datetime to string format expected by collect_events
         start_str = start_date.strftime("%Y-%m-%d") if start_date else None
         end_str = end_date.strftime("%Y-%m-%d") if end_date else None
@@ -1667,15 +1680,39 @@ class ForexFactoryCalendarCollector(TabularCollector):
             end_date=end_str,
         )
 
-        # Convert to DataFrame with all source fields (§3.1)
+        # Write CSV and return row count
         if events:
             df = pd.DataFrame(events)
             # Ensure source column exists
             if "source" not in df.columns:
                 df["source"] = "forexfactory.com"
-            return {"calendar": df}
+            path = self._write_csv(df, "events")
+            row_count = len(df)
+            self.logger.info("Wrote %d events to %s", row_count, path)
+            return {"calendar": row_count}
         else:
-            return {}
+            self.logger.warning("No events collected")
+            return {"calendar": 0}
+
+    def _write_csv(self, df: pd.DataFrame, dataset_name: str) -> Path:
+        """Write Bronze CSV with section 3.1 naming: {SOURCE_NAME}_calendar_{YYYYMMDD}.csv.
+
+        Args:
+            df: DataFrame to write.
+            dataset_name: Dataset identifier (not used for filename, kept for consistency).
+
+        Returns:
+            Path to the written file.
+        """
+        from datetime import datetime as _dt
+
+        filename = f"{self.SOURCE_NAME}_calendar_{_dt.now().strftime('%Y%m%d')}.csv"
+        path = self.output_dir / filename
+        tmp = path.with_suffix(".tmp")
+        df.to_csv(tmp, index=False, encoding="utf-8")
+        tmp.replace(path)
+        self.logger.info("Wrote CSV to %s", path)
+        return path
 
     def health_check(self) -> bool:
         """
