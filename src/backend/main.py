@@ -9,11 +9,12 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.backend.routers import inference, reports, signals, trades
 from src.backend.scheduler import SchedulerService
+from src.backend.schemas.admin import TriggerResult
 from src.ingestion.orchestrator import CollectionOrchestrator
 from src.shared.config import Config
 from src.shared.config.sources import load_sources_config
@@ -62,16 +63,28 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to start scheduler: {e}")
         raise
 
-    # Store scheduler in app state for shutdown access
-    app.scheduler = scheduler
+    # Store services on app.state for tests and routes to access
+    app.state.orchestrator = orchestrator
+    app.state.scheduler = scheduler
 
     yield
 
     # ── Shutdown ────────────────────────────────────────────────────────────
     logger.info("Shutting down FX-AlphaLab backend")
-    if hasattr(app, "scheduler"):
-        app.scheduler.shutdown()
-        logger.info("Scheduler service shut down")
+    if hasattr(app.state, "scheduler") and app.state.scheduler is not None:
+        try:
+            app.state.scheduler.shutdown()
+            logger.info("Scheduler service shut down")
+        except Exception:
+            logger.exception("Error while shutting down scheduler")
+    # Close orchestrator if present
+    if hasattr(app.state, "orchestrator") and app.state.orchestrator is not None:
+        try:
+            if hasattr(app.state.orchestrator, "close"):
+                app.state.orchestrator.close()
+                logger.info("Orchestrator closed")
+        except Exception:
+            logger.exception("Error while closing orchestrator")
 
 
 app = FastAPI(
@@ -93,6 +106,37 @@ app.include_router(reports.router)
 app.include_router(signals.router)
 app.include_router(trades.router)
 app.include_router(inference.router)
+
+
+@app.post("/admin/trigger/{source_id}", tags=["admin"], response_model=TriggerResult)
+def admin_trigger(source_id: str):
+    """Admin endpoint to trigger a collection for a given source_id.
+
+    The orchestrator instance is stored on `app.state.orchestrator`.
+    """
+    if not hasattr(app.state, "orchestrator") or app.state.orchestrator is None:
+        raise HTTPException(status_code=500, detail="Orchestrator not available")
+
+    orchestrator = app.state.orchestrator
+
+    # Run the source and obtain a CollectionResult
+    result = orchestrator.run_source(source_id)
+
+    # If the source is unknown according to configured sources, return 422
+    if source_id not in getattr(orchestrator, "config", {}).sources:
+        # pass through orchestrator error when available
+        raise HTTPException(status_code=422, detail=result.error or "Unknown source")
+
+    # If orchestrator returned an error, return 500
+    if result.error is not None:
+        raise HTTPException(status_code=500, detail=result.error)
+
+    return TriggerResult(
+        source_id=result.source_id,
+        rows_written=result.rows_written,
+        backfill_performed=result.backfill_performed,
+        error=result.error,
+    )
 
 
 @app.get("/health", tags=["health"])
