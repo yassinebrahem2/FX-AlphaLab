@@ -40,6 +40,7 @@ from src.ingestion.preprocessors.base_preprocessor import BasePreprocessor
 from src.shared.config import Config
 
 _TF_RULE: dict[str, str] = {
+    "M15": "15min",
     "H1": "h",
     "H4": "4h",
     "D1": "D",

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.backend.routers import inference, reports, signals, trades
+from src.backend.routers import inference, ohlcv, reports, signals, trades
 from src.backend.scheduler import SchedulerService
 from src.backend.schemas.admin import TriggerResult
 from src.ingestion.orchestrator import CollectionOrchestrator
@@ -106,6 +106,7 @@ app.include_router(reports.router)
 app.include_router(signals.router)
 app.include_router(trades.router)
 app.include_router(inference.router)
+app.include_router(ohlcv.router)
 
 
 @app.post("/admin/trigger/{source_id}", tags=["admin"], response_model=TriggerResult)

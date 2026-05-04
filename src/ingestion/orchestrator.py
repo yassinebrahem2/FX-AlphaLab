@@ -4,9 +4,10 @@ Owns the logic of running a source's collector correctly given config.
 Pure Python class with no FastAPI or APScheduler imports.
 """
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -140,21 +141,26 @@ class CollectionOrchestrator:
 
             # Call registered collector
             collector_func = self._registry[source_id]
-            rows_written = collector_func(
+            collector_result = collector_func(
                 source_config=source_config, fetch_from=fetch_from if not should_backfill else None
             )
 
+            if isinstance(collector_result, CollectionResult):
+                result = collector_result
+            else:
+                result = CollectionResult(
+                    source_id=source_id,
+                    rows_written=collector_result,
+                    backfill_performed=backfill_performed,
+                    error=None,
+                )
+
             self.logger.info(
                 f"{source_id}: Completed successfully. "
-                f"Rows written: {rows_written}, Backfill: {backfill_performed}"
+                f"Rows written: {result.rows_written}, Backfill: {result.backfill_performed}"
             )
 
-            return CollectionResult(
-                source_id=source_id,
-                rows_written=rows_written,
-                backfill_performed=backfill_performed,
-                error=None,
-            )
+            return result
 
         except Exception as e:
             self.logger.error(f"Collection failed for {source_id}: {e}", exc_info=True)
@@ -352,54 +358,241 @@ class CollectionOrchestrator:
     # Collector stubs — each returns rows_written or raises NotImplementedError
     # ============================================================================
 
+    def _collect_dukascopy(self, source_config, fetch_from) -> int:
+        """Shared helper for all Dukascopy timeframes (D1, H4, H1).
+
+        Args:
+            source_config: SourceConfig for this collector
+            fetch_from: None for backfill, or date to start from for incremental
+
+        Returns:
+            Total Silver rows written
+        """
+        from datetime import datetime as dt_class
+
+        from src.ingestion.collectors.dukascopy_collector import DukascopyCollector
+        from src.ingestion.preprocessors.dukascopy_preprocessor import DukascopyPreprocessor
+
+        is_backfill = fetch_from is None
+
+        # Set date range for collector
+        if is_backfill:
+            collector_start_date = None
+            collector_end_date = None
+        else:
+            collector_start_date = dt_class.combine(fetch_from, time.min, tzinfo=timezone.utc)
+            # End at yesterday UTC midnight (D1 bar must be closed)
+            today_utc = dt_class.now(timezone.utc).date()
+            collector_end_date = dt_class.combine(
+                today_utc - timedelta(days=1), time.min, tzinfo=timezone.utc
+            )
+
+        # Collect Bronze 1-minute bars
+        bronze_dir = self.root / "data" / "raw" / "dukascopy"
+        collector = DukascopyCollector(output_dir=bronze_dir)
+        collector.collect(
+            start_date=collector_start_date,
+            end_date=collector_end_date,
+            backfill=is_backfill,
+        )
+
+        # Preprocess Bronze → Silver (all timeframes)
+        # Always use backfill=True for preprocessor: Silver is rebuilt from all Bronze
+        # This is cheap (resample only) and ensures freshness
+        preprocessor = DukascopyPreprocessor()
+        silver_results = preprocessor.preprocess(backfill=True)
+
+        # Count total rows across all instrument×timeframe combinations
+        rows_written = sum(len(df) for df in silver_results.values())
+        return rows_written
+
     def _collect_dukascopy_d1(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect daily OHLCV data from Dukascopy."""
-        raise NotImplementedError(
-            "Dukascopy D1 collector not yet integrated. "
-            "Awaiting DukascopyCollector interface finalization."
-        )
+        return self._collect_dukascopy(source_config, fetch_from)
 
     def _collect_dukascopy_h4(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect 4-hour OHLCV data from Dukascopy."""
-        raise NotImplementedError(
-            "Dukascopy H4 collector not yet integrated. "
-            "Awaiting DukascopyCollector interface finalization."
-        )
+        return self._collect_dukascopy(source_config, fetch_from)
 
     def _collect_dukascopy_h1(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect 1-hour OHLCV data from Dukascopy."""
-        raise NotImplementedError(
-            "Dukascopy H1 collector not yet integrated. "
-            "Awaiting DukascopyCollector interface finalization."
-        )
+        return self._collect_dukascopy(source_config, fetch_from)
 
     def _collect_gdelt_events(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect GDELT event stream."""
-        raise NotImplementedError(
-            "GDELT Events collector not yet integrated. "
-            "Awaiting GDELTEventsCollector interface finalization."
+        from datetime import datetime as dt_class
+
+        from src.ingestion.collectors.gdelt_events_collector import GDELTEventsCollector
+        from src.ingestion.preprocessors.gdelt_events_preprocessor import GDELTEventsPreprocessor
+
+        bronze_dir = self.root / "data" / "raw" / "gdelt_events"
+        silver_dir = self.root / "data" / "processed" / "events"
+
+        is_backfill = fetch_from is None
+
+        # End date: yesterday UTC midnight (GDELT publishes previous day's complete file)
+        today_utc = dt_class.now(timezone.utc).date()
+        end_dt = dt_class.combine(today_utc - timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+        # Start date
+        if is_backfill:
+            lookback_days = (
+                source_config.min_silver_days or GDELTEventsCollector.DEFAULT_LOOKBACK_DAYS
+            )
+            start_dt = end_dt - timedelta(days=lookback_days)
+        else:
+            start_dt = dt_class.combine(fetch_from, time.min, tzinfo=timezone.utc)
+
+        # Collect Bronze
+        collector = GDELTEventsCollector(output_dir=bronze_dir)
+        collector.collect(start_date=start_dt, end_date=end_dt, backfill=is_backfill)
+
+        # Preprocess Bronze → Silver
+        preprocessor = GDELTEventsPreprocessor(input_dir=bronze_dir, output_dir=silver_dir)
+        silver_results = preprocessor.run(
+            start_date=start_dt, end_date=end_dt, backfill=is_backfill
         )
+
+        # Count total rows
+        rows_written = sum(silver_results.values())
+        return rows_written
 
     def _collect_gdelt_gkg(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect GDELT Global Knowledge Graph."""
-        raise NotImplementedError(
-            "GDELT GKG collector not yet integrated. "
-            "Awaiting GDELTGKGCollector interface finalization."
+        from datetime import datetime as dt_class
+
+        from src.ingestion.collectors.gdelt_gkg_collector import GDELTGKGCollector
+        from src.ingestion.preprocessors.gdelt_gkg_preprocessor import GDELTGKGPreprocessor
+
+        bronze_dir = self.root / "data" / "raw" / "gdelt_gkg"
+        silver_dir = self.root / "data" / "processed" / "gkg"
+
+        is_backfill = fetch_from is None
+
+        # End date: yesterday UTC midnight
+        today_utc = dt_class.now(timezone.utc).date()
+        end_dt = dt_class.combine(today_utc - timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+        # Start date
+        if is_backfill:
+            lookback_days = source_config.min_silver_days or GDELTGKGCollector.DEFAULT_LOOKBACK_DAYS
+            start_dt = end_dt - timedelta(days=lookback_days)
+        else:
+            start_dt = dt_class.combine(fetch_from, time.min, tzinfo=timezone.utc)
+
+        # Get project_id from environment
+        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+
+        # Collect Bronze
+        collector = GDELTGKGCollector(output_dir=bronze_dir, project_id=project_id)
+        collector.collect(start_date=start_dt, end_date=end_dt, backfill=is_backfill)
+
+        # Preprocess Bronze → Silver
+        preprocessor = GDELTGKGPreprocessor(input_dir=bronze_dir, output_dir=silver_dir)
+        silver_results = preprocessor.run(
+            start_date=start_dt, end_date=end_dt, backfill=is_backfill
         )
 
-    def _collect_fred_macro(self, source_config, fetch_from) -> int:  # pragma: no cover
+        # Count total rows
+        rows_written = sum(silver_results.values())
+        return rows_written
+
+    def _collect_fred_macro(
+        self,
+        source_config,
+        fetch_from,
+    ) -> CollectionResult:  # pragma: no cover
         """Collect US Fed macro indicators (FRED)."""
-        raise NotImplementedError(
-            "FRED macro collector not yet integrated. "
-            "Awaiting FREDMacroCollector interface finalization."
-        )
+        try:
+            from src.ingestion.collectors.fred_collector import FREDCollector
+            from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer
+            from src.shared.config import Config
 
-    def _collect_ecb_macro(self, source_config, fetch_from) -> int:  # pragma: no cover
+            end_dt = datetime.now(timezone.utc)
+            if fetch_from is not None:
+                start_dt = fetch_from
+            else:
+                start_dt = end_dt - timedelta(days=source_config.interval_hours * 24 * 2)
+
+            collector = FREDCollector(
+                api_key=Config.FRED_API_KEY,
+                output_dir=self.root / "data" / "raw" / "fred",
+            )
+            if fetch_from is not None and not isinstance(fetch_from, datetime):
+                start_dt = datetime.combine(fetch_from, time.min, tzinfo=timezone.utc)
+            else:
+                start_dt = fetch_from
+            frames = collector.collect(start_date=start_dt, end_date=end_dt)
+            for name, df in frames.items():
+                collector.export_csv(df, name)
+
+            rows_written = sum(len(df) for df in frames.values())
+
+            normalizer = MacroNormalizer(
+                input_dir=self.root / "data" / "raw",
+                output_dir=self.root / "data" / "processed" / "macro",
+                sources=["fred", "ecb"],
+            )
+            normalizer.preprocess(start_date=start_dt, end_date=end_dt, backfill=True)
+
+            return CollectionResult(
+                source_id="fred_macro",
+                rows_written=rows_written,
+                backfill_performed=fetch_from is None,
+                error=None,
+            )
+        except Exception as e:
+            return CollectionResult(
+                source_id="fred_macro",
+                rows_written=0,
+                backfill_performed=fetch_from is None,
+                error=str(e),
+            )
+
+    def _collect_ecb_macro(
+        self,
+        source_config,
+        fetch_from,
+    ) -> CollectionResult:  # pragma: no cover
         """Collect ECB macro indicators."""
-        raise NotImplementedError(
-            "ECB macro collector not yet integrated. "
-            "Awaiting ECBMacroCollector interface finalization."
-        )
+        try:
+            from src.ingestion.collectors.ecb_collector import ECBCollector
+            from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer
+
+            end_dt = datetime.now(timezone.utc)
+            if fetch_from is not None:
+                start_dt = fetch_from
+            else:
+                start_dt = end_dt - timedelta(days=source_config.interval_hours * 24 * 2)
+
+            collector = ECBCollector(output_dir=self.root / "data" / "raw" / "ecb")
+            if fetch_from is not None and not isinstance(fetch_from, datetime):
+                start_dt = datetime.combine(fetch_from, time.min, tzinfo=timezone.utc)
+            else:
+                start_dt = fetch_from
+            result_counts = collector.collect(start_date=start_dt, end_date=end_dt)
+            rows_written = sum(result_counts.values())
+
+            normalizer = MacroNormalizer(
+                input_dir=self.root / "data" / "raw",
+                output_dir=self.root / "data" / "processed" / "macro",
+                sources=["fred", "ecb"],
+            )
+            normalizer.preprocess(start_date=start_dt, end_date=end_dt, backfill=True)
+
+            return CollectionResult(
+                source_id="ecb_macro",
+                rows_written=rows_written,
+                backfill_performed=fetch_from is None,
+                error=None,
+            )
+        except Exception as e:
+            return CollectionResult(
+                source_id="ecb_macro",
+                rows_written=0,
+                backfill_performed=fetch_from is None,
+                error=str(e),
+            )
 
     def _collect_fed_documents(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect Fed press releases and documents."""
@@ -422,12 +615,46 @@ class CollectionOrchestrator:
             "Awaiting BoeDocumentsCollector interface finalization."
         )
 
-    def _collect_google_trends(self, source_config, fetch_from) -> int:  # pragma: no cover
+    def _collect_google_trends(
+        self,
+        source_config,
+        fetch_from,
+    ) -> CollectionResult:  # pragma: no cover
         """Collect Google Trends data."""
-        raise NotImplementedError(
-            "Google Trends collector not yet integrated. "
-            "Awaiting GoogleTrendsCollector interface finalization."
-        )
+        try:
+            from src.ingestion.collectors.google_trends_collector import GoogleTrendsCollector
+            from src.ingestion.preprocessors.google_trends_preprocessor import (
+                GoogleTrendsPreprocessor,
+            )
+
+            start_dt = datetime.fromisoformat(source_config.fetch_from).replace(tzinfo=timezone.utc)
+            end_dt = datetime.now(timezone.utc)
+
+            collector = GoogleTrendsCollector(
+                output_dir=self.root / "data" / "raw" / "google_trends",
+            )
+            result_counts = collector.collect(start_date=start_dt, end_date=end_dt, force=True)
+            rows_written = sum(result_counts.values())
+
+            preprocessor = GoogleTrendsPreprocessor(
+                input_dir=self.root / "data" / "raw" / "google_trends",
+                output_dir=self.root / "data" / "processed" / "google_trends",
+            )
+            preprocessor.run(backfill=True)
+
+            return CollectionResult(
+                source_id="google_trends",
+                rows_written=rows_written,
+                backfill_performed=True,
+                error=None,
+            )
+        except Exception as e:
+            return CollectionResult(
+                source_id="google_trends",
+                rows_written=0,
+                backfill_performed=True,
+                error=str(e),
+            )
 
     def _collect_stocktwits(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect StockTwits sentiment."""
@@ -438,7 +665,52 @@ class CollectionOrchestrator:
 
     def _collect_forex_factory(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect Forex Factory economic calendar."""
-        raise NotImplementedError(
-            "Forex Factory collector not yet integrated. "
-            "Awaiting ForexFactoryCollector interface finalization."
+        from datetime import datetime as dt_class
+
+        from src.ingestion.collectors.forexfactory_collector import ForexFactoryCalendarCollector
+        from src.ingestion.preprocessors.calendar_parser import CalendarPreprocessor
+
+        bronze_dir = self.root / "data" / "raw" / "forexfactory"
+        silver_dir = self.root / "data" / "processed" / "events"
+
+        is_backfill = fetch_from is None
+
+        # ForexFactory uses naive datetimes (no tzinfo)
+        if is_backfill:
+            lookback_days = (
+                source_config.min_silver_days or ForexFactoryCalendarCollector.DEFAULT_LOOKBACK_DAYS
+            )
+            start_dt = dt_class.utcnow() - timedelta(days=lookback_days)
+        else:
+            start_dt = dt_class.combine(fetch_from, time.min)
+
+        end_dt = dt_class.utcnow()
+
+        # Collect Bronze with try/finally to ensure driver cleanup
+        collector = ForexFactoryCalendarCollector(output_dir=bronze_dir)
+        try:
+            # Always pass backfill=True to refresh data
+            # The 5-hour rate limit is the effective rate limiter; we want fresh actuals every run
+            bronze_result = collector.collect(
+                start_date=start_dt,
+                end_date=end_dt,
+                backfill=True,
+            )
+            # Bronze result: {"calendar": row_count}
+            rows_from_bronze = bronze_result.get("calendar", 0)
+        finally:
+            collector.close()
+
+        # Preprocess Bronze → Silver
+        preprocessor = CalendarPreprocessor(input_dir=bronze_dir, output_dir=silver_dir)
+        # Wrap naive datetimes with UTC for preprocessor
+        start_dt_utc = start_dt.replace(tzinfo=timezone.utc)
+        end_dt_utc = end_dt.replace(tzinfo=timezone.utc)
+        preprocessor.preprocess(
+            start_date=start_dt_utc,
+            end_date=end_dt_utc,
+            backfill=True,
         )
+
+        # Contract: return Bronze calendar rows collected in this run.
+        return rows_from_bronze

@@ -166,11 +166,31 @@ class TestCollectionOrchestrator:
         df.to_parquet(macro_dir / "macro_signal.parquet")
         assert orchestrator._silver_has_minimum("fred_macro") is False
 
-    def test_run_source_not_implemented_caught_as_error(self, orchestrator):
-        result = orchestrator.run_source("dukascopy_d1")
-        assert result.source_id == "dukascopy_d1"
-        assert result.error is not None
-        assert "not yet integrated" in result.error
+    def test_run_source_google_trends_supported(self, orchestrator):
+        from unittest.mock import Mock, patch
+
+        collector_mock = Mock()
+        collector_mock.collect.return_value = {"trends_fx_pairs_0": 7}
+
+        preprocessor_mock = Mock()
+        preprocessor_mock.run.return_value = {"google_trends_weekly": 7}
+
+        with (
+            patch(
+                "src.ingestion.collectors.google_trends_collector.GoogleTrendsCollector",
+                return_value=collector_mock,
+            ),
+            patch(
+                "src.ingestion.preprocessors.google_trends_preprocessor.GoogleTrendsPreprocessor",
+                return_value=preprocessor_mock,
+            ),
+        ):
+            result = orchestrator.run_source("google_trends")
+
+        assert result.source_id == "google_trends"
+        assert result.rows_written == 7
+        assert result.backfill_performed is True
+        assert result.error is None
 
     def test_collection_result_structure(self):
         result = CollectionResult(
