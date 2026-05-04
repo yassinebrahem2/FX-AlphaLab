@@ -111,9 +111,15 @@ class RedditPreprocessor:
             raise ValueError("At least one Groq API key is required")
         self.pool = KeyPool(groq_api_keys, self.logger)
 
-    def run(self) -> int:
+    def run(self, backfill: bool = False) -> int:
         all_raw_posts = self._load_raw_posts()
-        labeled_ids = self._load_labeled_ids()
+
+        # If backfill=True, ignore checkpoint and relabel all posts
+        if backfill:
+            labeled_ids = set()
+        else:
+            labeled_ids = self._load_labeled_ids()
+
         candidates = [p for p in all_raw_posts if str(p["id"]) not in labeled_ids]
         filtered = [p for p in candidates if self._passes_filters(p)]
 
@@ -121,7 +127,9 @@ class RedditPreprocessor:
 
         written = 0
         total = len(filtered)
-        with self.checkpoint_path.open("a", encoding="utf-8") as file_handle:
+        # When backfill=True, open in write mode "w" (overwrite); otherwise append mode "a"
+        file_mode = "w" if backfill else "a"
+        with self.checkpoint_path.open(file_mode, encoding="utf-8") as file_handle:
             for idx, post in enumerate(filtered, start=1):
                 body = post.get("selftext", "") or ""
                 flair = post.get("link_flair_text") or ""

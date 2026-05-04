@@ -165,8 +165,22 @@ class MacroSignalBuilder:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def run(self) -> Path:
-        """Load artifacts → infer → write macro_signal.parquet."""
+    def run(self, backfill: bool = False) -> Path:
+        """Load artifacts → infer → write macro_signal.parquet.
+
+        Args:
+            backfill: If False (default) and output file exists, skips inference.
+                     If True, forces reprocessing and overwrites output.
+        """
+        path = self.output_dir / f"{self.OUTPUT_NAME}.parquet"
+
+        # Skip-if-exists logic
+        if path.exists() and not backfill:
+            self.logger.info(
+                "macro_signal.parquet already exists, skipping inference (backfill=False)"
+            )
+            return path
+
         artifacts = self._load_artifacts()
 
         macro_monthly = self._load_macro_monthly()
@@ -221,34 +235,38 @@ class MacroSignalBuilder:
     # ── Data loading ───────────────────────────────────────────────────────
 
     def _load_macro_monthly(self) -> pd.DataFrame:
-        csv_files = sorted(self.macro_dir.glob("macro_*.csv"))
-        individual = [p for p in csv_files if not p.name.startswith("macro_all_")]
-        all_files = [p for p in csv_files if p.name.startswith("macro_all_")]
+        """Load consolidated macro data from macro_all.parquet.
 
-        if not individual and not all_files:
-            raise FileNotFoundError(f"No macro CSV files in {self.macro_dir}")
+        Expects MacroNormalizer.preprocess() to have written macro_all.parquet.
 
-        frames = []
-        for path in individual:
-            try:
-                frames.append(self._read_macro_csv(path))
-            except Exception as e:
-                self.logger.warning("Skipped %s: %s", path.name, e)
+        Returns:
+            DataFrame with monthly-aggregated macro data.
 
-        if all_files:
-            largest = max(all_files, key=lambda p: p.stat().st_size)
-            try:
-                frames.append(self._read_macro_csv(largest))
-            except Exception as e:
-                self.logger.warning("Skipped %s: %s", largest.name, e)
+        Raises:
+            FileNotFoundError: If macro_all.parquet doesn't exist.
+        """
+        parquet_path = self.macro_dir / "macro_all.parquet"
 
-        if not frames:
-            raise RuntimeError("All macro CSV reads failed")
+        if not parquet_path.exists():
+            raise FileNotFoundError(
+                f"No macro_all.parquet in {self.macro_dir}. "
+                "Run MacroNormalizer.preprocess(backfill=True) first."
+            )
 
-        long = pd.concat(frames, ignore_index=True)
+        # Read consolidated parquet file
+        long = pd.read_parquet(parquet_path)
+
+        # Ensure proper types and sorting
+        long["timestamp_utc"] = pd.to_datetime(long["timestamp_utc"], utc=True, errors="coerce")
+        long["series_id"] = long["series_id"].astype(str).str.strip()
+        long["value"] = pd.to_numeric(long["value"], errors="coerce")
+
+        # Remove duplicates and sort
         long = long.drop_duplicates(subset=["series_id", "timestamp_utc"]).sort_values(
             ["series_id", "timestamp_utc"]
         )
+
+        # Convert to monthly frequency with end-of-month pivot
         long["month_end"] = (
             long["timestamp_utc"].dt.to_period("M").dt.to_timestamp("M").dt.tz_localize("UTC")
         )

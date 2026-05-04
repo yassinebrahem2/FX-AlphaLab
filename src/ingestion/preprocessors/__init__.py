@@ -3,6 +3,7 @@
 from src.ingestion.preprocessors.base_preprocessor import BasePreprocessor
 from src.ingestion.preprocessors.calendar_parser import CalendarPreprocessor
 from src.ingestion.preprocessors.document_preprocessor import DocumentPreprocessor
+from src.ingestion.preprocessors.dukascopy_preprocessor import DukascopyPreprocessor
 from src.ingestion.preprocessors.google_trends_preprocessor import GoogleTrendsPreprocessor
 from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer
 from src.ingestion.preprocessors.news_preprocessor import NewsPreprocessor
@@ -12,6 +13,7 @@ __all__ = [
     "BasePreprocessor",
     "CalendarPreprocessor",
     "DocumentPreprocessor",
+    "DukascopyPreprocessor",
     "GoogleTrendsPreprocessor",
     "MacroNormalizer",
     "NewsPreprocessor",

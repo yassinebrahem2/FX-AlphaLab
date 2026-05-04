@@ -26,10 +26,10 @@ class GoogleTrendsPreprocessor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.logger = setup_logger(self.__class__.__name__, log_file)
 
-    def run(self, force: bool = False) -> dict[str, int]:
+    def run(self, backfill: bool = False) -> dict[str, int]:
         silver_path = self.output_dir / "google_trends_weekly.parquet"
 
-        if silver_path.exists() and not force:
+        if silver_path.exists() and not backfill:
             return {"google_trends_weekly": pq.read_metadata(silver_path).num_rows}
 
         csv_paths = sorted(self.input_dir.glob("trends_*.csv"))
