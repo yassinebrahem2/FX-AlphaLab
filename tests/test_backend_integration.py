@@ -27,6 +27,7 @@ def client_and_mocks():
 
     routers_mod = types.ModuleType("src.backend.routers")
     routers_mod.inference = types.SimpleNamespace(router=APIRouter())
+    routers_mod.ohlcv = types.SimpleNamespace(router=APIRouter())
     routers_mod.reports = types.SimpleNamespace(router=APIRouter())
     routers_mod.signals = types.SimpleNamespace(router=APIRouter())
     routers_mod.trades = types.SimpleNamespace(router=APIRouter())

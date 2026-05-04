@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib
+import sys
+import types
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
@@ -15,8 +18,24 @@ from src.shared.config import Config
 @pytest.fixture
 def client_and_mocks():
     """Create TestClient with patched startup dependencies."""
-    from src.backend import main as backend_main
+    from fastapi import APIRouter
+
     from src.shared.config.sources import InferenceConfig, SourceConfig, SourcesConfig
+
+    sys.modules.pop("src.backend.routers", None)
+    sys.modules.pop("src.backend.routers.ohlcv", None)
+    real_ohlcv = importlib.import_module("src.backend.routers.ohlcv")
+
+    sys.modules.pop("src.backend.main", None)
+    routers_mod = types.ModuleType("src.backend.routers")
+    routers_mod.inference = types.SimpleNamespace(router=APIRouter())
+    routers_mod.reports = types.SimpleNamespace(router=APIRouter())
+    routers_mod.signals = types.SimpleNamespace(router=APIRouter())
+    routers_mod.trades = types.SimpleNamespace(router=APIRouter())
+    routers_mod.ohlcv = real_ohlcv
+    sys.modules["src.backend.routers"] = routers_mod
+
+    backend_main = importlib.import_module("src.backend.main")
 
     sources = {
         "gdelt_events": SourceConfig(

@@ -520,8 +520,6 @@ class CollectionOrchestrator:
             )
             if fetch_from is not None and not isinstance(fetch_from, datetime):
                 start_dt = datetime.combine(fetch_from, time.min, tzinfo=timezone.utc)
-            else:
-                start_dt = fetch_from
             frames = collector.collect(start_date=start_dt, end_date=end_dt)
             for name, df in frames.items():
                 collector.export_csv(df, name)
@@ -568,8 +566,6 @@ class CollectionOrchestrator:
             collector = ECBCollector(output_dir=self.root / "data" / "raw" / "ecb")
             if fetch_from is not None and not isinstance(fetch_from, datetime):
                 start_dt = datetime.combine(fetch_from, time.min, tzinfo=timezone.utc)
-            else:
-                start_dt = fetch_from
             result_counts = collector.collect(start_date=start_dt, end_date=end_dt)
             rows_written = sum(result_counts.values())
 
