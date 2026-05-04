@@ -1,0 +1,104 @@
+# FX-AlphaLab Collection & Inference Configuration
+# Single source of truth for scheduling, intervals, and Silver minimum windows.
+# No collection parameter is hardcoded in Python code.
+
+sources:
+  dukascopy_d1:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 400
+    fetch_from: null
+    description: "Daily OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
+
+  dukascopy_h4:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 400
+    fetch_from: null
+    description: "4-hour OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
+
+  dukascopy_h1:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 400
+    fetch_from: null
+    description: "1-hour OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
+
+  gdelt_events:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 50
+    fetch_from: null
+    description: "GDELT event stream. Requires 50+ days of historical events."
+
+  gdelt_gkg:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 40
+    fetch_from: null
+    description: "GDELT Global Knowledge Graph. Requires 40+ days of historical data."
+
+  fred_macro:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 730
+    fetch_from: null
+    description: "US Fed macro indicators (FRED). Requires 2+ years of historical data for trend analysis."
+
+  ecb_macro:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 730
+    fetch_from: null
+    description: "ECB macro indicators. Requires 2+ years of historical data for trend analysis."
+
+  fed_documents:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 730
+    fetch_from: null
+    description: "Fed press releases and documents (tone sentiment). Requires 2+ years for reliable baseline."
+
+  ecb_documents:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 730
+    fetch_from: null
+    description: "ECB press releases and documents (tone sentiment). Requires 2+ years for reliable baseline."
+
+  boe_documents:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 730
+    fetch_from: null
+    description: "BoE press releases and documents (tone sentiment). Requires 2+ years for reliable baseline."
+
+  google_trends:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: null
+    fetch_from: "2021-01-01"
+    description: |
+      Google Trends data with fixed anchor date.
+      Google Trends returns relative index (0-100) within the query window.
+      Without a fixed anchor, the 0-100 scale shifts on every fetch, breaking historical comparisons.
+      Always backfill from 2021-01-01 to establish consistent scale.
+
+  stocktwits:
+    enabled: true
+    interval_hours: 24
+    min_silver_days: 14
+    fetch_from: null
+    description: "StockTwits sentiment and discussions. Requires 14+ days of historical data."
+
+  forex_factory:
+    enabled: true
+    interval_hours: 5
+    min_silver_days: 20
+    fetch_from: null
+    description: "Forex Factory economic calendar. Runs every 5 hours for fresh event data. Requires 20+ days of events."
+
+inference:
+  schedule_cron: "30 22 * * *"
+  dry_run: false
+  description: "Run inference daily at 22:30 UTC. All sources must meet minimum Silver windows before inference begins."

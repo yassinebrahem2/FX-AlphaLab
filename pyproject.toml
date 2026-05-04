@@ -32,6 +32,7 @@ dependencies = [
     "fredapi",
     "feedparser",
     "sqlalchemy",
+    "alembic>=1.13",
     "google-api-core",
     "pytz",
     "pyarrow",
@@ -43,6 +44,11 @@ dependencies = [
     "webdriver-manager>=4.0",
     "transformers>=4.30",
     "torch>=2.0",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "apscheduler>=3.10",
 ]
 
 
@@ -108,6 +114,9 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = "-v --cov=. --cov-report=term-missing"
+markers = [
+    "integration: requires real data files on disk (signals_aligned.parquet, OHLCV parquets)",
+]
 
 [tool.mypy]
 python_version = "3.10"

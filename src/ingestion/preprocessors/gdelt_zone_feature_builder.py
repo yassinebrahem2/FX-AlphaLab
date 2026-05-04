@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
 
 from src.agents.geopolitical.signal import DIRECTED_EDGES, ZONE_COUNTRIES, ZONE_NODES
 from src.shared.utils import setup_logger
@@ -40,6 +39,7 @@ class GDELTZoneFeatureBuilder:
             existing_dates = set(existing["date"])
 
         new_rows: list[dict] = []
+        total_written = 0
         for path in paths:
             try:
                 df = pd.read_parquet(path)
@@ -62,10 +62,10 @@ class GDELTZoneFeatureBuilder:
                     "Flushed %d new days (last: %s)", len(new_rows), new_rows[-1]["date"]
                 )
                 existing_dates.update(r["date"] for r in new_rows)
+                total_written += len(new_rows)
                 new_rows = []
 
-        total = pq.read_metadata(self.output_path).num_rows if self.output_path.exists() else 0
-        return total
+        return total_written
 
     def _append_rows(self, rows: list[dict]) -> None:
         new_df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)

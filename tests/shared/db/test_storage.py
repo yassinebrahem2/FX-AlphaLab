@@ -213,6 +213,22 @@ class TestCSVExport:
 
     def test_export_to_csv(self):
         """Test exporting a table to CSV."""
+        # Insert test data first
+        data = [
+            {
+                "timestamp_utc": "2024-01-01 12:00:00",
+                "pair": "TESTPAIR1",
+                "timeframe": "M1",
+                "open": 1.0,
+                "high": 1.1,
+                "low": 0.9,
+                "close": 1.05,
+                "volume": 100,
+                "source": "pytest",
+            }
+        ]
+        insert_fx_prices(data)
+
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "fx_prices.csv"
             export_to_csv("fx_prices", str(output_path))
@@ -245,5 +261,9 @@ class TestCSVExport:
             "ecb_policy_rates",
             "ecb_exchange_rates",
             "macro_indicators",
+            "agent_signals",
+            "coordinator_signals",
+            "coordinator_reports",
+            "trade_log",
         }
         assert ALLOWED_TABLES == expected_tables

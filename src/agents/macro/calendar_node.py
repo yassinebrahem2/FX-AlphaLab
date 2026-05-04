@@ -31,7 +31,6 @@ class CalendarEventsNode:
 
     ROOT = Path(__file__).resolve().parents[3]
     ARTIFACTS_DIR = ROOT / "models" / "production" / "macro"
-    EVENTS_PATH = ROOT / "data" / "processed" / "events" / "events_2021-01-01_2025-12-31.csv"
     PRICE_DIR = ROOT / "data" / "processed" / "ohlcv"
     VIX_PATH = ROOT / "data" / "processed" / "macro" / "macro_VIXCLS_2021-01-01_2026-02-21.csv"
     CACHE_PARQUET = ROOT / "data" / "processed" / "macro" / "calendar_event_scores.parquet"
@@ -48,11 +47,41 @@ class CalendarEventsNode:
         log_file: Path | None = None,
     ) -> None:
         self.artifacts_dir = artifacts_dir or self.ARTIFACTS_DIR
-        self.events_path = events_path or self.EVENTS_PATH
+        self.events_path = events_path or self._resolve_events_path(
+            self.ROOT / "data" / "processed" / "events"
+        )
         self.price_dir = price_dir or self.PRICE_DIR
         self.vix_path = vix_path or self.VIX_PATH
         self.logger = setup_logger(self.__class__.__name__, log_file)
         self._event_scores: pd.DataFrame | None = None
+
+    @staticmethod
+    def _resolve_events_path(events_dir: Path) -> Path:
+        """Resolve the latest events_*.csv file in the directory.
+
+        Files follow events_{START}_{END}.csv naming convention, so lexicographic
+        sort provides chronological ordering. Returns the lexicographically last file.
+
+        Args:
+            events_dir: Directory containing events_*.csv files.
+
+        Returns:
+            Path to the latest events CSV file.
+
+        Raises:
+            FileNotFoundError: If no events_*.csv files exist in the directory.
+        """
+        if not events_dir.exists():
+            raise FileNotFoundError(f"Events directory does not exist: {events_dir}")
+
+        matches = sorted(events_dir.glob("events_*.csv"))
+        if not matches:
+            raise FileNotFoundError(
+                f"No events_*.csv files found in {events_dir}. "
+                f"Ensure ForexFactory collector has run and generated event data."
+            )
+
+        return matches[-1]  # lexicographically last = latest date range
 
     def _compute_fingerprint(self) -> str:
         h = hashlib.sha256()

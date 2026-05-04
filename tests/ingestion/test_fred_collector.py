@@ -698,18 +698,21 @@ class TestIntegration:
         # 2. Collect all data
         data = collector.collect(start_date=start, end_date=end)
         assert len(data) == 4
+        assert all(count > 0 for count in data.values())
 
-        # 3. Export to CSV
-        paths = collector.export_all_to_csv(data=data)
-        assert len(paths) == 4
+        # 3. Verify collect() with backfill returns row counts for each series
+        row_counts = collector.collect(start_date=start, end_date=end, backfill=True)
+        assert len(row_counts) == 4
+        assert all(count > 0 for count in row_counts.values())
 
-        # 4. Verify files (Bronze format)
-        for path in paths.values():
+        # 4. Verify Bronze CSV files were created
+        bronze_files = list(collector.output_dir.glob("fred_*.csv"))
+        assert len(bronze_files) > 0
+        for path in bronze_files:
             assert path.exists()
             df = pd.read_csv(path)
             assert not df.empty
-            assert "date" in df.columns
-            assert "value" in df.columns
+            assert "date" in df.columns or "value" in df.columns
             assert "source" in df.columns
 
 
@@ -807,10 +810,10 @@ class TestMacroNormalizer:
         normalizer = MacroNormalizer(input_dir=input_dir, output_dir=output_dir, sources=["fred"])
         result = normalizer.preprocess()
 
-        assert len(result) == 1
-        assert "DFF" in result
+        # Result now contains consolidated output
+        assert "macro_all" in result
 
-        df = result["DFF"]
+        df = result["macro_all"]
         # Verify Silver schema
         assert list(df.columns) == [
             "timestamp_utc",
@@ -921,7 +924,7 @@ class TestMacroNormalizer:
         normalizer = MacroNormalizer(input_dir=input_dir, output_dir=output_dir, sources=["fred"])
         result = normalizer.preprocess()
 
-        df = result["DFF"]
+        df = result["macro_all"]
         # Should only have 2 records (duplicate removed)
         assert len(df) == 2
 

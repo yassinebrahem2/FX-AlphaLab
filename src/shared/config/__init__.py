@@ -25,8 +25,8 @@ def _load_groq_api_keys() -> list[str]:
 class Config:
     """Application configuration."""
 
-    # Project paths
-    ROOT_DIR = Path(__file__).parent.parent.parent
+    # Project paths (4 parents: config/__init__.py -> config -> shared -> src -> project_root)
+    ROOT_DIR = Path(__file__).parent.parent.parent.parent
     DATA_DIR = ROOT_DIR / "data"
     LOGS_DIR = ROOT_DIR / "logs"
 

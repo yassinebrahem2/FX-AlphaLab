@@ -30,8 +30,18 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from .models import ECBExchangeRate, ECBPolicyRate, EconomicEvent, FXPrice, MacroIndicator
-from .session import get_db
+from .models import (
+    AgentSignal,
+    CoordinatorReportRow,
+    CoordinatorSignalRow,
+    ECBExchangeRate,
+    ECBPolicyRate,
+    EconomicEvent,
+    FXPrice,
+    MacroIndicator,
+    TradeLogRow,
+)
+from .session import SessionLocal, get_db
 
 # Whitelist of allowed table names for export (SQL injection prevention)
 ALLOWED_TABLES = {
@@ -40,6 +50,10 @@ ALLOWED_TABLES = {
     "ecb_policy_rates",
     "ecb_exchange_rates",
     "macro_indicators",
+    "agent_signals",
+    "coordinator_signals",
+    "coordinator_reports",
+    "trade_log",
 }
 
 
@@ -82,7 +96,8 @@ def insert_fx_prices(data: list[dict]) -> int:
         return 0
 
     inserted = 0
-    with get_db() as session:
+    session = SessionLocal()
+    try:
         for record in data:
             try:
                 price = FXPrice(
@@ -102,6 +117,12 @@ def insert_fx_prices(data: list[dict]) -> int:
             except IntegrityError:
                 session.rollback()
                 continue
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
     return inserted
 
@@ -134,7 +155,8 @@ def insert_economic_events(data: list[dict]) -> int:
         return 0
 
     inserted = 0
-    with get_db() as session:
+    session = SessionLocal()
+    try:
         for record in data:
             try:
                 event = EconomicEvent(
@@ -153,6 +175,12 @@ def insert_economic_events(data: list[dict]) -> int:
             except IntegrityError:
                 session.rollback()
                 continue
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
     return inserted
 
@@ -183,7 +211,8 @@ def insert_ecb_policy_rates(data: list[dict]) -> int:
         return 0
 
     inserted = 0
-    with get_db() as session:
+    session = SessionLocal()
+    try:
         for record in data:
             try:
                 rate = ECBPolicyRate(
@@ -200,6 +229,12 @@ def insert_ecb_policy_rates(data: list[dict]) -> int:
             except IntegrityError:
                 session.rollback()
                 continue
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
     return inserted
 
@@ -229,7 +264,8 @@ def insert_ecb_exchange_rates(data: list[dict]) -> int:
         return 0
 
     inserted = 0
-    with get_db() as session:
+    session = SessionLocal()
+    try:
         for record in data:
             try:
                 rate = ECBExchangeRate(
@@ -245,6 +281,12 @@ def insert_ecb_exchange_rates(data: list[dict]) -> int:
             except IntegrityError:
                 session.rollback()
                 continue
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
     return inserted
 
@@ -273,7 +315,8 @@ def insert_macro_indicators(data: list[dict]) -> int:
         return 0
 
     inserted = 0
-    with get_db() as session:
+    session = SessionLocal()
+    try:
         for record in data:
             try:
                 indicator = MacroIndicator(
@@ -288,7 +331,141 @@ def insert_macro_indicators(data: list[dict]) -> int:
             except IntegrityError:
                 session.rollback()
                 continue
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
+    return inserted
+
+
+def insert_agent_signals(data: list[dict]) -> int:
+    """Insert agent signal rows (one per date/pair). Skips duplicates silently."""
+    if not data:
+        return 0
+    inserted = 0
+    with get_db() as session:
+        for record in data:
+            try:
+                row = AgentSignal(
+                    date=record["date"],
+                    pair=record["pair"],
+                    tech_direction=record.get("tech_direction"),
+                    tech_confidence=record.get("tech_confidence"),
+                    tech_vol_regime=record.get("tech_vol_regime"),
+                    geo_bilateral_risk=record.get("geo_bilateral_risk"),
+                    geo_risk_regime=record.get("geo_risk_regime"),
+                    macro_direction=record.get("macro_direction"),
+                    macro_confidence=record.get("macro_confidence"),
+                    macro_carry_score=record.get("macro_carry_score"),
+                    macro_regime_score=record.get("macro_regime_score"),
+                    macro_fundamental_score=record.get("macro_fundamental_score"),
+                    macro_surprise_score=record.get("macro_surprise_score"),
+                    macro_bias_score=record.get("macro_bias_score"),
+                    macro_dominant_driver=record.get("macro_dominant_driver"),
+                    usdjpy_stocktwits_vol_signal=record.get("usdjpy_stocktwits_vol_signal"),
+                    gdelt_tone_zscore=record.get("gdelt_tone_zscore"),
+                    gdelt_attention_zscore=record.get("gdelt_attention_zscore"),
+                    macro_attention_zscore=record.get("macro_attention_zscore"),
+                    composite_stress_flag=record.get("composite_stress_flag"),
+                )
+                session.add(row)
+                session.flush()
+                inserted += 1
+            except IntegrityError:
+                session.rollback()
+    return inserted
+
+
+def insert_coordinator_signals(data: list[dict]) -> int:
+    """Insert coordinator signal rows (one per date/pair). Skips duplicates silently."""
+    if not data:
+        return 0
+    inserted = 0
+    with get_db() as session:
+        for record in data:
+            try:
+                row = CoordinatorSignalRow(
+                    date=record["date"],
+                    pair=record["pair"],
+                    vol_signal=record.get("vol_signal"),
+                    vol_source=record.get("vol_source"),
+                    direction=record.get("direction"),
+                    direction_source=record.get("direction_source"),
+                    direction_horizon=record.get("direction_horizon"),
+                    direction_ic=record.get("direction_ic"),
+                    confidence_tier=record.get("confidence_tier"),
+                    flat_reason=record.get("flat_reason"),
+                    regime=record.get("regime"),
+                    suggested_action=record.get("suggested_action"),
+                    conviction_score=record.get("conviction_score"),
+                    position_size_pct=record.get("position_size_pct"),
+                    sl_pct=record.get("sl_pct"),
+                    tp_pct=record.get("tp_pct"),
+                    risk_reward_ratio=record.get("risk_reward_ratio"),
+                    estimated_vol_3d=record.get("estimated_vol_3d"),
+                    is_top_pick=record.get("is_top_pick", False),
+                    overall_action=record.get("overall_action"),
+                )
+                session.add(row)
+                session.flush()
+                inserted += 1
+            except IntegrityError:
+                session.rollback()
+    return inserted
+
+
+def insert_coordinator_report(record: dict) -> bool:
+    """Insert a single coordinator report row. Returns False if date already exists."""
+    with get_db() as session:
+        try:
+            row = CoordinatorReportRow(
+                date=record["date"],
+                top_pick=record.get("top_pick"),
+                overall_action=record["overall_action"],
+                hold_reason=record.get("hold_reason"),
+                global_regime=record.get("global_regime"),
+                narrative_context=record.get("narrative_context"),
+            )
+            session.add(row)
+            session.flush()
+            return True
+        except IntegrityError:
+            session.rollback()
+            return False
+
+
+def insert_trade_log(data: list[dict], backtest_run: str = "live") -> int:
+    """Insert closed trade records into trade_log."""
+    if not data:
+        return 0
+    inserted = 0
+    with get_db() as session:
+        for record in data:
+            try:
+                row = TradeLogRow(
+                    backtest_run=record.get("backtest_run", backtest_run),
+                    pair=record["pair"],
+                    direction=record["direction"],
+                    entry_date=record["entry_date"],
+                    entry_price=record["entry_price"],
+                    exit_date=record.get("exit_date"),
+                    exit_price=record.get("exit_price"),
+                    exit_reason=record.get("exit_reason"),
+                    hold_days=record.get("hold_days"),
+                    position_pct=record.get("position_pct"),
+                    cost_pct=record.get("cost_pct"),
+                    gross_pnl_pct=record.get("gross_pnl_pct"),
+                    net_pnl_pct=record.get("net_pnl_pct"),
+                    equity_delta=record.get("equity_delta"),
+                )
+                session.add(row)
+                session.flush()
+                inserted += 1
+            except IntegrityError:
+                session.rollback()
     return inserted
 
 

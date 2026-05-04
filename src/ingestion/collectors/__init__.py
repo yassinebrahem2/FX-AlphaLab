@@ -4,6 +4,7 @@ from src.ingestion.collectors.base_collector import BaseCollector
 from src.ingestion.collectors.boe_collector import BoECollector
 from src.ingestion.collectors.boe_scraper_collector import BoEScraperCollector
 from src.ingestion.collectors.document_collector import DocumentCollector
+from src.ingestion.collectors.dukascopy_collector import DukascopyCollector
 from src.ingestion.collectors.ecb_collector import ECBCollector
 from src.ingestion.collectors.ecb_news_collector import ECBNewsCollector
 from src.ingestion.collectors.ecb_scraper_collector import ECBScraperCollector
@@ -23,6 +24,7 @@ __all__ = [
     "ECBCollector",
     "ECBNewsCollector",
     "ECBScraperCollector",
+    "DukascopyCollector",
     "FedCollector",
     "FedScraperCollector",
     "FREDCollector",

@@ -69,7 +69,7 @@ def mock_clean_silver_df() -> pd.DataFrame:
 
 @pytest.fixture
 def mock_model_states() -> list[dict[str, torch.Tensor]]:
-    return [_GATZoneRiskV2().state_dict() for _ in range(15)]
+    return [_GATZoneRiskV2(in_features=10).state_dict() for _ in range(15)]
 
 
 @pytest.fixture
