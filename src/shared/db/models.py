@@ -4,11 +4,13 @@ from sqlalchemy import (
     Column,
     Date,
     Float,
+    ForeignKey,
     Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -100,6 +102,37 @@ class MacroIndicator(Base):
         UniqueConstraint("timestamp_utc", "series_id"),
         Index("idx_macro_indicators_time", "timestamp_utc"),
     )
+
+
+class UserAccount(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    full_name = Column(String(120))
+    role = Column(String(50), nullable=False, default="trader")
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
+    updated_at = Column(TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now())
+    last_login_at = Column(TIMESTAMP)
+
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash = Column(String(255), nullable=False, unique=True, index=True)
+    jti = Column(String(36), nullable=False, unique=True, index=True)
+    issued_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
+    expires_at = Column(TIMESTAMP, nullable=False)
+    revoked_at = Column(TIMESTAMP)
+    last_used_at = Column(TIMESTAMP)
+
+    __table_args__ = (Index("idx_refresh_tokens_user_id", "user_id"),)
 
 
 # ── Gold Layer ────────────────────────────────────────────────────────────────

@@ -62,6 +62,12 @@ class Config:
     )
     STOCKTWITS_MODEL_DIR: Path = ROOT_DIR / "models" / "sentiment" / "stocktwits"
 
+    # Auth settings
+    AUTH_JWT_SECRET: str | None = os.getenv("AUTH_JWT_SECRET")
+    AUTH_JWT_ALGORITHM: str = os.getenv("AUTH_JWT_ALGORITHM", "HS256")
+    AUTH_ACCESS_TOKEN_MINUTES: int = int(os.getenv("AUTH_ACCESS_TOKEN_MINUTES", "1440"))
+    AUTH_REFRESH_TOKEN_DAYS: int = int(os.getenv("AUTH_REFRESH_TOKEN_DAYS", "365"))
+
     @classmethod
     def validate(cls) -> None:
         """Validate required configuration."""
