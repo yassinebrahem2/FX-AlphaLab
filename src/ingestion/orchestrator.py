@@ -144,7 +144,6 @@ class CollectionOrchestrator:
             collector_result = collector_func(
                 source_config=source_config, fetch_from=fetch_from if not should_backfill else None
             )
-
             if isinstance(collector_result, CollectionResult):
                 result = collector_result
             else:
@@ -155,10 +154,14 @@ class CollectionOrchestrator:
                     error=None,
                 )
 
-            self.logger.info(
-                f"{source_id}: Completed successfully. "
-                f"Rows written: {result.rows_written}, Backfill: {result.backfill_performed}"
-            )
+            # Prefer error-level logging when collector reported an error
+            if result.error:
+                self.logger.error(f"{source_id}: Collection failed — {result.error}")
+            else:
+                self.logger.info(
+                    f"{source_id}: Completed successfully. "
+                    f"Rows written: {result.rows_written}, Backfill: {result.backfill_performed}"
+                )
 
             return result
 
@@ -203,18 +206,22 @@ class CollectionOrchestrator:
                     return False
                 # Sum rows across all parquet files for this timeframe
                 total_rows = 0
+                max_ts = None
                 for pf in parquets:
                     try:
-                        count = len(pd.read_parquet(pf, columns=["timestamp_utc"]))
-                        total_rows += count
+                        df_ts = pd.read_parquet(pf, columns=["timestamp_utc"])
+                        total_rows += len(df_ts)
+                        ts = df_ts["timestamp_utc"].max()
+                        if max_ts is None or ts > max_ts:
+                            max_ts = ts
                     except Exception as e:
                         self.logger.warning(f"Failed to read {pf}: {e}")
                         continue
-                result = total_rows >= min_days
-                self.logger.debug(
-                    f"{source_id}: Found {total_rows} rows, minimum {min_days}, has_minimum={result}"
-                )
-                return result
+                if total_rows < min_days:
+                    return False
+                if max_ts is None:
+                    return False
+                return self._check_recency(source_id, max_ts, source_config)
 
             elif source_id.startswith("gdelt_"):
                 # GDELT events/GKG parquet files
@@ -237,18 +244,22 @@ class CollectionOrchestrator:
                     self.logger.debug(f"{source_id}: No parquets found")
                     return False
                 total_rows = 0
+                max_ts = None
                 for pf in parquets:
                     try:
-                        count = len(pd.read_parquet(pf, columns=["timestamp_utc"]))
-                        total_rows += count
+                        df_ts = pd.read_parquet(pf, columns=["timestamp_utc"])
+                        total_rows += len(df_ts)
+                        ts = df_ts["timestamp_utc"].max()
+                        if max_ts is None or ts > max_ts:
+                            max_ts = ts
                     except Exception as e:
                         self.logger.warning(f"Failed to read {pf}: {e}")
                         continue
-                result = total_rows >= min_days
-                self.logger.debug(
-                    f"{source_id}: Found {total_rows} rows, minimum {min_days}, has_minimum={result}"
-                )
-                return result
+                if total_rows < min_days:
+                    return False
+                if max_ts is None:
+                    return False
+                return self._check_recency(source_id, max_ts, source_config)
 
             elif source_id == "stocktwits":
                 # StockTwits sentiment parquets (partitioned by source/year/month)
@@ -261,18 +272,22 @@ class CollectionOrchestrator:
                     self.logger.debug(f"{source_id}: No parquets found")
                     return False
                 total_rows = 0
+                max_ts = None
                 for pf in parquets:
                     try:
-                        count = len(pd.read_parquet(pf, columns=["timestamp_utc"]))
-                        total_rows += count
+                        df_ts = pd.read_parquet(pf, columns=["timestamp_utc"])
+                        total_rows += len(df_ts)
+                        ts = df_ts["timestamp_utc"].max()
+                        if max_ts is None or ts > max_ts:
+                            max_ts = ts
                     except Exception as e:
                         self.logger.warning(f"Failed to read {pf}: {e}")
                         continue
-                result = total_rows >= min_days
-                self.logger.debug(
-                    f"{source_id}: Found {total_rows} rows, minimum {min_days}, has_minimum={result}"
-                )
-                return result
+                if total_rows < min_days:
+                    return False
+                if max_ts is None:
+                    return False
+                return self._check_recency(source_id, max_ts, source_config)
 
             elif source_id == "google_trends":
                 # Google Trends parquets
@@ -285,18 +300,22 @@ class CollectionOrchestrator:
                     self.logger.debug(f"{source_id}: No parquets found")
                     return False
                 total_rows = 0
+                max_ts = None
                 for pf in parquets:
                     try:
-                        count = len(pd.read_parquet(pf, columns=["timestamp_utc"]))
-                        total_rows += count
+                        df_ts = pd.read_parquet(pf, columns=["timestamp_utc"])
+                        total_rows += len(df_ts)
+                        ts = df_ts["timestamp_utc"].max()
+                        if max_ts is None or ts > max_ts:
+                            max_ts = ts
                     except Exception as e:
                         self.logger.warning(f"Failed to read {pf}: {e}")
                         continue
-                result = total_rows >= min_days
-                self.logger.debug(
-                    f"{source_id}: Found {total_rows} rows, minimum {min_days}, has_minimum={result}"
-                )
-                return result
+                if total_rows < min_days:
+                    return False
+                if max_ts is None:
+                    return False
+                return self._check_recency(source_id, max_ts, source_config)
 
             elif source_id in (
                 "fred_macro",
@@ -313,11 +332,12 @@ class CollectionOrchestrator:
                 try:
                     df = pd.read_parquet(macro_signal_path, columns=["timestamp_utc"])
                     rows = len(df)
-                    result = rows >= min_days
-                    self.logger.debug(
-                        f"{source_id}: Found {rows} rows in macro_signal, minimum {min_days}, has_minimum={result}"
-                    )
-                    return result
+                    if rows < min_days:
+                        return False
+                    max_ts = df["timestamp_utc"].max()
+                    if max_ts is None:
+                        return False
+                    return self._check_recency(source_id, max_ts, source_config)
                 except Exception as e:
                     self.logger.warning(f"Failed to read macro_signal.parquet: {e}")
                     return False
@@ -335,13 +355,14 @@ class CollectionOrchestrator:
                 try:
                     # Read the latest CSV (lexicographically last = latest date range)
                     latest_csv = sorted(csvs)[-1]
-                    df = pd.read_csv(latest_csv)
-                    rows = len(df)
-                    result = rows >= min_days
-                    self.logger.debug(
-                        f"{source_id}: Found {rows} rows, minimum {min_days}, has_minimum={result}"
-                    )
-                    return result
+                    df_ts = pd.read_csv(latest_csv, usecols=["timestamp_utc"])
+                    rows = len(df_ts)
+                    if rows < min_days:
+                        return False
+                    max_ts = pd.to_datetime(df_ts["timestamp_utc"]).max()
+                    if max_ts is None:
+                        return False
+                    return self._check_recency(source_id, max_ts, source_config)
                 except Exception as e:
                     self.logger.warning(f"Failed to read events CSV: {e}")
                     return False
@@ -353,6 +374,48 @@ class CollectionOrchestrator:
         except Exception as e:
             self.logger.error(f"Error checking Silver minimum for {source_id}: {e}", exc_info=True)
             return False
+
+    def _check_recency(self, source_id: str, max_ts, source_config) -> bool:
+        """Check if Silver data is recent enough.
+
+        Args:
+            source_id: Source identifier
+            max_ts: Maximum timestamp from Silver data
+            source_config: SourceConfig for this source
+
+        Returns:
+            True if data is recent enough, False if stale
+        """
+        staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+        now_utc = datetime.now(timezone.utc)
+        max_ts_aware = (
+            max_ts if getattr(max_ts, "tzinfo", None) else max_ts.replace(tzinfo=timezone.utc)
+        )
+
+        if now_utc - max_ts_aware > staleness_limit:
+            self.logger.info(
+                f"{source_id}: Silver is stale (last={max_ts_aware.date()}, "
+                f"staleness_limit={staleness_limit}), forcing backfill"
+            )
+            return False
+
+        return True
+
+    def _bronze_has_recent_data(
+        self,
+        bronze_dir: Path,
+        staleness_limit: timedelta,
+        glob_pattern: str = "**/*.parquet",
+    ) -> bool:
+        """True if bronze_dir has files modified within staleness_limit."""
+        if not bronze_dir.exists():
+            return False
+        files = list(bronze_dir.glob(glob_pattern))
+        if not files:
+            return False
+        latest_mtime = max(f.stat().st_mtime for f in files)
+        age_seconds = datetime.now(timezone.utc).timestamp() - latest_mtime
+        return age_seconds <= staleness_limit.total_seconds()
 
     # ============================================================================
     # Collector stubs — each returns rows_written or raises NotImplementedError
@@ -389,18 +452,44 @@ class CollectionOrchestrator:
 
         # Collect Bronze 1-minute bars
         bronze_dir = self.root / "data" / "raw" / "dukascopy"
+        staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+        preprocessor_instance = DukascopyPreprocessor()
+        instruments = preprocessor_instance.instruments
+
         collector = DukascopyCollector(output_dir=bronze_dir)
-        collector.collect(
-            start_date=collector_start_date,
-            end_date=collector_end_date,
-            backfill=is_backfill,
-        )
+        if is_backfill:
+            all_bronze_fresh = all(
+                self._bronze_has_recent_data(bronze_dir / instr, staleness_limit)
+                for instr in instruments
+            )
+
+            if all_bronze_fresh:
+                self.logger.info(
+                    "%s: Bronze is recent for all instruments - skipping network fetch, "
+                    "reprocessing only",
+                    source_config.description,
+                )
+            else:
+                any_bronze_fresh = any(
+                    self._bronze_has_recent_data(bronze_dir / instr, staleness_limit)
+                    for instr in instruments
+                )
+                collector.collect(
+                    start_date=collector_start_date,
+                    end_date=collector_end_date,
+                    backfill=not any_bronze_fresh,
+                )
+        else:
+            collector.collect(
+                start_date=collector_start_date,
+                end_date=collector_end_date,
+                backfill=False,
+            )
 
         # Preprocess Bronze → Silver (all timeframes)
         # Always use backfill=True for preprocessor: Silver is rebuilt from all Bronze
         # This is cheap (resample only) and ensures freshness
-        preprocessor = DukascopyPreprocessor()
-        silver_results = preprocessor.preprocess(backfill=True)
+        silver_results = preprocessor_instance.preprocess(backfill=True)
 
         # Count total rows across all instrument×timeframe combinations
         rows_written = sum(len(df) for df in silver_results.values())
@@ -443,9 +532,14 @@ class CollectionOrchestrator:
         else:
             start_dt = dt_class.combine(fetch_from, time.min, tzinfo=timezone.utc)
 
-        # Collect Bronze
+        staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+
+        # Collect Bronze (only in backfill path)
         collector = GDELTEventsCollector(output_dir=bronze_dir)
-        collector.collect(start_date=start_dt, end_date=end_dt, backfill=is_backfill)
+        if is_backfill and self._bronze_has_recent_data(bronze_dir, staleness_limit):
+            self.logger.info("gdelt_events: Bronze is recent - skipping network fetch")
+        else:
+            collector.collect(start_date=start_dt, end_date=end_dt, backfill=is_backfill)
 
         # Preprocess Bronze → Silver
         preprocessor = GDELTEventsPreprocessor(input_dir=bronze_dir, output_dir=silver_dir)
@@ -483,9 +577,16 @@ class CollectionOrchestrator:
         # Get project_id from environment
         project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
 
-        # Collect Bronze
+        staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+
+        # Collect Bronze (only in backfill path)
         collector = GDELTGKGCollector(output_dir=bronze_dir, project_id=project_id)
-        collector.collect(start_date=start_dt, end_date=end_dt, backfill=is_backfill)
+        if is_backfill and self._bronze_has_recent_data(
+            bronze_dir, staleness_limit, glob_pattern="**/*.jsonl"
+        ):
+            self.logger.info("gdelt_gkg: Bronze is recent - skipping network fetch")
+        else:
+            collector.collect(start_date=start_dt, end_date=end_dt, backfill=is_backfill)
 
         # Preprocess Bronze → Silver
         preprocessor = GDELTGKGPreprocessor(input_dir=bronze_dir, output_dir=silver_dir)
@@ -508,30 +609,99 @@ class CollectionOrchestrator:
             from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer
             from src.shared.config import Config
 
+            # Determine date window (always timezone-aware UTC)
             end_dt = datetime.now(timezone.utc)
             if fetch_from is not None:
-                start_dt = fetch_from
+                # Ensure fetch_from is timezone-aware UTC
+                start_dt = (
+                    fetch_from
+                    if getattr(fetch_from, "tzinfo", None)
+                    else fetch_from.replace(tzinfo=timezone.utc)
+                )
             else:
-                start_dt = end_dt - timedelta(days=source_config.interval_hours * 24 * 2)
+                lookback_days = source_config.min_silver_days or int(
+                    max(source_config.interval_hours * 3 / 24, 72 / 24)
+                )
+                start_dt = end_dt - timedelta(days=lookback_days)
 
-            collector = FREDCollector(
-                api_key=Config.FRED_API_KEY,
-                output_dir=self.root / "data" / "raw" / "fred",
-            )
-            if fetch_from is not None and not isinstance(fetch_from, datetime):
-                start_dt = datetime.combine(fetch_from, time.min, tzinfo=timezone.utc)
-            frames = collector.collect(start_date=start_dt, end_date=end_dt)
-            for name, df in frames.items():
-                collector.export_csv(df, name)
+            # Bronze directories and staleness
+            fred_bronze = self.root / "data" / "raw" / "fred"
+            ecb_bronze = self.root / "data" / "raw" / "ecb"
+            staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
 
-            rows_written = sum(len(df) for df in frames.values())
+            rows_written = 0
 
+            # Collect missing Bronze sources as needed
+            fred_ok = self._bronze_has_recent_data(fred_bronze, staleness_limit, "**/*.csv")
+            ecb_ok = self._bronze_has_recent_data(ecb_bronze, staleness_limit, "**/*.csv")
+
+            # If FRED Bronze missing, collect it
+            if not fred_ok:
+                collector = FREDCollector(
+                    api_key=Config.FRED_API_KEY,
+                    output_dir=fred_bronze,
+                )
+                fred_counts = collector.collect(start_date=start_dt, end_date=end_dt)
+                # fred_counts may be dict(series_id -> DataFrame) or dict -> int
+                if isinstance(fred_counts, dict):
+                    for name, val in fred_counts.items():
+                        if hasattr(val, "__len__") and not isinstance(val, int):
+                            # Assume DataFrame-like
+                            try:
+                                collector.export_csv(val, name)
+                            except Exception:
+                                pass
+                            rows_written += len(val)
+                        else:
+                            rows_written += int(val)
+                else:
+                    try:
+                        rows_written += int(fred_counts)
+                    except Exception:
+                        pass
+            else:
+                self.logger.info("fred_macro: FRED Bronze is recent — skipping FRED network fetch")
+
+            # If ECB Bronze missing, collect it
+            if not ecb_ok:
+                from src.ingestion.collectors.ecb_collector import ECBCollector
+
+                ecb_collector = ECBCollector(output_dir=ecb_bronze)
+                ecb_counts = ecb_collector.collect(start_date=start_dt, end_date=end_dt)
+                if isinstance(ecb_counts, dict):
+                    for name, val in ecb_counts.items():
+                        if hasattr(val, "__len__") and not isinstance(val, int):
+                            try:
+                                ecb_collector.export_csv(val, name)
+                            except Exception:
+                                pass
+                            rows_written += len(val)
+                        else:
+                            rows_written += int(val)
+                else:
+                    try:
+                        rows_written += int(ecb_counts)
+                    except Exception:
+                        pass
+            else:
+                self.logger.info("fred_macro: ECB Bronze is recent — skipping ECB network fetch")
+
+            # Now normalize both sources into macro_all.parquet
             normalizer = MacroNormalizer(
                 input_dir=self.root / "data" / "raw",
                 output_dir=self.root / "data" / "processed" / "macro",
                 sources=["fred", "ecb"],
             )
-            normalizer.preprocess(start_date=start_dt, end_date=end_dt, backfill=True)
+            normalized = normalizer.preprocess(start_date=start_dt, end_date=end_dt, backfill=True)
+
+            # Prefer reporting normalized rows when available (single consolidated result)
+            if normalized:
+                try:
+                    norm_rows = sum(len(df) for df in normalized.values())
+                    rows_written = int(norm_rows)
+                except Exception:
+                    # Fallback to Bronze-collected row counts
+                    pass
 
             return CollectionResult(
                 source_id="fred_macro",
@@ -557,24 +727,60 @@ class CollectionOrchestrator:
             from src.ingestion.collectors.ecb_collector import ECBCollector
             from src.ingestion.preprocessors.macro_normalizer import MacroNormalizer
 
+            # Determine date window (UTC-aware)
             end_dt = datetime.now(timezone.utc)
             if fetch_from is not None:
-                start_dt = fetch_from
+                start_dt = (
+                    fetch_from
+                    if getattr(fetch_from, "tzinfo", None)
+                    else fetch_from.replace(tzinfo=timezone.utc)
+                )
             else:
-                start_dt = end_dt - timedelta(days=source_config.interval_hours * 24 * 2)
+                lookback_days = source_config.min_silver_days or int(
+                    max(source_config.interval_hours * 3 / 24, 72 / 24)
+                )
+                start_dt = end_dt - timedelta(days=lookback_days)
 
-            collector = ECBCollector(output_dir=self.root / "data" / "raw" / "ecb")
-            if fetch_from is not None and not isinstance(fetch_from, datetime):
-                start_dt = datetime.combine(fetch_from, time.min, tzinfo=timezone.utc)
-            result_counts = collector.collect(start_date=start_dt, end_date=end_dt)
-            rows_written = sum(result_counts.values())
+            # Bronze directories and staleness
+            fred_bronze = self.root / "data" / "raw" / "fred"
+            ecb_bronze = self.root / "data" / "raw" / "ecb"
+            staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+
+            rows_written = 0
+
+            fred_ok = self._bronze_has_recent_data(fred_bronze, staleness_limit, "**/*.csv")
+            ecb_ok = self._bronze_has_recent_data(ecb_bronze, staleness_limit, "**/*.csv")
+
+            # Collect missing sources
+            if not fred_ok:
+                from src.ingestion.collectors.fred_collector import FREDCollector
+
+                fred_collector = FREDCollector(api_key=None, output_dir=fred_bronze)
+                fred_counts = fred_collector.collect(start_date=start_dt, end_date=end_dt)
+                rows_written += sum(fred_counts.values())
+            else:
+                self.logger.info("ecb_macro: FRED Bronze is recent — skipping FRED network fetch")
+
+            if not ecb_ok:
+                ecb_collector = ECBCollector(output_dir=ecb_bronze)
+                ecb_counts = ecb_collector.collect(start_date=start_dt, end_date=end_dt)
+                rows_written += sum(ecb_counts.values())
+            else:
+                self.logger.info("ecb_macro: ECB Bronze is recent — skipping ECB network fetch")
 
             normalizer = MacroNormalizer(
                 input_dir=self.root / "data" / "raw",
                 output_dir=self.root / "data" / "processed" / "macro",
                 sources=["fred", "ecb"],
             )
-            normalizer.preprocess(start_date=start_dt, end_date=end_dt, backfill=True)
+            normalized = normalizer.preprocess(start_date=start_dt, end_date=end_dt, backfill=True)
+
+            if normalized:
+                try:
+                    norm_rows = sum(len(df) for df in normalized.values())
+                    rows_written = int(norm_rows)
+                except Exception:
+                    pass
 
             return CollectionResult(
                 source_id="ecb_macro",
@@ -629,8 +835,17 @@ class CollectionOrchestrator:
             collector = GoogleTrendsCollector(
                 output_dir=self.root / "data" / "raw" / "google_trends",
             )
-            result_counts = collector.collect(start_date=start_dt, end_date=end_dt, force=True)
-            rows_written = sum(result_counts.values())
+            bronze_dir = self.root / "data" / "raw" / "google_trends"
+            staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+
+            if fetch_from is None and self._bronze_has_recent_data(
+                bronze_dir, staleness_limit, glob_pattern="**/*.csv"
+            ):
+                self.logger.info("google_trends: Bronze is recent - skipping network fetch")
+                rows_written = 0
+            else:
+                result_counts = collector.collect(start_date=start_dt, end_date=end_dt, force=True)
+                rows_written = sum(result_counts.values())
 
             preprocessor = GoogleTrendsPreprocessor(
                 input_dir=self.root / "data" / "raw" / "google_trends",
@@ -670,6 +885,7 @@ class CollectionOrchestrator:
         silver_dir = self.root / "data" / "processed" / "events"
 
         is_backfill = fetch_from is None
+        staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
 
         # ForexFactory uses naive datetimes (no tzinfo)
         if is_backfill:
@@ -684,16 +900,20 @@ class CollectionOrchestrator:
 
         # Collect Bronze with try/finally to ensure driver cleanup
         collector = ForexFactoryCalendarCollector(output_dir=bronze_dir)
+        rows_from_bronze = 0
         try:
-            # Always pass backfill=True to refresh data
-            # The 5-hour rate limit is the effective rate limiter; we want fresh actuals every run
-            bronze_result = collector.collect(
-                start_date=start_dt,
-                end_date=end_dt,
-                backfill=True,
-            )
-            # Bronze result: {"calendar": row_count}
-            rows_from_bronze = bronze_result.get("calendar", 0)
+            if is_backfill and self._bronze_has_recent_data(
+                bronze_dir, staleness_limit, glob_pattern="**/*.csv"
+            ):
+                self.logger.info("forex_factory: Bronze is recent - skipping network fetch")
+            else:
+                # Bronze result: {"calendar": row_count}
+                bronze_result = collector.collect(
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    backfill=True,
+                )
+                rows_from_bronze = bronze_result.get("calendar", 0)
         finally:
             collector.close()
 

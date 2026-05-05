@@ -44,7 +44,7 @@ from src.ingestion.preprocessors.base_preprocessor import BasePreprocessor
 
 
 class MacroNormalizer(BasePreprocessor):
-    """Preprocessor for macro data (Bronze → Silver).
+    """Preprocessor for macro data (Bronze -> Silver).
 
     Reads raw macro data from data/raw/{source}/ and transforms to Silver schema.
     Supports FRED and ECB data sources.
@@ -114,7 +114,7 @@ class MacroNormalizer(BasePreprocessor):
         """Transform Bronze macro data to Silver schema.
 
         Reads all CSV files from input_dir/{source}/, applies:
-        - Date → timestamp_utc conversion
+        - Date -> timestamp_utc conversion
         - Type validation (value must be numeric)
         - Deduplication by (timestamp_utc, series_id)
         - Filtering by date range
@@ -219,7 +219,7 @@ class MacroNormalizer(BasePreprocessor):
                     series_id = df["series_id"].iloc[0]
                     result[series_id] = df
                     self.logger.info(
-                        "Processed %s: %d records → series %s",
+                        "Processed %s: %d records -> series %s",
                         bronze_file.name,
                         len(df),
                         series_id,
@@ -282,11 +282,21 @@ class MacroNormalizer(BasePreprocessor):
 
             # Apply date filtering if specified
             if start_date or end_date:
-                timestamp_col = pd.to_datetime(silver_df["timestamp_utc"]).dt.tz_localize(None)
+                # Parse timestamps as UTC-aware to avoid naive/aware comparison errors
+                timestamp_col = pd.to_datetime(silver_df["timestamp_utc"], utc=True)
                 if start_date:
-                    silver_df = silver_df[timestamp_col >= start_date]
+                    # Ensure start_date is UTC-aware for correct comparison
+                    if getattr(start_date, "tzinfo", None) is None:
+                        from datetime import timezone
+
+                        start_date = start_date.replace(tzinfo=timezone.utc)
+                    silver_df = silver_df[timestamp_col >= pd.to_datetime(start_date, utc=True)]
                 if end_date:
-                    silver_df = silver_df[timestamp_col <= end_date]
+                    if getattr(end_date, "tzinfo", None) is None:
+                        from datetime import timezone
+
+                        end_date = end_date.replace(tzinfo=timezone.utc)
+                    silver_df = silver_df[timestamp_col <= pd.to_datetime(end_date, utc=True)]
 
             if not silver_df.empty:
                 result[series_id] = silver_df
@@ -324,7 +334,7 @@ class MacroNormalizer(BasePreprocessor):
         # Transform to Silver schema
         df_silver = pd.DataFrame()
 
-        # Convert date → timestamp_utc (ISO 8601)
+        # Convert date -> timestamp_utc (ISO 8601)
         df_silver["timestamp_utc"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Copy and standardize columns
@@ -352,11 +362,20 @@ class MacroNormalizer(BasePreprocessor):
 
         # Filter by date range if provided
         if start_date or end_date:
-            timestamp_col = pd.to_datetime(df_silver["timestamp_utc"]).dt.tz_localize(None)
+            # Use UTC-aware timestamps for reliable comparisons with start/end
+            timestamp_col = pd.to_datetime(df_silver["timestamp_utc"], utc=True)
             if start_date:
-                df_silver = df_silver[timestamp_col >= start_date]
+                if getattr(start_date, "tzinfo", None) is None:
+                    from datetime import timezone
+
+                    start_date = start_date.replace(tzinfo=timezone.utc)
+                df_silver = df_silver[timestamp_col >= pd.to_datetime(start_date, utc=True)]
             if end_date:
-                df_silver = df_silver[timestamp_col <= end_date]
+                if getattr(end_date, "tzinfo", None) is None:
+                    from datetime import timezone
+
+                    end_date = end_date.replace(tzinfo=timezone.utc)
+                df_silver = df_silver[timestamp_col <= pd.to_datetime(end_date, utc=True)]
 
         # Sort by timestamp
         df_silver = df_silver.sort_values("timestamp_utc").reset_index(drop=True)

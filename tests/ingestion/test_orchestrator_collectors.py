@@ -105,6 +105,7 @@ class TestDukascopyCollectors:
         """Backfill (fetch_from=None) should call collector with None dates."""
         mock_collector = Mock()
         mock_preprocessor = Mock()
+        mock_preprocessor.instruments = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"]
         mock_preprocessor.preprocess.return_value = {}
 
         with (
@@ -172,6 +173,7 @@ class TestDukascopyCollectors:
         """Preprocessor should always be called with backfill=True."""
         mock_collector = Mock()
         mock_preprocessor = Mock()
+        mock_preprocessor.instruments = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"]
         mock_preprocessor.preprocess.return_value = {}
 
         with (
@@ -198,6 +200,7 @@ class TestDukascopyCollectors:
         """Should return sum of rows across all timeframe DataFrames."""
         mock_collector = Mock()
         mock_preprocessor = Mock()
+        mock_preprocessor.instruments = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"]
 
         # Mock preprocessor returns DataFrames for different instrument×timeframe combinations
         df_eurusd_d1 = pd.DataFrame({"close": [1.0, 2.0, 3.0]})  # 3 rows
