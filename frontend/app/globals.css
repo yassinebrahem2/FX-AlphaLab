@@ -143,3 +143,8 @@
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
+
+/* Hide TradingView attribution */
+#tv-attr-logo {
+  display: none !important;
+}

@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { FileText, Maximize2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -198,6 +198,8 @@ export function RightPanel({
 }: RightPanelProps) {
   const [activePairTab, setActivePairTab] = useState(symbol);
   const [reportOpen, setReportOpen] = useState(false);
+  const [aiNarrative, setAiNarrative] = useState<string | null>(null);
+  const [narrativeLoading, setNarrativeLoading] = useState(false);
 
   const pairCalls = useMemo(() => buildPairCalls(coordinatorSignals), [coordinatorSignals]);
 
@@ -239,6 +241,21 @@ export function RightPanel({
       : JSON.stringify(report.narrative_context)
     : mockAgentReport.coordinator.narrative_context;
 
+  useEffect(() => {
+    if (!report?.narrative_context) return;
+    setAiNarrative(null);
+    setNarrativeLoading(true);
+    fetch("/api/narrate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context: report.narrative_context }),
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.narrative) setAiNarrative(d.narrative); })
+      .catch(() => {})
+      .finally(() => setNarrativeLoading(false));
+  }, [report?.narrative_context]);
+
   // Active pair agent signals — real when available, otherwise mock
   const activeAs = agentSignals?.get(activePair.symbol);
   const techMock = mockAgentReport.technical.find((t) => t.symbol === activePair.symbol);
@@ -257,7 +274,7 @@ export function RightPanel({
       <div className="border-b border-border px-3 py-3">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-12 items-center justify-center overflow-hidden rounded-sm bg-muted/40 px-1">
-            <Image src="/fx-mark1.png" alt="FX AlphaLab logo" width={44} height={28} className="h-auto w-full" />
+            <Image src="/logo.png" alt="FX AlphaLab logo" width={44} height={28} className="h-auto w-full" />
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Alpha Signal</p>
@@ -314,7 +331,13 @@ export function RightPanel({
 
             <div className="mt-4 rounded-lg border border-border/60 bg-background/70 px-3 py-3">
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Context</p>
-              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{narrativeContext}</p>
+              {narrativeLoading ? (
+                <p className="mt-2 text-xs text-muted-foreground animate-pulse">Generating summary…</p>
+              ) : (
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  {aiNarrative ?? narrativeContext}
+                </p>
+              )}
             </div>
 
             {/* Deep Dive modal — coworker's exact modal, iframe untouched */}
@@ -337,7 +360,7 @@ export function RightPanel({
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/50 px-1">
                         <Image
-                          src="/fx-mark1.png"
+                          src="/logo.png"
                           alt="FX AlphaLab logo"
                           width={28}
                           height={28}
