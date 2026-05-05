@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: timescale/timescaledb-ha:pg15-latest
+    image: timescale/timescaledb:latest-pg15
     container_name: fx_alphalab_db
     restart: always
     environment:
@@ -13,6 +13,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    mem_limit: 512m
+    shm_size: 128m
 
   app:
     build:

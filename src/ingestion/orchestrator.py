@@ -45,6 +45,7 @@ class CollectionOrchestrator:
         # Internal registry: source_id -> callable that runs the collector
         # Each callable takes (source_config, fetch_from) and returns rows written.
         self._registry: dict[str, Callable] = {
+            "dukascopy_ohlcv": self._collect_dukascopy_d1,
             "dukascopy_d1": self._collect_dukascopy_d1,
             "dukascopy_h4": self._collect_dukascopy_h4,
             "dukascopy_h1": self._collect_dukascopy_h1,

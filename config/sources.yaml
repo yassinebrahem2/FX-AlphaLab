@@ -3,33 +3,40 @@
 # No collection parameter is hardcoded in Python code.
 
 sources:
-  dukascopy_d1:
+  dukascopy_ohlcv:
     enabled: true
-    interval_hours: 0.667
+    interval_hours: 4
     min_silver_days: 400
     fetch_from: null
-    description: "Daily OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
+    description: "All OHLCV timeframes (M15/H1/H4/D1). One job covers all — _collect_dukascopy processes every TF in a single Bronze load."
+
+  dukascopy_d1:
+    enabled: false
+    interval_hours: 4
+    min_silver_days: 400
+    fetch_from: null
+    description: "Disabled — merged into dukascopy_ohlcv."
 
   dukascopy_h4:
-    enabled: true
-    interval_hours: 0.667
+    enabled: false
+    interval_hours: 4
     min_silver_days: 400
     fetch_from: null
-    description: "4-hour OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
+    description: "Disabled — merged into dukascopy_ohlcv."
 
   dukascopy_h1:
-    enabled: true
-    interval_hours: 0.667
+    enabled: false
+    interval_hours: 4
     min_silver_days: 400
     fetch_from: null
-    description: "1-hour OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
+    description: "Disabled — merged into dukascopy_ohlcv."
 
   dukascopy_m15:
-    enabled: true
-    interval_hours: 0.667
+    enabled: false
+    interval_hours: 4
     min_silver_days: 400
     fetch_from: null
-    description: "15-minute OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
+    description: "Disabled — merged into dukascopy_ohlcv."
 
   gdelt_events:
     enabled: true
