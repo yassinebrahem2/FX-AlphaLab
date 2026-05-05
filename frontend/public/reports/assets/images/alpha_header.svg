@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="320" viewBox="0 0 900 320" role="img" aria-label="Decorative report visual">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FBF8F1"/>
+      <stop offset="45%" stop-color="#F3EBDD"/>
+      <stop offset="100%" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <linearGradient id="shadow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14212B" stop-opacity=".05"/>
+      <stop offset="100%" stop-color="#604732" stop-opacity=".18"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="320" rx="28" fill="url(#bg)"/>
+  <rect x="0" y="0" width="900" height="320" rx="28" fill="url(#shadow)"/>
+  <rect x="42" y="42" width="816" height="236" rx="24" fill="#FFFFFF" opacity=".28"/>
+  <path d="M48 274 H852" stroke="#14212B" stroke-opacity=".10" stroke-width="2"/>
+  <circle cx="236" cy="118" r="114" fill="#F4DDA8" opacity=".18"/><rect x="430" y="34" width="324" height="250" rx="38" fill="#B7A287" opacity=".24"/><path d="M110 224 C220 110, 338 106, 442 182 S634 262, 784 126" fill="none" stroke="#604732" stroke-width="10" opacity=".58"/><path d="M90 256 C198 186, 310 184, 434 220 S636 250, 786 184" fill="none" stroke="#F4DDA8" stroke-width="7" opacity=".68"/>
+  <circle cx="96" cy="86" r="10" fill="#604732" opacity=".88"/>
+  <circle cx="124" cy="86" r="10" fill="#B7A287" opacity=".75"/>
+  <circle cx="152" cy="86" r="10" fill="#F4DDA8" opacity=".88"/>
+</svg>

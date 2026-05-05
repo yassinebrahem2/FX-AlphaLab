@@ -15,7 +15,7 @@ export default function TradingDashboard() {
   const { sizes, handleMouseDown, resetLayout } = useResizableLayout();
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-background">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       {/* Top Bar - Fixed Height */}
       <TopBar
         activeInstrument={activeInstrument}
@@ -24,26 +24,17 @@ export default function TradingDashboard() {
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar - Resizable */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Sidebar - Fixed Width */}
         <LeftSidebar
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
           activeInstrument={activeInstrument}
           onInstrumentChange={setActiveInstrument}
-          width={sidebarCollapsed ? 40 : sizes.leftSidebar}
         />
 
-        {/* Left Splitter */}
-        {!sidebarCollapsed && (
-          <Splitter
-            orientation="vertical"
-            onMouseDown={(e) => handleMouseDown("left", e)}
-          />
-        )}
-
         {/* Center Area - Chart + Bottom Panel */}
-        <div className="flex-1 flex flex-col overflow-hidden p-2 gap-0 min-w-[300px]">
+        <div className="flex min-w-[300px] flex-1 flex-col gap-0 overflow-hidden p-2">
           {/* Candlestick Chart - must fill remaining space */}
           <CandlestickChart symbol={activeInstrument} />
 

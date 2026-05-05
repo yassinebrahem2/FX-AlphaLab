@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Bell, Settings, User, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,12 +29,12 @@ interface TopBarProps {
 
 export function TopBar({ activeInstrument, onInstrumentChange, onResetLayout }: TopBarProps) {
   return (
-    <header className="h-[60px] bg-card border-b border-border flex items-center justify-between px-4 shrink-0 shadow-[var(--card-shadow)]">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-4 shadow-[var(--card-shadow)]">
       {/* Left Section */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-primary rounded flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-sm">FX</span>
+          <div className="flex h-8 w-[52px] items-center justify-center overflow-hidden rounded-sm">
+            <Image src="/fx-mark1.png" alt="FX AlphaLab logo" width={52} height={32} className="h-auto w-full" />
           </div>
           <span className="font-semibold text-foreground">AlphaLab</span>
         </div>
