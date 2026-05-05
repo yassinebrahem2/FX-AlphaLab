@@ -1,28 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createChart, ColorType, IChartApi, CandlestickData, Time, CandlestickSeries } from "lightweight-charts";
+import {
+  createChart,
+  ColorType,
+  IChartApi,
+  CandlestickData,
+  Time,
+  CandlestickSeries,
+} from "lightweight-charts";
 import { Badge } from "@/components/ui/badge";
-
-interface ChartOverlayData {
-  topPick: string;
-  action: "BUY" | "SELL" | "HOLD";
-  conviction: number;
-  positionSize: number;
-  sl: string;
-  tp: string;
-  regime: string;
-}
-
-const overlayData: ChartOverlayData = {
-  topPick: "EURUSD",
-  action: "BUY",
-  conviction: 78,
-  positionSize: 2.5,
-  sl: "1.0780",
-  tp: "1.0920",
-  regime: "Trending",
-};
+import { cn } from "@/lib/utils";
+import { useOhlcv } from "@/hooks/use-ohlcv";
+import { CoordinatorReportAPI, CoordinatorSignalAPI, toActionLabel } from "@/lib/api";
 
 interface TooltipData {
   time: string;
@@ -30,57 +20,53 @@ interface TooltipData {
   high: string;
   low: string;
   close: string;
-  rsi: string;
-  macd: string;
-  bbPercent: string;
-  ema200: boolean;
-  atrRank: string;
-}
-
-// Generate mock candlestick data
-function generateCandlestickData(): CandlestickData[] {
-  const data: CandlestickData[] = [];
-  let basePrice = 1.0800;
-  const now = new Date();
-
-  for (let i = 100; i >= 0; i--) {
-    const date = new Date(now);
-    date.setHours(date.getHours() - i);
-
-    const volatility = 0.001 + Math.random() * 0.002;
-    const trend = Math.sin(i / 20) * 0.0005;
-
-    const open = basePrice + trend;
-    const close = open + (Math.random() - 0.48) * volatility;
-    const high = Math.max(open, close) + Math.random() * volatility * 0.5;
-    const low = Math.min(open, close) - Math.random() * volatility * 0.5;
-
-    data.push({
-      time: Math.floor(date.getTime() / 1000) as Time,
-      open: Number(open.toFixed(5)),
-      high: Number(high.toFixed(5)),
-      low: Number(low.toFixed(5)),
-      close: Number(close.toFixed(5)),
-    });
-
-    basePrice = close;
-  }
-
-  return data;
+  rsi: string | null;
+  macd: string | null;
+  bbPercent: string | null;
+  ema200: boolean | null;
+  atrRank: string | null;
 }
 
 interface CandlestickChartProps {
   symbol: string;
+  coordinatorSignal: CoordinatorSignalAPI | null;
+  report: CoordinatorReportAPI | null;
 }
 
-export function CandlestickChart({ symbol }: CandlestickChartProps) {
+type Timeframe = "M15" | "H1" | "H4" | "D1";
+
+const TF_DAYS: Record<Timeframe, number> = {
+  M15: 7,
+  H1: 30,
+  H4: 90,
+  D1: 365,
+};
+
+const TIMEFRAMES: Timeframe[] = ["M15", "H1", "H4", "D1"];
+
+export function CandlestickChart({ symbol, coordinatorSignal, report }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const seriesRef = useRef<any>(null);
   const [tooltip, setTooltip] = useState<TooltipData | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("H1");
 
+  const { bars, loading: ohlcvLoading } = useOhlcv(symbol, activeTimeframe, TF_DAYS[activeTimeframe]);
+
+  // Build overlay values from real coordinator signal
+  const action = toActionLabel(coordinatorSignal?.suggested_action ?? null);
+  const conviction = coordinatorSignal?.conviction_score != null
+    ? Math.round(coordinatorSignal.conviction_score * 100)
+    : null;
+  const posSize = coordinatorSignal?.position_size_pct ?? null;
+  const slPct = coordinatorSignal?.sl_pct ?? null;
+  const tpPct = coordinatorSignal?.tp_pct ?? null;
+  const regime = coordinatorSignal?.regime ?? null;
+  const topPick = report?.top_pick ?? null;
+
+  // ── Chart init ───────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -99,9 +85,7 @@ export function CandlestickChart({ symbol }: CandlestickChartProps) {
         vertLine: { color: "#1F4AA8", width: 1, style: 2 },
         horzLine: { color: "#1F4AA8", width: 1, style: 2 },
       },
-      rightPriceScale: {
-        borderColor: "#E3E6EA",
-      },
+      rightPriceScale: { borderColor: "#E3E6EA" },
       timeScale: {
         borderColor: "#E3E6EA",
         timeVisible: true,
@@ -121,11 +105,7 @@ export function CandlestickChart({ symbol }: CandlestickChartProps) {
     });
 
     seriesRef.current = candlestickSeries;
-    const data = generateCandlestickData();
-    candlestickSeries.setData(data);
-    chart.timeScale().fitContent();
 
-    // Handle crosshair move for tooltip
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time) {
         setTooltip(null);
@@ -141,11 +121,11 @@ export function CandlestickChart({ symbol }: CandlestickChartProps) {
           high: candleData.high.toFixed(5),
           low: candleData.low.toFixed(5),
           close: candleData.close.toFixed(5),
-          rsi: (45 + Math.random() * 30).toFixed(1),
-          macd: (Math.random() * 0.002 - 0.001).toFixed(5),
-          bbPercent: (Math.random() * 100).toFixed(1),
-          ema200: candleData.close > 1.082,
-          atrRank: Math.random() > 0.5 ? "High" : "Normal",
+          rsi: null,
+          macd: null,
+          bbPercent: null,
+          ema200: null,
+          atrRank: null,
         });
         setTooltipPosition({ x: param.point.x, y: param.point.y });
       }
@@ -155,21 +135,14 @@ export function CandlestickChart({ symbol }: CandlestickChartProps) {
       if (chartContainerRef.current && chartRef.current) {
         const { clientWidth, clientHeight } = chartContainerRef.current;
         if (clientWidth > 0 && clientHeight > 0) {
-          chartRef.current.applyOptions({
-            width: clientWidth,
-            height: clientHeight,
-          });
+          chartRef.current.applyOptions({ width: clientWidth, height: clientHeight });
         }
       }
     };
 
-    // Use ResizeObserver to handle container size changes (from splitters)
     const resizeObserver = new ResizeObserver(handleResize);
     resizeObserver.observe(chartContainerRef.current);
-
     window.addEventListener("resize", handleResize);
-
-    // Initial resize after mount
     setTimeout(handleResize, 0);
 
     return () => {
@@ -179,49 +152,94 @@ export function CandlestickChart({ symbol }: CandlestickChartProps) {
     };
   }, [symbol]);
 
+  // ── Feed real OHLCV data ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!seriesRef.current || bars.length === 0) return;
+
+    const chartData: CandlestickData[] = bars.map((b) => ({
+      time: Math.floor(new Date(b.timestamp_utc).getTime() / 1000) as Time,
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+    }));
+
+    seriesRef.current.setData(chartData);
+    chartRef.current?.timeScale().fitContent();
+  }, [bars]);
+
   return (
     <div className="flex-1 bg-card rounded-md border border-border overflow-hidden flex flex-col h-full">
       {/* Overlay Strip */}
       <div className="h-10 bg-muted/50 border-b border-border flex items-center px-4 gap-6 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Top Pick</span>
-          <span className="text-xs font-semibold">{overlayData.topPick}</span>
-        </div>
+        {topPick && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Top Pick</span>
+            <span className="text-xs font-semibold">{topPick}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Action</span>
           <Badge
             className={
-              overlayData.action === "BUY"
+              action === "BUY"
                 ? "bg-[var(--buy)] text-white text-[10px] px-1.5 h-5"
-                : overlayData.action === "SELL"
+                : action === "SELL"
                 ? "bg-[var(--sell)] text-white text-[10px] px-1.5 h-5"
-                : "bg-[var(--flat)] text-white text-[10px] px-1.5 h-5"
+                : "bg-muted text-muted-foreground text-[10px] px-1.5 h-5"
             }
           >
-            {overlayData.action}
+            {coordinatorSignal ? action : "—"}
           </Badge>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Conviction</span>
-          <span className="text-xs font-mono font-medium">{overlayData.conviction}%</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pos Size</span>
-          <span className="text-xs font-mono">{overlayData.positionSize}%</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">SL/TP</span>
-          <span className="text-xs font-mono">
-            <span className="text-[var(--short)]">{overlayData.sl}</span>
-            {" / "}
-            <span className="text-[var(--long)]">{overlayData.tp}</span>
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Regime</span>
-          <Badge variant="secondary" className="text-[10px] px-1.5 h-5">
-            {overlayData.regime}
-          </Badge>
+        {conviction != null && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Conviction</span>
+            <span className="text-xs font-mono font-medium">{conviction}%</span>
+          </div>
+        )}
+        {posSize != null && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pos Size</span>
+            <span className="text-xs font-mono">{posSize.toFixed(1)}%</span>
+          </div>
+        )}
+        {slPct != null && tpPct != null && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">SL/TP</span>
+            <span className="text-xs font-mono">
+              <span className="text-[var(--short)]">{slPct.toFixed(2)}%</span>
+              {" / "}
+              <span className="text-[var(--long)]">{tpPct.toFixed(2)}%</span>
+            </span>
+          </div>
+        )}
+        {regime && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Regime</span>
+            <Badge variant="secondary" className="text-[10px] px-1.5 h-5">
+              {regime}
+            </Badge>
+          </div>
+        )}
+        <div className="flex items-center gap-0.5 ml-auto">
+          {TIMEFRAMES.map((tf) => (
+            <button
+              key={tf}
+              onClick={() => setActiveTimeframe(tf)}
+              className={cn(
+                "px-2 py-0.5 text-[10px] font-medium rounded transition-colors",
+                activeTimeframe === tf
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              {tf}
+            </button>
+          ))}
+          {ohlcvLoading && (
+            <span className="text-[10px] text-muted-foreground ml-2">Loading…</span>
+          )}
         </div>
       </div>
 
@@ -248,20 +266,6 @@ export function CandlestickChart({ symbol }: CandlestickChartProps) {
               <span className="font-mono text-right text-[var(--short)]">{tooltip.low}</span>
               <span className="text-muted-foreground">Close:</span>
               <span className="font-mono text-right">{tooltip.close}</span>
-            </div>
-            <div className="border-t border-border mt-1.5 pt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
-              <span className="text-muted-foreground">RSI:</span>
-              <span className="font-mono text-right">{tooltip.rsi}</span>
-              <span className="text-muted-foreground">MACD hist:</span>
-              <span className="font-mono text-right">{tooltip.macd}</span>
-              <span className="text-muted-foreground">BB%:</span>
-              <span className="font-mono text-right">{tooltip.bbPercent}%</span>
-              <span className="text-muted-foreground">EMA200:</span>
-              <span className={`text-right ${tooltip.ema200 ? "text-[var(--long)]" : "text-[var(--short)]"}`}>
-                {tooltip.ema200 ? "Above" : "Below"}
-              </span>
-              <span className="text-muted-foreground">ATR Rank:</span>
-              <span className="text-right">{tooltip.atrRank}</span>
             </div>
           </div>
         )}

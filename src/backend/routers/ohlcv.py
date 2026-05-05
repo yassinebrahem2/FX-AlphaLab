@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
 from src.backend.schemas.ohlcv import OHLCVBar
-from src.ingestion.preprocessors.dukascopy_preprocessor import (
-    _TF_RULE,
-    DukascopyPreprocessor,
-    _resample_ohlcv,
-)
+from src.ingestion.preprocessors.dukascopy_preprocessor import _TF_RULE, DukascopyPreprocessor
 from src.shared.config import Config
 
 router = APIRouter(prefix="/ohlcv", tags=["ohlcv"])
@@ -44,40 +39,21 @@ def get_ohlcv(
     days = min(days, _DAYS_CAP[tf])
     start_dt = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=days)
 
-    bronze_dir = Config.DATA_DIR / "raw" / "dukascopy" / instrument
-    if not bronze_dir.exists():
-        raise HTTPException(status_code=404, detail=f"No Bronze data for {instrument}")
-
-    frames: list[pd.DataFrame] = []
-    for path in sorted(bronze_dir.glob("**/*.parquet")):
-        file_dt = _bronze_file_datetime(path)
-        if file_dt is None or file_dt < start_dt:
-            continue
-
-        df = pd.read_parquet(path)
-        if not df.empty:
-            frames.append(df)
-
-    if not frames:
-        raise HTTPException(status_code=404, detail=f"No data for {instrument} in last {days} days")
-
-    df_1min = pd.concat(frames, ignore_index=True)
-    df_1min["timestamp_utc"] = pd.to_datetime(df_1min["timestamp_utc"], utc=True)
-    df_1min = (
-        df_1min.sort_values("timestamp_utc")
-        .drop_duplicates(subset=["timestamp_utc"])
-        .reset_index(drop=True)
+    silver_path = (
+        Config.DATA_DIR / "processed" / "ohlcv" / f"ohlcv_{instrument}_{tf}_latest.parquet"
     )
+    if not silver_path.exists():
+        raise HTTPException(status_code=404, detail=f"No Silver data for {instrument} {tf}")
 
-    if df_1min.empty:
+    df = pd.read_parquet(silver_path)
+    if df.empty:
+        raise HTTPException(status_code=404, detail=f"No data for {instrument} {tf}")
+
+    df = df.reset_index()
+    df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True)
+    df = df[df["timestamp_utc"] >= start_dt]
+
+    if df.empty:
         raise HTTPException(status_code=404, detail=f"No data for {instrument} in last {days} days")
 
-    df_resampled = _resample_ohlcv(df_1min, tf)
-    return [OHLCVBar(**row) for row in df_resampled.to_dict("records")]
-
-
-def _bronze_file_datetime(path: Path) -> datetime | None:
-    try:
-        return datetime.strptime(path.stem, "%Y%m%d").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
+    return [OHLCVBar(**row) for row in df.to_dict("records")]

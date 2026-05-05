@@ -32,7 +32,7 @@ class SentimentAgent:
         stocktwits_node: StocktwitsSignalNode,
         reddit_node: RedditSignalNode,
         gdelt_node: GDELTSignalNode,
-        gtrends_node: GoogleTrendsSignalNode,
+        gtrends_node: GoogleTrendsSignalNode | None = None,
         log_file: Path | None = None,
     ) -> None:
         """Initialize SentimentAgent with node instances and logger."""
@@ -163,6 +163,8 @@ class SentimentAgent:
 
         # Google Trends
         try:
+            if self.gtrends_node is None:
+                raise ValueError("Google Trends node not configured")
             gtrends_df = self.gtrends_node.compute(
                 start_date - timedelta(days=self.GDELT_WARMUP_DAYS), end_date
             )

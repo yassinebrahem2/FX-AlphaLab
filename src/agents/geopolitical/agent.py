@@ -245,7 +245,11 @@ class GeopoliticalAgent(BaseAgent):
         assert self._data is not None
         match = self._data[self._data["date"] == gdelt_date]
         if match.empty:
-            raise KeyError(f"Date {gdelt_date} not found in zone features")
+            # Fall back to most recent available date (GDELT publishes T+1)
+            available = self._data[self._data["date"] <= gdelt_date]
+            if available.empty:
+                raise KeyError(f"Date {gdelt_date} not found in zone features")
+            return available.iloc[-1]
         return match.iloc[0]
 
     def _history_window(self, gdelt_date: date) -> np.ndarray:

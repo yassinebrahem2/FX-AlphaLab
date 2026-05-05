@@ -48,6 +48,7 @@ class CollectionOrchestrator:
             "dukascopy_d1": self._collect_dukascopy_d1,
             "dukascopy_h4": self._collect_dukascopy_h4,
             "dukascopy_h1": self._collect_dukascopy_h1,
+            "dukascopy_m15": self._collect_dukascopy_m15,
             "gdelt_events": self._collect_gdelt_events,
             "gdelt_gkg": self._collect_gdelt_gkg,
             "fred_macro": self._collect_fred_macro,
@@ -59,6 +60,17 @@ class CollectionOrchestrator:
             "stocktwits": self._collect_stocktwits,
             "forex_factory": self._collect_forex_factory,
         }
+
+    @staticmethod
+    def _read_parquet_ts(pf: Path) -> pd.Series:
+        """Read timestamp_utc from a parquet file regardless of index vs column layout."""
+        df = pd.read_parquet(pf)
+        if "timestamp_utc" in df.columns:
+            return pd.to_datetime(df["timestamp_utc"], utc=True, errors="coerce").dropna()
+        if df.index.name == "timestamp_utc":
+            ts = pd.to_datetime(df.index, utc=True, errors="coerce")
+            return ts[ts.notna()]
+        raise KeyError("timestamp_utc")
 
     def close(self) -> None:
         """Close all logging file handlers to release file locks.
@@ -209,9 +221,9 @@ class CollectionOrchestrator:
                 max_ts = None
                 for pf in parquets:
                     try:
-                        df_ts = pd.read_parquet(pf, columns=["timestamp_utc"])
-                        total_rows += len(df_ts)
-                        ts = df_ts["timestamp_utc"].max()
+                        ts_series = self._read_parquet_ts(pf)
+                        total_rows += len(ts_series)
+                        ts = ts_series.max()
                         if max_ts is None or ts > max_ts:
                             max_ts = ts
                     except Exception as e:
@@ -226,17 +238,17 @@ class CollectionOrchestrator:
             elif source_id.startswith("gdelt_"):
                 # GDELT events/GKG parquet files
                 if source_id == "gdelt_events":
-                    events_dir = silver_dir / "events"
+                    events_dir = silver_dir / "gdelt_events"
                     if not events_dir.exists():
                         self.logger.debug(f"{source_id}: Events dir does not exist")
                         return False
-                    parquets = list(events_dir.glob("*.parquet"))
+                    parquets = list(events_dir.glob("**/*.parquet"))
                 elif source_id == "gdelt_gkg":
-                    gkg_dir = silver_dir / "gkg"
+                    gkg_dir = silver_dir / "sentiment" / "source=gdelt"
                     if not gkg_dir.exists():
                         self.logger.debug(f"{source_id}: GKG dir does not exist")
                         return False
-                    parquets = list(gkg_dir.glob("*.parquet"))
+                    parquets = list(gkg_dir.glob("**/*.parquet"))
                 else:
                     return False
 
@@ -247,9 +259,9 @@ class CollectionOrchestrator:
                 max_ts = None
                 for pf in parquets:
                     try:
-                        df_ts = pd.read_parquet(pf, columns=["timestamp_utc"])
-                        total_rows += len(df_ts)
-                        ts = df_ts["timestamp_utc"].max()
+                        ts_series = self._read_parquet_ts(pf)
+                        total_rows += len(ts_series)
+                        ts = ts_series.max()
                         if max_ts is None or ts > max_ts:
                             max_ts = ts
                     except Exception as e:
@@ -275,9 +287,9 @@ class CollectionOrchestrator:
                 max_ts = None
                 for pf in parquets:
                     try:
-                        df_ts = pd.read_parquet(pf, columns=["timestamp_utc"])
-                        total_rows += len(df_ts)
-                        ts = df_ts["timestamp_utc"].max()
+                        ts_series = self._read_parquet_ts(pf)
+                        total_rows += len(ts_series)
+                        ts = ts_series.max()
                         if max_ts is None or ts > max_ts:
                             max_ts = ts
                     except Exception as e:
@@ -303,9 +315,9 @@ class CollectionOrchestrator:
                 max_ts = None
                 for pf in parquets:
                     try:
-                        df_ts = pd.read_parquet(pf, columns=["timestamp_utc"])
-                        total_rows += len(df_ts)
-                        ts = df_ts["timestamp_utc"].max()
+                        ts_series = self._read_parquet_ts(pf)
+                        total_rows += len(ts_series)
+                        ts = ts_series.max()
                         if max_ts is None or ts > max_ts:
                             max_ts = ts
                     except Exception as e:
@@ -317,30 +329,43 @@ class CollectionOrchestrator:
                     return False
                 return self._check_recency(source_id, max_ts, source_config)
 
-            elif source_id in (
-                "fred_macro",
-                "ecb_macro",
-                "fed_documents",
-                "ecb_documents",
-                "boe_documents",
-            ):
-                # Macro data: check macro_signal.parquet
-                macro_signal_path = silver_dir / "macro" / "macro_signal.parquet"
-                if not macro_signal_path.exists():
-                    self.logger.debug(f"{source_id}: macro_signal.parquet does not exist")
+            elif source_id in ("fred_macro", "ecb_macro"):
+                # macro_all.parquet mtime == last successful MacroNormalizer run — no need to parse
+                macro_all_path = silver_dir / "macro" / "macro_all.parquet"
+                if not macro_all_path.exists():
                     return False
-                try:
-                    df = pd.read_parquet(macro_signal_path, columns=["timestamp_utc"])
-                    rows = len(df)
-                    if rows < min_days:
-                        return False
-                    max_ts = df["timestamp_utc"].max()
-                    if max_ts is None:
-                        return False
-                    return self._check_recency(source_id, max_ts, source_config)
-                except Exception as e:
-                    self.logger.warning(f"Failed to read macro_signal.parquet: {e}")
+                staleness_limit = timedelta(hours=(source_config.interval_hours or 24) * 2)
+                age_seconds = (
+                    datetime.now(timezone.utc).timestamp() - macro_all_path.stat().st_mtime
+                )
+                return age_seconds <= staleness_limit.total_seconds()
+
+            elif source_id in ("fed_documents", "ecb_documents", "boe_documents"):
+                # Document sources: check macro/news partitioned layout (news_cleaned.parquet)
+                source_name = source_id.replace("_documents", "")
+                news_dir = silver_dir / "macro" / "news" / source_name
+                if not news_dir.exists():
                     return False
+                parquets = list(news_dir.glob("year=*/month=*/news_cleaned.parquet"))
+                if not parquets:
+                    return False
+                total_rows = 0
+                max_ts = None
+                for pf in parquets:
+                    try:
+                        ts_series = self._read_parquet_ts(pf)
+                        total_rows += len(ts_series)
+                        ts = ts_series.max()
+                        if max_ts is None or ts > max_ts:
+                            max_ts = ts
+                    except Exception as e:
+                        self.logger.warning(f"Failed to read {pf}: {e}")
+                        continue
+                if total_rows < min_days:
+                    return False
+                if max_ts is None:
+                    return False
+                return self._check_recency(source_id, max_ts, source_config)
 
             elif source_id == "forex_factory":
                 # ForexFactory events CSV
@@ -416,6 +441,66 @@ class CollectionOrchestrator:
         latest_mtime = max(f.stat().st_mtime for f in files)
         age_seconds = datetime.now(timezone.utc).timestamp() - latest_mtime
         return age_seconds <= staleness_limit.total_seconds()
+
+    def _write_news_parquets(self, bronze_dir: Path, output_dir: Path, source: str) -> int:
+        """Read JSONL Bronze documents, extract text + timestamp, write partitioned parquets.
+
+        Output layout: {output_dir}/year={YYYY}/month={MM}/news_cleaned.parquet
+        Schema: [timestamp_utc, text, source]
+        MacroSignalBuilder reads these for hawk/dove tone calculation.
+        """
+        import json
+
+        jsonl_files = list(bronze_dir.glob("**/*.jsonl"))
+        if not jsonl_files:
+            self.logger.warning("%s: No JSONL files found in %s", source, bronze_dir)
+            return 0
+
+        records = []
+        for path in jsonl_files:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        doc = json.loads(line)
+                        ts_raw = doc.get("timestamp_published") or doc.get("timestamp_collected")
+                        if not ts_raw:
+                            continue
+                        title = doc.get("title") or ""
+                        content = doc.get("content") or doc.get("full_text") or ""
+                        text = (title + ". " + content[:500]).strip(". ") if content else title
+                        if not text:
+                            continue
+                        records.append({"timestamp_utc": ts_raw, "text": text, "source": source})
+            except Exception as e:
+                self.logger.warning("Failed to read %s: %s", path, e)
+
+        if not records:
+            return 0
+
+        df = pd.DataFrame(records)
+        df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True, errors="coerce")
+        df = df.dropna(subset=["timestamp_utc"]).drop_duplicates(subset=["timestamp_utc", "text"])
+        df["year"] = df["timestamp_utc"].dt.year
+        df["month"] = df["timestamp_utc"].dt.strftime("%m")
+
+        rows_written = 0
+        for (year, month), group in df.groupby(["year", "month"]):
+            partition_path = output_dir / f"year={year}" / f"month={month}"
+            partition_path.mkdir(parents=True, exist_ok=True)
+            out = group.drop(columns=["year", "month"]).reset_index(drop=True)
+            out.to_parquet(
+                partition_path / "news_cleaned.parquet",
+                index=False,
+                engine="pyarrow",
+                compression="snappy",
+            )
+            rows_written += len(out)
+
+        self.logger.info("%s: Wrote %d news records to %s", source, rows_written, output_dir)
+        return rows_written
 
     # ============================================================================
     # Collector stubs — each returns rows_written or raises NotImplementedError
@@ -507,6 +592,10 @@ class CollectionOrchestrator:
         """Collect 1-hour OHLCV data from Dukascopy."""
         return self._collect_dukascopy(source_config, fetch_from)
 
+    def _collect_dukascopy_m15(self, source_config, fetch_from) -> int:  # pragma: no cover
+        """Collect 15-minute OHLCV data from Dukascopy."""
+        return self._collect_dukascopy(source_config, fetch_from)
+
     def _collect_gdelt_events(self, source_config, fetch_from) -> int:  # pragma: no cover
         """Collect GDELT event stream."""
         from datetime import datetime as dt_class
@@ -515,7 +604,7 @@ class CollectionOrchestrator:
         from src.ingestion.preprocessors.gdelt_events_preprocessor import GDELTEventsPreprocessor
 
         bronze_dir = self.root / "data" / "raw" / "gdelt_events"
-        silver_dir = self.root / "data" / "processed" / "events"
+        silver_dir = self.root / "data" / "processed" / "gdelt_events"
 
         is_backfill = fetch_from is None
 
@@ -547,6 +636,16 @@ class CollectionOrchestrator:
             start_date=start_dt, end_date=end_dt, backfill=is_backfill
         )
 
+        # Rebuild zone_features_daily.parquet from updated Silver events
+        from src.ingestion.preprocessors.gdelt_zone_feature_builder import GDELTZoneFeatureBuilder
+
+        zone_path = (
+            self.root / "data" / "processed" / "geopolitical" / "zone_features_daily.parquet"
+        )
+        zone_path.parent.mkdir(parents=True, exist_ok=True)
+        builder = GDELTZoneFeatureBuilder(clean_silver_dir=silver_dir, output_path=zone_path)
+        builder.run(start_date=start_dt, end_date=end_dt, backfill=is_backfill)
+
         # Count total rows
         rows_written = sum(silver_results.values())
         return rows_written
@@ -559,7 +658,7 @@ class CollectionOrchestrator:
         from src.ingestion.preprocessors.gdelt_gkg_preprocessor import GDELTGKGPreprocessor
 
         bronze_dir = self.root / "data" / "raw" / "gdelt_gkg"
-        silver_dir = self.root / "data" / "processed" / "gkg"
+        silver_dir = self.root / "data" / "processed" / "sentiment" / "source=gdelt"
 
         is_backfill = fetch_from is None
 
@@ -612,11 +711,9 @@ class CollectionOrchestrator:
             # Determine date window (always timezone-aware UTC)
             end_dt = datetime.now(timezone.utc)
             if fetch_from is not None:
-                # Ensure fetch_from is timezone-aware UTC
-                start_dt = (
-                    fetch_from
-                    if getattr(fetch_from, "tzinfo", None)
-                    else fetch_from.replace(tzinfo=timezone.utc)
+                # fetch_from is a date object from run_source() — convert to datetime
+                start_dt = datetime(
+                    fetch_from.year, fetch_from.month, fetch_from.day, tzinfo=timezone.utc
                 )
             else:
                 lookback_days = source_config.min_silver_days or int(
@@ -686,13 +783,13 @@ class CollectionOrchestrator:
             else:
                 self.logger.info("fred_macro: ECB Bronze is recent — skipping ECB network fetch")
 
-            # Now normalize both sources into macro_all.parquet
+            # MacroNormalizer always reprocesses all Bronze — date range is for API fetching only
             normalizer = MacroNormalizer(
                 input_dir=self.root / "data" / "raw",
                 output_dir=self.root / "data" / "processed" / "macro",
                 sources=["fred", "ecb"],
             )
-            normalized = normalizer.preprocess(start_date=start_dt, end_date=end_dt, backfill=True)
+            normalized = normalizer.preprocess(start_date=None, end_date=None, backfill=True)
 
             # Prefer reporting normalized rows when available (single consolidated result)
             if normalized:
@@ -730,10 +827,8 @@ class CollectionOrchestrator:
             # Determine date window (UTC-aware)
             end_dt = datetime.now(timezone.utc)
             if fetch_from is not None:
-                start_dt = (
-                    fetch_from
-                    if getattr(fetch_from, "tzinfo", None)
-                    else fetch_from.replace(tzinfo=timezone.utc)
+                start_dt = datetime(
+                    fetch_from.year, fetch_from.month, fetch_from.day, tzinfo=timezone.utc
                 )
             else:
                 lookback_days = source_config.min_silver_days or int(
@@ -773,7 +868,7 @@ class CollectionOrchestrator:
                 output_dir=self.root / "data" / "processed" / "macro",
                 sources=["fred", "ecb"],
             )
-            normalized = normalizer.preprocess(start_date=start_dt, end_date=end_dt, backfill=True)
+            normalized = normalizer.preprocess(start_date=None, end_date=None, backfill=True)
 
             if normalized:
                 try:
@@ -796,26 +891,162 @@ class CollectionOrchestrator:
                 error=str(e),
             )
 
-    def _collect_fed_documents(self, source_config, fetch_from) -> int:  # pragma: no cover
-        """Collect Fed press releases and documents."""
-        raise NotImplementedError(
-            "Fed documents collector not yet integrated. "
-            "Awaiting FedDocumentsCollector interface finalization."
-        )
+    def _collect_fed_documents(
+        self, source_config, fetch_from
+    ) -> CollectionResult:  # pragma: no cover
+        """Collect Fed press releases and documents.
 
-    def _collect_ecb_documents(self, source_config, fetch_from) -> int:  # pragma: no cover
-        """Collect ECB press releases and documents."""
-        raise NotImplementedError(
-            "ECB documents collector not yet integrated. "
-            "Awaiting ECBDocumentsCollector interface finalization."
-        )
+        Simple Bronze JSONL -> partitioned macro/news news_cleaned.parquet writer.
+        No FinBERT, no NewsPreprocessor.
+        """
+        try:
+            from src.ingestion.collectors.fed_scraper_collector import FedScraperCollector
 
-    def _collect_boe_documents(self, source_config, fetch_from) -> int:  # pragma: no cover
-        """Collect BoE press releases and documents."""
-        raise NotImplementedError(
-            "BoE documents collector not yet integrated. "
-            "Awaiting BoeDocumentsCollector interface finalization."
-        )
+            source_name = "fed"
+            bronze_dir = self.root / "data" / "raw" / "news" / source_name
+            news_silver_dir = self.root / "data" / "processed" / "macro" / "news" / source_name
+            staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+
+            end_dt = datetime.now(timezone.utc)
+            if fetch_from is not None:
+                # Incremental: fetch_from is a date object from run_source()
+                start_dt = datetime(
+                    fetch_from.year, fetch_from.month, fetch_from.day, tzinfo=timezone.utc
+                )
+            else:
+                # Backfill: derive from min_silver_days so scrapers get the full required window
+                min_days = source_config.min_silver_days or 730
+                start_dt = end_dt - timedelta(days=min_days + 30)
+
+            docs_collected = 0
+
+            if not self._bronze_has_recent_data(bronze_dir, staleness_limit, "**/*.jsonl"):
+                collector = FedScraperCollector(output_dir=bronze_dir)
+                data = collector.collect(
+                    start_date=start_dt.replace(tzinfo=None),
+                    end_date=end_dt.replace(tzinfo=None),
+                )
+                collector.export_all(data=data)
+                docs_collected = sum(len(v) for v in data.values())
+            else:
+                self.logger.info("fed_documents: Bronze is recent — skipping network fetch")
+
+            # Simple JSONL -> partitioned parquet extraction for MacroSignalBuilder
+            rows_written = self._write_news_parquets(bronze_dir, news_silver_dir, source_name)
+
+            return CollectionResult(
+                source_id="fed_documents",
+                rows_written=rows_written or docs_collected,
+                backfill_performed=fetch_from is None,
+                error=None,
+            )
+        except Exception as e:
+            return CollectionResult(
+                source_id="fed_documents",
+                rows_written=0,
+                backfill_performed=fetch_from is None,
+                error=str(e),
+            )
+
+    def _collect_ecb_documents(
+        self, source_config, fetch_from
+    ) -> CollectionResult:  # pragma: no cover
+        """Collect ECB press releases and documents (simple JSONL -> partitioned news)."""
+        try:
+            from src.ingestion.collectors.ecb_scraper_collector import ECBScraperCollector
+
+            source_name = "ecb"
+            bronze_dir = self.root / "data" / "raw" / "news" / source_name
+            news_silver_dir = self.root / "data" / "processed" / "macro" / "news" / source_name
+            staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+
+            end_dt = datetime.now(timezone.utc)
+            if fetch_from is not None:
+                start_dt = datetime(
+                    fetch_from.year, fetch_from.month, fetch_from.day, tzinfo=timezone.utc
+                )
+            else:
+                min_days = source_config.min_silver_days or 730
+                start_dt = end_dt - timedelta(days=min_days + 30)
+
+            docs_collected = 0
+
+            if not self._bronze_has_recent_data(bronze_dir, staleness_limit, "**/*.jsonl"):
+                collector = ECBScraperCollector(output_dir=bronze_dir)
+                data = collector.collect(
+                    start_date=start_dt.replace(tzinfo=None),
+                    end_date=end_dt.replace(tzinfo=None),
+                )
+                collector.export_all(data=data)
+                docs_collected = sum(len(v) for v in data.values())
+            else:
+                self.logger.info("ecb_documents: Bronze is recent — skipping network fetch")
+
+            rows_written = self._write_news_parquets(bronze_dir, news_silver_dir, source_name)
+
+            return CollectionResult(
+                source_id="ecb_documents",
+                rows_written=rows_written or docs_collected,
+                backfill_performed=fetch_from is None,
+                error=None,
+            )
+        except Exception as e:
+            return CollectionResult(
+                source_id="ecb_documents",
+                rows_written=0,
+                backfill_performed=fetch_from is None,
+                error=str(e),
+            )
+
+    def _collect_boe_documents(
+        self, source_config, fetch_from
+    ) -> CollectionResult:  # pragma: no cover
+        """Collect BoE press releases and documents (simple JSONL -> partitioned news)."""
+        try:
+            from src.ingestion.collectors.boe_scraper_collector import BoEScraperCollector
+
+            source_name = "boe"
+            bronze_dir = self.root / "data" / "raw" / "news" / source_name
+            news_silver_dir = self.root / "data" / "processed" / "macro" / "news" / source_name
+            staleness_limit = timedelta(hours=max(source_config.interval_hours * 3, 72))
+
+            end_dt = datetime.now(timezone.utc)
+            if fetch_from is not None:
+                start_dt = datetime(
+                    fetch_from.year, fetch_from.month, fetch_from.day, tzinfo=timezone.utc
+                )
+            else:
+                min_days = source_config.min_silver_days or 730
+                start_dt = end_dt - timedelta(days=min_days + 30)
+
+            docs_collected = 0
+
+            if not self._bronze_has_recent_data(bronze_dir, staleness_limit, "**/*.jsonl"):
+                collector = BoEScraperCollector(output_dir=bronze_dir)
+                data = collector.collect(
+                    start_date=start_dt.replace(tzinfo=None),
+                    end_date=end_dt.replace(tzinfo=None),
+                )
+                collector.export_all(data=data)
+                docs_collected = sum(len(v) for v in data.values())
+            else:
+                self.logger.info("boe_documents: Bronze is recent — skipping network fetch")
+
+            rows_written = self._write_news_parquets(bronze_dir, news_silver_dir, source_name)
+
+            return CollectionResult(
+                source_id="boe_documents",
+                rows_written=rows_written or docs_collected,
+                backfill_performed=fetch_from is None,
+                error=None,
+            )
+        except Exception as e:
+            return CollectionResult(
+                source_id="boe_documents",
+                rows_written=0,
+                backfill_performed=fetch_from is None,
+                error=str(e),
+            )
 
     def _collect_google_trends(
         self,
@@ -849,7 +1080,7 @@ class CollectionOrchestrator:
 
             preprocessor = GoogleTrendsPreprocessor(
                 input_dir=self.root / "data" / "raw" / "google_trends",
-                output_dir=self.root / "data" / "processed" / "google_trends",
+                output_dir=self.root / "data" / "processed" / "sentiment",
             )
             preprocessor.run(backfill=True)
 

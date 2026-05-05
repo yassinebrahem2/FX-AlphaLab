@@ -46,6 +46,11 @@ from src.ingestion.collectors.base_collector import BaseCollector
 from src.shared.config import Config
 
 
+def _naive(dt: datetime | None) -> datetime | None:
+    """Strip timezone info so all internal comparisons use naive UTC datetimes."""
+    return dt.replace(tzinfo=None) if dt is not None and dt.tzinfo is not None else dt
+
+
 @dataclass(frozen=True)
 class FREDSeries:
     """Immutable descriptor for a FRED data series."""
@@ -200,8 +205,8 @@ class FREDCollector(BaseCollector):
             >>> print(row_counts)
             {'federal_funds_rate': 250, 'unemployment_rate': 0}  # 0 = skipped (already exists)
         """
-        start = start_date or datetime.now() - timedelta(days=730)
-        end = end_date or datetime.now()
+        start = _naive(start_date) or datetime.now() - timedelta(days=730)
+        end = _naive(end_date) or datetime.now()
 
         if start > end:
             raise ValueError(f"start_date ({start.date()}) must be before end_date ({end.date()})")
@@ -308,8 +313,8 @@ class FREDCollector(BaseCollector):
         if not series_id or not series_id.strip():
             raise ValueError("series_id cannot be empty")
 
-        start = start_date or datetime.now() - timedelta(days=730)
-        end = end_date or datetime.now()
+        start = _naive(start_date) or datetime.now() - timedelta(days=730)
+        end = _naive(end_date) or datetime.now()
 
         if start > end:
             raise ValueError(f"start_date ({start.date()}) must be before end_date ({end.date()})")
@@ -392,8 +397,8 @@ class FREDCollector(BaseCollector):
         if not series_ids:
             raise ValueError("series_ids list cannot be empty")
 
-        start = start_date or datetime.now() - timedelta(days=730)
-        end = end_date or datetime.now()
+        start = _naive(start_date) or datetime.now() - timedelta(days=730)
+        end = _naive(end_date) or datetime.now()
 
         if start > end:
             raise ValueError(f"start_date ({start.date()}) must be before end_date ({end.date()})")

@@ -76,7 +76,7 @@ class GoogleTrendsCollector(BaseCollector):
                     frame = frame.reset_index()
                     frame.to_csv(output_path, index=False)
                     results[batch_key] = int(len(frame))
-                    time.sleep(random.uniform(2, 5))
+                    time.sleep(random.uniform(45, 75))
                 except Exception as exc:
                     self.failed_batches.append(batch_key)
                     self.logger.error("Google Trends batch failed for %s: %s", batch_key, exc)
@@ -101,15 +101,25 @@ class GoogleTrendsCollector(BaseCollector):
         timeframe: str,
         max_retries: int = 3,
     ) -> pd.DataFrame:
-        retry_delay = 2
+        retry_delay = 60
         last_error: Exception | None = None
 
         for attempt in range(max_retries):
             try:
-                pytrends.build_payload(kw_list=kw_list, timeframe=timeframe)
-                return pytrends.interest_over_time()
+                # Fresh session per attempt — avoids reusing a poisoned/rate-limited connection
+                pt = TrendReq(hl="en-US", tz=0)
+                pt.build_payload(kw_list=kw_list, timeframe=timeframe)
+                return pt.interest_over_time()
             except Exception as exc:
                 last_error = exc
+                self.logger.warning(
+                    "Attempt %d/%d failed for %s: %s: %s",
+                    attempt + 1,
+                    max_retries,
+                    kw_list,
+                    type(exc).__name__,
+                    exc,
+                )
                 if attempt == max_retries - 1:
                     break
                 time.sleep(retry_delay * (2**attempt))

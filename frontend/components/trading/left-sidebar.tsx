@@ -4,39 +4,50 @@ import { Search, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import {
+  AgentSignalAPI,
+  CoordinatorSignalAPI,
+  toActionLabel,
+  toConfidenceLabel,
+} from "@/lib/api";
 
-interface WatchlistItem {
-  symbol: string;
-  direction: "LONG" | "SHORT" | "FLAT";
-  confidence: string;
-  bid: string;
-  ask: string;
-}
+const WATCHLIST_PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"];
 
-const watchlist: WatchlistItem[] = [
-  { symbol: "EURUSD", direction: "LONG", confidence: "3/3", bid: "1.0842", ask: "1.0844" },
-  { symbol: "GBPUSD", direction: "SHORT", confidence: "2/3", bid: "1.2651", ask: "1.2653" },
-  { symbol: "USDJPY", direction: "LONG", confidence: "2/3", bid: "154.82", ask: "154.84" },
-  { symbol: "USDCHF", direction: "FLAT", confidence: "1/3", bid: "0.8842", ask: "0.8844" },
-  { symbol: "AUDUSD", direction: "SHORT", confidence: "3/3", bid: "0.6512", ask: "0.6514" },
-  { symbol: "NZDUSD", direction: "LONG", confidence: "2/3", bid: "0.5982", ask: "0.5984" },
-  { symbol: "USDCAD", direction: "FLAT", confidence: "1/3", bid: "1.3652", ask: "1.3654" },
-];
-
-interface AgentPulse {
+interface AgentPulseDef {
   name: string;
-  status: "OK" | "WARN" | "ALERT";
-  freshness: string;
-  driver: string;
+  driver: (sig: AgentSignalAPI | undefined) => string;
   impact: string;
-  delta: "up" | "down" | "flat";
 }
 
-const agentPulse: AgentPulse[] = [
-  { name: "Technical", status: "OK", freshness: "5m ago", driver: "momentum", impact: "entry (1d)", delta: "up" },
-  { name: "Macro", status: "OK", freshness: "2h ago", driver: "carry", impact: "direction (5d)", delta: "up" },
-  { name: "Geopolitical", status: "WARN", freshness: "1d ago", driver: "tariff risk", impact: "volatility (2w)", delta: "down" },
-  { name: "Sentiment", status: "OK", freshness: "15m ago", driver: "positioning", impact: "reversal (3d)", delta: "flat" },
+const AGENT_PULSE_DEFS: AgentPulseDef[] = [
+  {
+    name: "Technical",
+    driver: (s) => s?.tech_vol_regime ?? "—",
+    impact: "entry (1d)",
+  },
+  {
+    name: "Macro",
+    driver: (s) => s?.macro_dominant_driver ?? "—",
+    impact: "direction (5d)",
+  },
+  {
+    name: "Geopolitical",
+    driver: (s) =>
+      s?.geo_base_zone_explanation?.dominant_driver ?? s?.geo_risk_regime ?? "—",
+    impact: "volatility (2w)",
+  },
+  {
+    name: "Sentiment",
+    driver: (s) => {
+      if (!s) return "—";
+      if (s.composite_stress_flag) {
+        const src = s.sentiment_stress_sources?.[0];
+        return src ?? "stress flagged";
+      }
+      return "normal";
+    },
+    impact: "regime overlay",
+  },
 ];
 
 interface LeftSidebarProps {
@@ -45,9 +56,19 @@ interface LeftSidebarProps {
   activeInstrument: string;
   onInstrumentChange: (symbol: string) => void;
   width?: number;
+  coordinatorSignals: Map<string, CoordinatorSignalAPI>;
+  agentSignals: Map<string, AgentSignalAPI>;
 }
 
-export function LeftSidebar({ collapsed, onToggle, activeInstrument, onInstrumentChange, width = 260 }: LeftSidebarProps) {
+export function LeftSidebar({
+  collapsed,
+  onToggle,
+  activeInstrument,
+  onInstrumentChange,
+  width = 260,
+  coordinatorSignals,
+  agentSignals,
+}: LeftSidebarProps) {
   if (collapsed) {
     return (
       <aside className="w-10 bg-card border-r border-border flex flex-col shrink-0 shadow-[var(--card-shadow)]">
@@ -60,6 +81,11 @@ export function LeftSidebar({ collapsed, onToggle, activeInstrument, onInstrumen
       </aside>
     );
   }
+
+  const hasData = coordinatorSignals.size > 0;
+
+  // Pick a representative pair for Agent Pulse (first available, or EURUSD)
+  const pulseSignal = agentSignals.get("EURUSD") ?? agentSignals.values().next().value;
 
   return (
     <aside
@@ -84,7 +110,7 @@ export function LeftSidebar({ collapsed, onToggle, activeInstrument, onInstrumen
               Watchlist
             </h3>
             <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-              Favorites <ChevronDown className="h-3 w-3" />
+              FX Pairs <ChevronDown className="h-3 w-3" />
             </button>
           </div>
           <div className="relative">
@@ -104,46 +130,66 @@ export function LeftSidebar({ collapsed, onToggle, activeInstrument, onInstrumen
                 <th className="text-left p-2 font-medium">Symbol</th>
                 <th className="text-center p-2 font-medium">Dir</th>
                 <th className="text-center p-2 font-medium">Conf</th>
-                <th className="text-right p-2 font-medium">Bid</th>
-                <th className="text-right p-2 font-medium">Ask</th>
+                <th className="text-right p-2 font-medium">Action</th>
               </tr>
             </thead>
             <tbody>
-              {watchlist.map((item) => (
-                <tr
-                  key={item.symbol}
-                  onClick={() => onInstrumentChange(item.symbol)}
-                  className={cn(
-                    "hover:bg-accent cursor-pointer transition-colors",
-                    activeInstrument === item.symbol && "bg-accent"
-                  )}
-                >
-                  <td className="p-2 font-medium">{item.symbol}</td>
-                  <td className="p-2 text-center">
-                    <Badge
-                      variant="secondary"
-                      className={cn(
-                        "text-[9px] px-1 py-0 h-4 font-medium",
-                        item.direction === "LONG" && "bg-[var(--long)]/10 text-[var(--long)]",
-                        item.direction === "SHORT" && "bg-[var(--short)]/10 text-[var(--short)]",
-                        item.direction === "FLAT" && "bg-[var(--flat)]/10 text-[var(--flat)]"
+              {WATCHLIST_PAIRS.map((pair) => {
+                const cs = coordinatorSignals.get(pair);
+                const action = toActionLabel(cs?.suggested_action ?? null);
+                const conf = toConfidenceLabel(cs?.confidence_tier ?? null);
+                const direction =
+                  action === "BUY" ? "LONG" : action === "SELL" ? "SHORT" : "FLAT";
+
+                return (
+                  <tr
+                    key={pair}
+                    onClick={() => onInstrumentChange(pair)}
+                    className={cn(
+                      "hover:bg-accent cursor-pointer transition-colors",
+                      activeInstrument === pair && "bg-accent"
+                    )}
+                  >
+                    <td className="p-2 font-medium">{pair}</td>
+                    <td className="p-2 text-center">
+                      {hasData ? (
+                        <Badge
+                          variant="secondary"
+                          className={cn(
+                            "text-[9px] px-1 py-0 h-4 font-medium",
+                            direction === "LONG" && "bg-[var(--long)]/10 text-[var(--long)]",
+                            direction === "SHORT" && "bg-[var(--short)]/10 text-[var(--short)]",
+                            direction === "FLAT" && "bg-[var(--flat)]/10 text-[var(--flat)]"
+                          )}
+                        >
+                          {direction}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
                       )}
-                    >
-                      {item.direction}
-                    </Badge>
-                  </td>
-                  <td className="p-2 text-center font-mono text-muted-foreground">
-                    {item.confidence}
-                  </td>
-                  <td className="p-2 text-right font-mono">{item.bid}</td>
-                  <td className="p-2 text-right font-mono">{item.ask}</td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="p-2 text-center font-mono text-muted-foreground">
+                      {hasData ? conf : "—"}
+                    </td>
+                    <td className="p-2 text-right">
+                      {hasData && cs && (
+                        <Badge
+                          className={cn(
+                            "text-[9px] px-1.5 h-4",
+                            action === "BUY" && "bg-[var(--buy)] text-white",
+                            action === "SELL" && "bg-[var(--sell)] text-white",
+                            action === "HOLD" && "bg-muted text-muted-foreground"
+                          )}
+                        >
+                          {action}
+                        </Badge>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-          <div className="px-2 pb-2">
-            <button className="text-[10px] text-primary hover:underline">why</button>
-          </div>
         </div>
 
         {/* Agent Pulse Section */}
@@ -152,46 +198,38 @@ export function LeftSidebar({ collapsed, onToggle, activeInstrument, onInstrumen
             Agent Pulse
           </h3>
           <div className="space-y-2.5">
-            {agentPulse.map((agent) => (
-              <div key={agent.name} className="bg-muted/50 rounded px-2 py-1.5">
-                {/* Line 1: Agent name + status badge + freshness + delta */}
-                <div className="flex items-center gap-1.5 text-[11px]">
-                  <span className="font-medium">{agent.name}</span>
-                  <span className="text-muted-foreground">·</span>
-                  <span className="text-muted-foreground">{agent.freshness}</span>
-                  <span className="text-muted-foreground">·</span>
-                  <Badge
-                    variant="secondary"
-                    className={cn(
-                      "text-[9px] px-1 py-0 h-3.5 font-medium",
-                      agent.status === "OK" && "bg-[var(--long)]/15 text-[var(--long)]",
-                      agent.status === "WARN" && "bg-amber-500/15 text-amber-600",
-                      agent.status === "ALERT" && "bg-[var(--short)]/15 text-[var(--short)]"
-                    )}
-                  >
-                    {agent.status}
-                  </Badge>
-                  <span className={cn(
-                    "ml-auto text-[10px] font-medium",
-                    agent.delta === "up" && "text-[var(--long)]",
-                    agent.delta === "down" && "text-[var(--short)]",
-                    agent.delta === "flat" && "text-muted-foreground"
-                  )}>
-                    {agent.delta === "up" && "↑"}
-                    {agent.delta === "down" && "↓"}
-                    {agent.delta === "flat" && "→"}
-                  </span>
+            {AGENT_PULSE_DEFS.map((def) => {
+              const agentSig = agentSignals.get("EURUSD") ?? pulseSignal;
+              const driver = def.driver(agentSig);
+              const isDataReady = hasData && agentSig !== undefined;
+              const status = !isDataReady ? "WARN" : "OK";
+
+              return (
+                <div key={def.name} className="bg-muted/50 rounded px-2 py-1.5">
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <span className="font-medium">{def.name}</span>
+                    <span className="text-muted-foreground">·</span>
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        "text-[9px] px-1 py-0 h-3.5 font-medium",
+                        status === "OK" && "bg-[var(--long)]/15 text-[var(--long)]",
+                        status === "WARN" && "bg-amber-500/15 text-amber-600"
+                      )}
+                    >
+                      {status}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
+                    <span>Driver:</span>
+                    <span className="text-foreground font-medium truncate max-w-[100px]">{driver}</span>
+                    <span className="mx-0.5">|</span>
+                    <span>Impact:</span>
+                    <span className="text-foreground font-medium">{def.impact}</span>
+                  </div>
                 </div>
-                {/* Line 2: Key driver + impact */}
-                <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
-                  <span>Driver:</span>
-                  <span className="text-foreground font-medium">{agent.driver}</span>
-                  <span className="mx-0.5">|</span>
-                  <span>Impact:</span>
-                  <span className="text-foreground font-medium">{agent.impact}</span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

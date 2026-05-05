@@ -370,6 +370,15 @@ def insert_agent_signals(data: list[dict]) -> int:
                     gdelt_attention_zscore=record.get("gdelt_attention_zscore"),
                     macro_attention_zscore=record.get("macro_attention_zscore"),
                     composite_stress_flag=record.get("composite_stress_flag"),
+                    tech_indicator_snapshot=record.get("tech_indicator_snapshot"),
+                    tech_timeframe_votes=record.get("tech_timeframe_votes"),
+                    geo_top_events=record.get("geo_top_events"),
+                    geo_base_zone_explanation=record.get("geo_base_zone_explanation"),
+                    geo_quote_zone_explanation=record.get("geo_quote_zone_explanation"),
+                    geo_graph=record.get("geo_graph"),
+                    macro_top_calendar_events=record.get("macro_top_calendar_events"),
+                    sentiment_stress_sources=record.get("sentiment_stress_sources"),
+                    sentiment_stocktwits_breakdown=record.get("sentiment_stocktwits_breakdown"),
                 )
                 session.add(row)
                 session.flush()

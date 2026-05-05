@@ -228,7 +228,7 @@ class DukascopyCollector(BaseCollector):
             ms, open_value, high_value, low_value, close_value, vol = struct.unpack_from(
                 _RECORD_FMT, decompressed, offset
             )
-            timestamps.append(base_ts + pd.Timedelta(milliseconds=int(ms)))
+            timestamps.append(base_ts + pd.Timedelta(seconds=int(ms)))
             opens.append(round(open_value / point, 6))
             highs.append(round(high_value / point, 6))
             lows.append(round(low_value / point, 6))
@@ -280,7 +280,7 @@ class DukascopyCollector(BaseCollector):
                 use_dictionary=False,
                 write_statistics=False,
             )
-            tmp.rename(path)
+            tmp.replace(path)
         except Exception:
             tmp.unlink(missing_ok=True)
             raise

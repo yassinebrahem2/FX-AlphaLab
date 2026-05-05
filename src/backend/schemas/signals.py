@@ -28,6 +28,15 @@ class AgentSignalResponse(BaseModel):
     gdelt_attention_zscore: float | None
     macro_attention_zscore: float | None
     composite_stress_flag: bool | None
+    tech_indicator_snapshot: dict | None
+    tech_timeframe_votes: dict | None
+    geo_top_events: list | None
+    geo_base_zone_explanation: dict | None
+    geo_quote_zone_explanation: dict | None
+    geo_graph: dict | None
+    macro_top_calendar_events: list | None
+    sentiment_stress_sources: list | None
+    sentiment_stocktwits_breakdown: dict | None
 
     model_config = {"from_attributes": True}
 

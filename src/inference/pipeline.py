@@ -111,8 +111,18 @@ class InferencePipeline:
         try:
             self._rebuild_macro_signal()
         except Exception as exc:
-            self._log.error("Failed to rebuild macro_signal: %s", exc, exc_info=True)
-            raise
+            macro_path = self._root / "data" / "processed" / "macro" / "macro_signal.parquet"
+            if macro_path.exists():
+                self._log.warning(
+                    "macro_signal rebuild failed (%s); using stale file from %s. "
+                    "Fix: run DukascopyPreprocessor to create Silver OHLCV D1 parquets.",
+                    exc,
+                    pd.Timestamp(macro_path.stat().st_mtime, unit="s").date(),
+                )
+                stale["macro_signal_rebuild"] = str(exc)
+            else:
+                self._log.error("Failed to rebuild macro_signal and no stale file exists: %s", exc)
+                raise
 
         # ── 1. Technical signals (per pair, multi-timeframe fused) ────────────
         tech_signals: dict[str, TechnicalSignal | None] = {}
@@ -209,12 +219,9 @@ class InferencePipeline:
     def _rebuild_macro_signal(self) -> None:
         """Rebuild macro_signal.parquet to ensure tone features are fresh.
 
-        Runs MacroSignalBuilder with backfill=True to regenerate the macro signal
-        parquet from current Silver macro, OHLCV, and news data. This ensures
-        NEWS_FED_TONE, NEWS_ECB_TONE, NEWS_BOE_TONE are up-to-date before inference.
-
-        Raises:
-            Exception: If MacroSignalBuilder fails (propagates to caller for logging).
+        Requires Silver OHLCV D1 parquets to exist (DukascopyPreprocessor must have run).
+        If rebuild fails and a stale macro_signal.parquet exists, the caller falls back to
+        the stale file and logs a warning rather than aborting inference.
         """
         from src.ingestion.preprocessors.macro_signal_builder import MacroSignalBuilder
 
@@ -267,7 +274,17 @@ class InferencePipeline:
             checkpoint_path=self._root / "data" / "processed" / "reddit" / "labels_checkpoint.jsonl"
         )
         gdelt_node = GDELTSignalNode(silver_dir=sentiment_dir / "source=gdelt")
-        gtrends_node = GoogleTrendsSignalNode(silver_dir=sentiment_dir)
+
+        from src.shared.config.sources import load_sources_config
+
+        sources_cfg = load_sources_config(self._root / "config" / "sources.yaml")
+        gtrends_cfg = sources_cfg.sources.get("google_trends")
+        gtrends_node = (
+            GoogleTrendsSignalNode(silver_dir=sentiment_dir)
+            if gtrends_cfg and gtrends_cfg.enabled
+            else None
+        )
+
         return SentimentAgent(
             stocktwits_node=stocktwits_node,
             reddit_node=reddit_node,

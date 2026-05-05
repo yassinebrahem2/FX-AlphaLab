@@ -47,13 +47,30 @@ _TF_RULE: dict[str, str] = {
 }
 
 
+def _fix_bronze_timestamps(df: pd.DataFrame) -> pd.DataFrame:
+    """Rescale Bronze timestamps that were stored with seconds-as-milliseconds bug.
+
+    Older Bronze files were written with pd.Timedelta(milliseconds=ms) where ms is
+    actually seconds-since-midnight from the bi5 format.  This compresses all 1440
+    daily bars into the first ~86 seconds past midnight instead of spreading them
+    across 24 hours.  Detected by checking if the max intra-day offset is < 120s.
+    """
+    ts = pd.to_datetime(df["timestamp_utc"], utc=True)
+    midnight = ts.dt.normalize()
+    offsets_s = (ts - midnight).dt.total_seconds()
+    if offsets_s.max() < 120 and len(df) > 10:
+        df = df.copy()
+        df["timestamp_utc"] = midnight + pd.to_timedelta(offsets_s * 1000, unit="s")
+    return df
+
+
 class DukascopyPreprocessor(BasePreprocessor):
     """Resample Dukascopy 1-min Bronze bars to H1 / H4 / D1 Silver Parquet files."""
 
     CATEGORY = "ohlcv"
 
     DEFAULT_INSTRUMENTS: list[str] = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"]
-    TIMEFRAMES: list[str] = ["H1", "H4", "D1"]
+    TIMEFRAMES: list[str] = ["M15", "H1", "H4", "D1"]
 
     def __init__(
         self,
@@ -157,7 +174,7 @@ class DukascopyPreprocessor(BasePreprocessor):
         for path in sorted(instr_dir.glob("**/*.parquet")):
             df = pd.read_parquet(path)
             if not df.empty:
-                frames.append(df)
+                frames.append(_fix_bronze_timestamps(df))
 
         if not frames:
             return pd.DataFrame(columns=["timestamp_utc", "open", "high", "low", "close", "volume"])

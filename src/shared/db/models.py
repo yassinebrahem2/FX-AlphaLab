@@ -135,6 +135,16 @@ class AgentSignal(Base):
     gdelt_attention_zscore = Column(Float)
     macro_attention_zscore = Column(Float)
     composite_stress_flag = Column(Boolean)
+    # Rich nested outputs — stored as JSONB so the frontend can render full explainability
+    tech_indicator_snapshot = Column(JSONB)  # {rsi, macd_hist, bb_pct, above_ema200, atr_pct_rank}
+    tech_timeframe_votes = Column(JSONB)  # {"D1": 0|1, "H4": 0|1, "H1": 0|1}
+    geo_top_events = Column(JSONB)  # list[TopEvent]
+    geo_base_zone_explanation = Column(JSONB)  # ZoneFeatureExplanation
+    geo_quote_zone_explanation = Column(JSONB)
+    geo_graph = Column(JSONB)  # ZoneGraphData
+    macro_top_calendar_events = Column(JSONB)  # list[TopCalendarEvent]
+    sentiment_stress_sources = Column(JSONB)  # list[str]
+    sentiment_stocktwits_breakdown = Column(JSONB)  # SentimentContext.stocktwits_pair_breakdown
 
     __table_args__ = (
         UniqueConstraint("date", "pair", name="uq_agent_signals_date_pair"),

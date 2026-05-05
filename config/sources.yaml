@@ -5,24 +5,31 @@
 sources:
   dukascopy_d1:
     enabled: true
-    interval_hours: 24
+    interval_hours: 0.667
     min_silver_days: 400
     fetch_from: null
     description: "Daily OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
 
   dukascopy_h4:
     enabled: true
-    interval_hours: 24
+    interval_hours: 0.667
     min_silver_days: 400
     fetch_from: null
     description: "4-hour OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
 
   dukascopy_h1:
     enabled: true
-    interval_hours: 24
+    interval_hours: 0.667
     min_silver_days: 400
     fetch_from: null
     description: "1-hour OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
+
+  dukascopy_m15:
+    enabled: true
+    interval_hours: 0.667
+    min_silver_days: 400
+    fetch_from: null
+    description: "15-minute OHLCV data (Dukascopy). Requires 400+ days for robust technical features."
 
   gdelt_events:
     enabled: true
@@ -74,7 +81,7 @@ sources:
     description: "BoE press releases and documents (tone sentiment). Requires 2+ years for reliable baseline."
 
   google_trends:
-    enabled: true
+    enabled: false
     interval_hours: 24
     min_silver_days: null
     fetch_from: "2021-01-01"

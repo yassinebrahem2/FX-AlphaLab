@@ -381,8 +381,14 @@ class MacroSignalBuilder:
         scored = []
         for p in candidates:
             try:
-                tmp = pd.read_parquet(p, columns=["timestamp_utc"])
-                ts = pd.to_datetime(tmp["timestamp_utc"], utc=True, errors="coerce").dropna()
+                tmp = pd.read_parquet(p)
+                if "timestamp_utc" in tmp.columns:
+                    ts = pd.to_datetime(tmp["timestamp_utc"], utc=True, errors="coerce").dropna()
+                elif tmp.index.name == "timestamp_utc":
+                    ts = pd.to_datetime(tmp.index, utc=True, errors="coerce")
+                    ts = ts[ts.notna()]
+                else:
+                    continue
                 scored.append(((ts.max() - ts.min()).days, len(ts), p))
             except Exception:
                 continue
@@ -392,8 +398,11 @@ class MacroSignalBuilder:
 
         best = max(scored, key=lambda x: (x[0], x[1]))[2]
         pdf = pd.read_parquet(best)
-        ts_col = "timestamp_utc" if "timestamp_utc" in pdf.columns else "timestamp"
-        pdf["timestamp_utc"] = pd.to_datetime(pdf[ts_col], utc=True, errors="coerce")
+        if pdf.index.name == "timestamp_utc":
+            pdf = pdf.reset_index()
+        elif "timestamp_utc" not in pdf.columns and "timestamp" in pdf.columns:
+            pdf = pdf.rename(columns={"timestamp": "timestamp_utc"})
+        pdf["timestamp_utc"] = pd.to_datetime(pdf["timestamp_utc"], utc=True, errors="coerce")
         return (
             pdf.dropna(subset=["timestamp_utc"]).sort_values("timestamp_utc").reset_index(drop=True)
         )

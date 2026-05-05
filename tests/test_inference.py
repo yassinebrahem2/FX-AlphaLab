@@ -36,6 +36,15 @@ _AGENT_SIGNALS_KEYS = {
     "gdelt_attention_zscore",
     "macro_attention_zscore",
     "composite_stress_flag",
+    "tech_indicator_snapshot",
+    "tech_timeframe_votes",
+    "geo_top_events",
+    "geo_base_zone_explanation",
+    "geo_quote_zone_explanation",
+    "geo_graph",
+    "macro_top_calendar_events",
+    "sentiment_stress_sources",
+    "sentiment_stocktwits_breakdown",
 }
 
 

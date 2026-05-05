@@ -32,7 +32,13 @@ class BacktestResult:
 def _day_open(bars: pd.DataFrame, date: pd.Timestamp) -> float | None:
     day = date.tz_localize("UTC") if date.tzinfo is None else date.normalize()
     window = bars[(bars.index >= day) & (bars.index < day + pd.Timedelta(days=1))]
-    return float(window.iloc[0]["open"]) if not window.empty else None
+    if not window.empty:
+        return float(window.iloc[0]["open"])
+    # Fallback: return first available bar on or after `day` (handles market holidays / missing day slices)
+    later = bars[bars.index >= day]
+    if not later.empty:
+        return float(later.iloc[0]["open"])
+    return None
 
 
 def _day_close(bars: pd.DataFrame, date: pd.Timestamp) -> float | None:
@@ -131,30 +137,33 @@ class Backtester:
         equity = 1.0
         equity_curve: list[tuple[pd.Timestamp, float]] = []
         closed_trades: list[ClosedTrade] = []
-        open_trade: OpenTrade | None = None
-        open_idx = 0
+        open_trades: dict[str, OpenTrade] = {}
+        open_idx_map: dict[str, int] = {}
 
         for i, current_date in enumerate(sorted_dates):
             report: CoordinatorReport = reports[current_date]
 
-            if open_trade is not None:
-                current_date_utc = (
-                    current_date.tz_localize("UTC") if current_date.tzinfo is None else current_date
-                )
-                day_end = current_date_utc + pd.Timedelta(hours=23, minutes=59)
-                day_start_excl = current_date_utc - pd.Timedelta(seconds=1)
-                pair_bars = self._bars.get(open_trade.pair)
+            # Check each open trade for SL/TP or FLIP conditions
+            current_date_utc = (
+                current_date.tz_localize("UTC") if current_date.tzinfo is None else current_date
+            )
+            day_end = current_date_utc + pd.Timedelta(hours=23, minutes=59)
+            day_start_excl = current_date_utc - pd.Timedelta(seconds=1)
 
+            for pair, ot in list(open_trades.items()):
+                pair_bars = self._bars.get(ot.pair)
                 if pair_bars is not None:
-                    reason, exit_px = _resolve_sl_tp(open_trade, pair_bars, day_start_excl, day_end)
+                    reason, exit_px = _resolve_sl_tp(ot, pair_bars, day_start_excl, day_end)
                 else:
                     reason, exit_px = None, None
 
                 if reason is not None and exit_px is not None:
-                    ct = _close(open_trade, current_date, exit_px, reason, i - open_idx)
+                    idx = open_idx_map.get(pair, 0)
+                    ct = _close(ot, current_date, exit_px, reason, i - idx)
                     closed_trades.append(ct)
                     equity *= 1.0 + ct.equity_delta
-                    open_trade = None
+                    del open_trades[pair]
+                    del open_idx_map[pair]
                 else:
                     new_top = report.top_pick
                     new_dir: str | None = None
@@ -165,29 +174,32 @@ class Backtester:
                                 break
                     signal_continues = (
                         report.overall_action == "trade"
-                        and new_top == open_trade.pair
-                        and new_dir == open_trade.direction
+                        and new_top == ot.pair
+                        and new_dir == ot.direction
                     )
                     if not signal_continues:
-                        pair_bars2 = self._bars.get(open_trade.pair)
+                        pair_bars2 = self._bars.get(ot.pair)
                         eod_px = (
                             _day_close(pair_bars2, current_date) if pair_bars2 is not None else None
                         )
                         if eod_px is None:
-                            eod_px = open_trade.entry_price
-                        ct = _close(open_trade, current_date, eod_px, "FLIP", i - open_idx)
+                            eod_px = ot.entry_price
+                        idx = open_idx_map.get(pair, 0)
+                        ct = _close(ot, current_date, eod_px, "FLIP", i - idx)
                         closed_trades.append(ct)
                         equity *= 1.0 + ct.equity_delta
-                        open_trade = None
+                        del open_trades[pair]
+                        del open_idx_map[pair]
 
-            if (
-                open_trade is None
-                and report.overall_action == "trade"
-                and report.top_pick is not None
-            ):
+            if report.overall_action == "trade" and report.top_pick is not None:
                 pair = report.top_pick
                 pa = next((a for a in report.pairs if a.pair == pair), None)
-                if pa is not None and pa.suggested_action in ("LONG", "SHORT"):
+                # Only open a new trade if this pair doesn't already have an open position
+                if (
+                    pa is not None
+                    and pa.suggested_action in ("LONG", "SHORT")
+                    and pair not in open_trades
+                ):
                     next_bars = self._bars.get(pair)
                     entry_px: float | None = None
                     if next_bars is not None and i + 1 < len(sorted_dates):
@@ -198,7 +210,7 @@ class Backtester:
                         pip = PIP_SIZE.get(pair, 0.0001)
                         cost_pct = self._cost_pips * pip / entry_px * 100
                         sign = 1 if pa.suggested_action == "LONG" else -1
-                        open_trade = OpenTrade(
+                        ot = OpenTrade(
                             pair=pair,
                             direction=pa.suggested_action,
                             entry_date=sorted_dates[i + 1],
@@ -208,24 +220,22 @@ class Backtester:
                             position_pct=pa.position_size_pct,
                             cost_pct=cost_pct,
                         )
-                        open_idx = i + 1
+                        open_trades[pair] = ot
+                        open_idx_map[pair] = i + 1
 
             equity_curve.append((current_date, equity))
 
-        if open_trade is not None:
+        # Close any remaining open trades at the final date
+        if open_trades:
             last_date = sorted_dates[-1]
-            pair_bars = self._bars.get(open_trade.pair)
-            last_px = _day_close(pair_bars, last_date) if pair_bars is not None else None
-            if last_px is not None:
-                ct = _close(
-                    open_trade,
-                    last_date,
-                    last_px,
-                    "EOD_HOLD",
-                    len(sorted_dates) - 1 - open_idx,
-                )
-                closed_trades.append(ct)
-                equity *= 1.0 + ct.equity_delta
+            for pair, ot in list(open_trades.items()):
+                pair_bars = self._bars.get(ot.pair)
+                last_px = _day_close(pair_bars, last_date) if pair_bars is not None else None
+                idx = open_idx_map.get(pair, 0)
+                if last_px is not None:
+                    ct = _close(ot, last_date, last_px, "EOD_HOLD", len(sorted_dates) - 1 - idx)
+                    closed_trades.append(ct)
+                    equity *= 1.0 + ct.equity_delta
 
         eq_series = pd.Series(
             [e for _, e in equity_curve],
