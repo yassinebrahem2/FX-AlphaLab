@@ -11,19 +11,19 @@ export interface LayoutSizes {
 }
 
 const DEFAULT_SIZES: LayoutSizes = {
-  leftSidebar: 260,
+  leftSidebar: 300,
   rightPanel: 360,
   bottomPanel: 190,
 };
 
 const MIN_SIZES: LayoutSizes = {
-  leftSidebar: 220,
+  leftSidebar: 280,
   rightPanel: 320,
   bottomPanel: 160,
 };
 
 const MAX_SIZES: LayoutSizes = {
-  leftSidebar: 400,
+  leftSidebar: 320,
   rightPanel: 500,
   bottomPanel: 400,
 };

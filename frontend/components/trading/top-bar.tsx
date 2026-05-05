@@ -26,7 +26,7 @@ export function TopBar({ activeInstrument, onInstrumentChange, onResetLayout, re
   const lastUpdated = report?.date ?? null;
 
   return (
-    <header className="h-[60px] bg-card border-b border-border flex items-center justify-between px-4 shrink-0 shadow-[var(--card-shadow)]">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-4 shadow-[var(--card-shadow)]">
       {/* Left Section */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
