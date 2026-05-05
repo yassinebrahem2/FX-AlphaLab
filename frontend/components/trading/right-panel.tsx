@@ -1,56 +1,138 @@
 "use client";
 
-import { useState } from "react";
+import Image from "next/image";
+import { FileText, Maximize2, X } from "lucide-react";
+import { useMemo, useState } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { mockAgentReport } from "@/lib/agent-data";
+import { getReportPath } from "@/lib/report-paths";
 import {
   AgentSignalAPI,
   CoordinatorReportAPI,
   CoordinatorSignalAPI,
   toActionLabel,
   toConfidenceLabel,
-  ActionLabel,
 } from "@/lib/api";
 
-const PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"];
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-function actionClass(action: ActionLabel) {
-  if (action === "BUY") return "bg-[var(--buy)] text-white";
-  if (action === "SELL") return "bg-[var(--sell)] text-white";
-  return "bg-muted text-muted-foreground";
+function toTechnicalDirection(value: number | null): string {
+  if (value == null) return "—";
+  if (value > 0.5) return "bullish";
+  if (value < -0.5) return "bearish";
+  if (value > 0.15) return "sl. bullish";
+  if (value < -0.15) return "sl. bearish";
+  return "neutral";
 }
 
-function OrderControls({ symbol }: { symbol: string }) {
+function toMacroDirection(value: string | null): string {
+  if (!value) return "—";
+  if (value === "up") return "up";
+  if (value === "down") return "down";
+  return value.toLowerCase();
+}
+
+function toConfidenceUnit(value: number | null): string {
+  if (value == null) return "—";
+  const normalized = value > 1 ? value / 100 : value;
+  return normalized.toFixed(2);
+}
+
+// ── coworker interface preserved ─────────────────────────────────────────────
+
+interface PairCall {
+  symbol: string;
+  action: "BUY" | "SELL" | "HOLD";
+  conviction: number;
+  positionSize: number;
+  sl: string;
+  tp: string;
+  source: string;
+  horizon: string;
+}
+
+function buildPairCalls(
+  coordinatorSignals: Map<string, CoordinatorSignalAPI> | undefined,
+): PairCall[] {
+  if (coordinatorSignals && coordinatorSignals.size > 0) {
+    return Array.from(coordinatorSignals.entries()).map(([symbol, cs]) => ({
+      symbol,
+      action: (toActionLabel(cs.suggested_action) as "BUY" | "SELL" | "HOLD"),
+      conviction: Math.round((cs.conviction_score ?? 0) * 100),
+      positionSize: cs.position_size_pct ?? 0,
+      sl: cs.sl_pct != null ? `${cs.sl_pct.toFixed(2)}%` : "—",
+      tp: cs.tp_pct != null ? `${cs.tp_pct.toFixed(2)}%` : "—",
+      source: cs.direction_source ?? "—",
+      horizon: cs.direction_horizon ?? "—",
+    }));
+  }
+  return mockAgentReport.coordinator.per_pair.map((pair) => ({
+    symbol: pair.symbol,
+    action: pair.suggested_action,
+    conviction: pair.conviction_score,
+    positionSize: pair.position_size_pct,
+    sl: `${pair.sl_pct.toFixed(2)}%`,
+    tp: `${pair.tp_pct.toFixed(2)}%`,
+    source: pair.direction_source,
+    horizon: pair.direction_horizon,
+  }));
+}
+
+// ── order controls (coworker's exact version) ─────────────────────────────────
+
+interface OrderControlsProps {
+  symbol: string;
+}
+
+function OrderControls({ symbol }: OrderControlsProps) {
   const [orderType, setOrderType] = useState<"market" | "pending">("market");
   const [size, setSize] = useState("0.10");
   const [sl, setSl] = useState("");
   const [tp, setTp] = useState("");
 
-  void symbol;
+  const bidPrice = "1.0842";
+  const askPrice = "1.0844";
+  const spread = "2.0";
 
   return (
-    <div className="border-t border-border p-3 space-y-3">
+    <div className="space-y-3 border-t border-border p-3">
       <div className="flex gap-2">
-        <Button className="flex-1 bg-[var(--buy)] hover:bg-[var(--buy)]/90 text-white h-9" size="sm">
+        <Button className="h-9 flex-1 bg-[var(--buy)] text-white hover:bg-[var(--buy)]/90" size="sm">
           <div className="flex flex-col items-center">
             <span className="text-[10px] font-normal">BUY</span>
+            <span className="font-mono text-xs">{askPrice}</span>
           </div>
         </Button>
-        <Button className="flex-1 bg-[var(--sell)] hover:bg-[var(--sell)]/90 text-white h-9" size="sm">
+        <Button className="h-9 flex-1 bg-[var(--sell)] text-white hover:bg-[var(--sell)]/90" size="sm">
           <div className="flex flex-col items-center">
             <span className="text-[10px] font-normal">SELL</span>
+            <span className="font-mono text-xs">{bidPrice}</span>
           </div>
         </Button>
+      </div>
+
+      <div className="text-center text-[10px] text-muted-foreground">
+        {symbol} spread: <span className="font-mono">{spread}</span> pips
       </div>
 
       <div className="flex gap-2">
         <Button
           variant={orderType === "market" ? "default" : "outline"}
           size="sm"
-          className="flex-1 h-7 text-xs"
+          className="h-7 flex-1 text-xs"
           onClick={() => setOrderType("market")}
         >
           Market
@@ -58,7 +140,7 @@ function OrderControls({ symbol }: { symbol: string }) {
         <Button
           variant={orderType === "pending" ? "default" : "outline"}
           size="sm"
-          className="flex-1 h-7 text-xs"
+          className="h-7 flex-1 text-xs"
           onClick={() => setOrderType("pending")}
         >
           Pending
@@ -67,184 +149,248 @@ function OrderControls({ symbol }: { symbol: string }) {
 
       <div className="space-y-2">
         <div>
-          <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Size (lots)</label>
-          <Input value={size} onChange={(e) => setSize(e.target.value)} className="h-7 text-xs font-mono mt-1" />
+          <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size (lots)</label>
+          <Input value={size} onChange={(e) => setSize(e.target.value)} className="mt-1 h-7 text-xs font-mono" />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Stop Loss</label>
-            <Input value={sl} onChange={(e) => setSl(e.target.value)} placeholder="Price" className="h-7 text-xs font-mono mt-1" />
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Stop Loss</label>
+            <Input
+              value={sl}
+              onChange={(e) => setSl(e.target.value)}
+              placeholder="Price"
+              className="mt-1 h-7 text-xs font-mono"
+            />
           </div>
           <div>
-            <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Take Profit</label>
-            <Input value={tp} onChange={(e) => setTp(e.target.value)} placeholder="Price" className="h-7 text-xs font-mono mt-1" />
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Take Profit</label>
+            <Input
+              value={tp}
+              onChange={(e) => setTp(e.target.value)}
+              placeholder="Price"
+              className="mt-1 h-7 text-xs font-mono"
+            />
           </div>
         </div>
       </div>
 
-      <Button className="w-full h-8 text-xs">Place Order</Button>
+      <Button className="h-8 w-full text-xs">Place Order</Button>
     </div>
   );
 }
 
+// ── main component ────────────────────────────────────────────────────────────
+
 interface RightPanelProps {
   symbol: string;
   width?: number;
-  report: CoordinatorReportAPI | null;
-  coordinatorSignals: Map<string, CoordinatorSignalAPI>;
-  agentSignals: Map<string, AgentSignalAPI>;
+  report?: CoordinatorReportAPI | null;
+  coordinatorSignals?: Map<string, CoordinatorSignalAPI>;
+  agentSignals?: Map<string, AgentSignalAPI>;
 }
 
 export function RightPanel({
   symbol,
-  width = 360,
+  width = 340,
   report,
   coordinatorSignals,
   agentSignals,
 }: RightPanelProps) {
-  const [activePairTab, setActivePairTab] = useState("EURUSD");
+  const [activePairTab, setActivePairTab] = useState(symbol);
+  const [reportOpen, setReportOpen] = useState(false);
 
-  const topPickPair = report?.top_pick ?? null;
-  const topPickCs = topPickPair ? coordinatorSignals.get(topPickPair) : null;
-  const topPickAction = toActionLabel(topPickCs?.suggested_action ?? null);
-  const topPickConviction =
-    topPickCs?.conviction_score != null ? Math.round(topPickCs.conviction_score * 100) : null;
-  const topPickTier = toConfidenceLabel(topPickCs?.confidence_tier ?? null);
-  const topPickPosSz = topPickCs?.position_size_pct;
-  const topPickSl = topPickCs?.sl_pct;
-  const topPickTp = topPickCs?.tp_pct;
+  const pairCalls = useMemo(() => buildPairCalls(coordinatorSignals), [coordinatorSignals]);
 
-  const activeCs = coordinatorSignals.get(activePairTab);
-  const activeAs = agentSignals.get(activePairTab);
-  const activeAction = toActionLabel(activeCs?.suggested_action ?? null);
+  const activeSymbol = useMemo(() => {
+    if (pairCalls.some((pair) => pair.symbol === symbol)) {
+      return activePairTab === symbol || !pairCalls.some((pair) => pair.symbol === activePairTab)
+        ? symbol
+        : activePairTab;
+    }
+    return activePairTab;
+  }, [activePairTab, symbol, pairCalls]);
 
-  const hasData = coordinatorSignals.size > 0;
+  const activePair = pairCalls.find((pair) => pair.symbol === activeSymbol) ?? pairCalls[0];
 
-  // Agent highlights derived from the active pair's signals
-  const agentHighlights = [
-    {
-      agent: "Technical",
-      line1: activeAs?.tech_vol_regime
-        ? `Vol regime: ${activeAs.tech_vol_regime}`
-        : "—",
-      line2: activeAs?.tech_timeframe_votes
-        ? `Votes: D1=${activeAs.tech_timeframe_votes["D1"] ?? "—"} H4=${activeAs.tech_timeframe_votes["H4"] ?? "—"} H1=${activeAs.tech_timeframe_votes["H1"] ?? "—"}`
-        : "Timeframe votes: —",
-    },
-    {
-      agent: "Macro",
-      line1: activeAs?.macro_dominant_driver
-        ? `Driver: ${activeAs.macro_dominant_driver}`
-        : "—",
-      line2: activeAs?.macro_bias_score != null
-        ? `Bias: ${activeAs.macro_bias_score.toFixed(3)}`
-        : "Bias: —",
-    },
-    {
-      agent: "Geo",
-      line1: activeAs?.geo_risk_regime
-        ? `Risk regime: ${activeAs.geo_risk_regime}`
-        : "—",
-      line2: activeAs?.geo_base_zone_explanation?.dominant_driver
-        ? `Driver: ${activeAs.geo_base_zone_explanation.dominant_driver}`
-        : "Driver: —",
-    },
-    {
-      agent: "Sentiment",
-      line1: activeAs?.composite_stress_flag
-        ? `Stress: ${activeAs.sentiment_stress_sources?.join(", ") || "flagged"}`
-        : "Stress flag: Normal",
-      line2: activeAs?.gdelt_tone_zscore != null
-        ? `GDELT tone z: ${activeAs.gdelt_tone_zscore.toFixed(2)}`
-        : "GDELT tone: —",
-    },
-  ];
+  // Top pick — real data when available, otherwise mock
+  const topPickSymbol = report?.top_pick ?? mockAgentReport.coordinator.top_pick;
+  const topPickCs = coordinatorSignals?.get(topPickSymbol);
+  const topPickMock =
+    mockAgentReport.coordinator.per_pair.find((p) => p.symbol === topPickSymbol) ??
+    mockAgentReport.coordinator.per_pair[0];
+  const topPickConviction = topPickCs != null
+    ? Math.round((topPickCs.conviction_score ?? 0) * 100)
+    : topPickMock.conviction_score;
+  const topPickConfTier = topPickCs != null
+    ? toConfidenceLabel(topPickCs.confidence_tier)
+    : topPickMock.confidence_tier;
+  const topPickPosSz = topPickCs != null
+    ? `${(topPickCs.position_size_pct ?? 0).toFixed(1)}%`
+    : `${topPickMock.position_size_pct}%`;
+  const topPickSlTp = topPickCs != null
+    ? `${(topPickCs.sl_pct ?? 0).toFixed(2)}% / ${(topPickCs.tp_pct ?? 0).toFixed(2)}%`
+    : `${topPickMock.sl_pct.toFixed(2)}% / ${topPickMock.tp_pct.toFixed(2)}%`;
+  const overallAction = report
+    ? toActionLabel(report.overall_action ?? null)
+    : mockAgentReport.coordinator.overall_action;
+  const narrativeContext = report?.narrative_context
+    ? typeof report.narrative_context === "string"
+      ? report.narrative_context
+      : JSON.stringify(report.narrative_context)
+    : mockAgentReport.coordinator.narrative_context;
+
+  // Active pair agent signals — real when available, otherwise mock
+  const activeAs = agentSignals?.get(activePair.symbol);
+  const techMock = mockAgentReport.technical.find((t) => t.symbol === activePair.symbol);
+  const macroMock = mockAgentReport.macro.find((m) => m.symbol === activePair.symbol);
+  const geoMock = mockAgentReport.geopolitical.find((g) => g.symbol === activePair.symbol);
+  const sentimentMock = mockAgentReport.sentiment[0];
+
+  const reportHref = getReportPath(activePair.symbol);
 
   return (
     <aside
-      className="bg-card border-l border-border flex flex-col shrink-0 overflow-hidden shadow-[var(--card-shadow)]"
+      className="flex shrink-0 flex-col overflow-hidden border-l border-border bg-card shadow-[var(--card-shadow)]"
       style={{ width: `${width}px` }}
     >
-      <div className="p-3 border-b border-border">
-        <h2 className="text-sm font-semibold">Alpha Assistant</h2>
+      {/* Header — coworker's exact layout */}
+      <div className="border-b border-border px-3 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-12 items-center justify-center overflow-hidden rounded-sm bg-muted/40 px-1">
+            <Image src="/fx-mark1.png" alt="FX AlphaLab logo" width={44} height={28} className="h-auto w-full" />
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Alpha Signal</p>
+            <h2 className="text-sm font-semibold">AI Recommendation</h2>
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto">
         {/* Today's Call */}
-        <div className="p-3 border-b border-border">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-            {"Today's Call"}
+        <div className="border-b border-border p-3">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Today&apos;s Call
           </h3>
 
-          <div className="bg-muted/50 rounded-md p-3 space-y-3">
-            {hasData && topPickPair ? (
-              <>
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Top Pick</p>
-                    <p className="font-semibold text-sm">{topPickPair}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Direction</p>
-                    <Badge className={cn("text-[10px] px-2 h-5 mt-0.5", actionClass(topPickAction))}>
-                      {topPickAction}
-                    </Badge>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Conviction</p>
-                    <p className="font-semibold text-sm text-primary">
-                      {topPickConviction != null ? `${topPickConviction}%` : "—"}
-                    </p>
-                  </div>
+          <div className="rounded-xl border border-primary/15 bg-[linear-gradient(180deg,rgba(31,74,168,0.12),rgba(31,74,168,0.03))] p-4 shadow-sm">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Top Pick</p>
+                <div className="mt-1 flex items-center gap-2">
+                  <p className="text-xl font-semibold text-foreground">{topPickSymbol}</p>
+                  <Badge
+                    className={cn(
+                      "h-6 px-2.5 text-[10px] text-white",
+                      overallAction === "BUY" && "bg-[var(--buy)]",
+                      overallAction === "SELL" && "bg-[var(--sell)]",
+                      overallAction === "HOLD" && "bg-[var(--flat)]"
+                    )}
+                  >
+                    {overallAction}
+                  </Badge>
                 </div>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Conviction</p>
+                <p className="mt-1 text-2xl font-semibold text-primary">{topPickConviction}%</p>
+              </div>
+            </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Conf Tier</p>
-                    <p className="font-medium">{topPickTier}</p>
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="rounded-lg border border-border/60 bg-background/75 px-2 py-2">
+                <p className="text-[10px] text-muted-foreground">Conf Tier</p>
+                <p className="mt-1 font-medium">{topPickConfTier}</p>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-background/75 px-2 py-2">
+                <p className="text-[10px] text-muted-foreground">Pos Size</p>
+                <p className="mt-1 font-mono">{topPickPosSz}</p>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-background/75 px-2 py-2">
+                <p className="text-[10px] text-muted-foreground">SL/TP</p>
+                <p className="mt-1 font-mono">{topPickSlTp}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-lg border border-border/60 bg-background/70 px-3 py-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Context</p>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{narrativeContext}</p>
+            </div>
+
+            {/* Deep Dive modal — coworker's exact modal, iframe untouched */}
+            <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  size="sm"
+                  className="mt-3 h-9 w-full border border-primary/30 bg-primary text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90"
+                >
+                  <FileText className="mr-1.5 h-3.5 w-3.5" />
+                  Open Deep Dive Report
+                </Button>
+              </DialogTrigger>
+              <DialogContent
+                showCloseButton={false}
+                className="flex h-[94vh] max-h-[94vh] w-[96vw] max-w-none grid-rows-none flex-col gap-0 overflow-hidden rounded-xl border border-border bg-[#e8eaef] p-0 shadow-2xl sm:!max-w-[1500px]"
+              >
+                <DialogHeader className="shrink-0 border-b border-border bg-card px-5 py-3.5">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/50 px-1">
+                        <Image
+                          src="/fx-mark1.png"
+                          alt="FX AlphaLab logo"
+                          width={28}
+                          height={28}
+                          className="h-7 w-7 rounded-md"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <DialogTitle className="text-base">Deep Dive Report</DialogTitle>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <a
+                        href={reportHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-8 items-center gap-2 rounded-md border border-primary/25 bg-primary/10 px-3 text-[11px] font-semibold text-primary transition-colors hover:border-primary/45 hover:bg-primary/15"
+                      >
+                        <Maximize2 className="h-3.5 w-3.5" />
+                        Full view
+                      </a>
+                      <DialogClose className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                        <X className="h-4 w-4" />
+                        <span className="sr-only">Close</span>
+                      </DialogClose>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Pos Size</p>
-                    <p className="font-mono">{topPickPosSz != null ? `${topPickPosSz.toFixed(1)}%` : "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">SL / TP %</p>
-                    <p className="font-mono">
-                      {topPickSl != null && topPickTp != null
-                        ? `${topPickSl.toFixed(2)} / ${topPickTp.toFixed(2)}`
-                        : "—"}
-                    </p>
-                  </div>
+                </DialogHeader>
+                <div className="min-h-0 flex-1 overflow-hidden bg-[#dfe3ea] p-3">
+                  <iframe
+                    src={reportHref}
+                    title={`${activePair.symbol} deep dive report`}
+                    className="block h-full w-full rounded-lg border border-border bg-[#eee9df] shadow-sm"
+                  />
                 </div>
-
-                {report?.global_regime && (
-                  <div className="text-[10px] text-muted-foreground text-center">
-                    Global regime: <span className="font-medium text-foreground">{report.global_regime}</span>
-                  </div>
-                )}
-                {report?.hold_reason && (
-                  <p className="text-xs text-amber-600 leading-relaxed">{report.hold_reason}</p>
-                )}
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center">
-                {hasData ? "No top pick" : "Awaiting inference data…"}
-              </p>
-            )}
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
 
-        {/* Per-pair Tabs */}
-        <div className="p-3 border-b border-border">
-          <Tabs value={activePairTab} onValueChange={setActivePairTab}>
-            <TabsList className="w-full h-7 bg-muted p-0.5">
-              {PAIRS.map((pair) => (
+        {/* Recommendation Details — coworker's exact layout */}
+        <div className="border-b border-border p-3">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Recommendation Details
+          </h3>
+          <Tabs value={activePair.symbol} onValueChange={setActivePairTab}>
+            <TabsList className="h-7 w-full bg-muted p-0.5">
+              {pairCalls.map((pair) => (
                 <TabsTrigger
-                  key={pair}
-                  value={pair}
-                  className="flex-1 h-6 text-[10px] data-[state=active]:bg-card"
+                  key={pair.symbol}
+                  value={pair.symbol}
+                  className="h-6 flex-1 text-[10px] data-[state=active]:bg-card"
                 >
-                  {pair}
+                  {pair.symbol}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -252,113 +398,181 @@ export function RightPanel({
             <div className="mt-3 space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Suggested Action</span>
-                <Badge className={cn("text-[10px] px-1.5 h-5", actionClass(activeAction))}>
-                  {hasData ? activeAction : "—"}
+                <Badge
+                  className={cn(
+                    "h-5 px-1.5 text-[10px]",
+                    activePair.action === "BUY" && "bg-[var(--buy)] text-white",
+                    activePair.action === "SELL" && "bg-[var(--sell)] text-white",
+                    activePair.action === "HOLD" && "bg-[var(--flat)] text-white"
+                  )}
+                >
+                  {activePair.action}
                 </Badge>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Conviction</span>
-                <span className="font-mono">
-                  {activeCs?.conviction_score != null
-                    ? `${Math.round(activeCs.conviction_score * 100)}%`
-                    : "—"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Conf Tier</span>
-                <span>{toConfidenceLabel(activeCs?.confidence_tier ?? null)}</span>
+                <span className="font-mono">{activePair.conviction}%</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Position Size</span>
-                <span className="font-mono">
-                  {activeCs?.position_size_pct != null ? `${activeCs.position_size_pct.toFixed(1)}%` : "—"}
-                </span>
+                <span className="font-mono">{activePair.positionSize}%</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">SL / TP %</span>
+                <span className="text-muted-foreground">SL/TP</span>
                 <span className="font-mono">
-                  {activeCs?.sl_pct != null && activeCs?.tp_pct != null
-                    ? `${activeCs.sl_pct.toFixed(2)} / ${activeCs.tp_pct.toFixed(2)}`
-                    : "—"}
+                  <span className="text-[var(--short)]">{activePair.sl}</span> /{" "}
+                  <span className="text-[var(--long)]">{activePair.tp}</span>
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Source</span>
-                <span className="text-right max-w-[150px] truncate">{activeCs?.direction_source ?? "—"}</span>
+                <span>{activePair.source}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Horizon</span>
-                <span>{activeCs?.direction_horizon ?? "—"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Est Vol 3d</span>
-                <span className="font-mono">
-                  {activeCs?.estimated_vol_3d != null
-                    ? activeCs.estimated_vol_3d.toFixed(4)
-                    : "—"}
-                </span>
+                <span>{activePair.horizon}</span>
               </div>
             </div>
           </Tabs>
         </div>
 
-        {/* Agent Highlights */}
-        <div className="p-3 border-b border-border">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-            Agent Highlights — {activePairTab}
+        {/* Agent Outputs — coworker's exact layout, real data wired in */}
+        <div className="border-b border-border p-3">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Actual Agent Outputs
           </h3>
-          <div className="space-y-2">
-            {agentHighlights.map((h) => (
-              <div key={h.agent} className="text-xs">
-                <span className="font-medium text-primary">{h.agent}: </span>
-                <span className="text-muted-foreground">{h.line1}</span>
-                <br />
-                <span className="text-muted-foreground ml-2">{h.line2}</span>
+          <div className="space-y-2.5 text-xs">
+            {/* Technical */}
+            <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2.5">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Technical</div>
+              <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1">
+                <div className="text-muted-foreground">direction</div>
+                <div className="font-medium text-foreground">
+                  {activeAs
+                    ? toTechnicalDirection(activeAs.tech_direction ?? null)
+                    : (techMock?.direction ?? "FLAT").toLowerCase()}
+                </div>
+                <div className="text-muted-foreground">confidence</div>
+                <div className="font-mono text-foreground">
+                  {activeAs
+                    ? toConfidenceUnit(activeAs.tech_confidence ?? null)
+                    : toConfidenceUnit(techMock?.confidence ?? 0)}
+                </div>
+                <div className="text-muted-foreground">timeframe_votes</div>
+                <div className="font-medium text-foreground">
+                  {activeAs?.tech_timeframe_votes
+                    ? Object.entries(activeAs.tech_timeframe_votes)
+                        .map(([tf, v]) => `${tf}:${(v as number) > 0 ? "LONG" : (v as number) < 0 ? "SHORT" : "FLAT"}`)
+                        .join(" | ")
+                    : (techMock?.timeframe_votes.map((v) => `${v.timeframe}:${v.direction}`).join(" | ") ?? "N/A")}
+                </div>
+                <div className="text-muted-foreground">volatility_regime</div>
+                <div className="font-medium text-foreground">
+                  {activeAs?.tech_vol_regime ?? techMock?.volatility_regime.toLowerCase() ?? "n/a"}
+                </div>
               </div>
-            ))}
+            </div>
+
+            {/* Macro */}
+            <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2.5">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Macro</div>
+              <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1">
+                <div className="text-muted-foreground">module_c_direction</div>
+                <div className="font-medium text-foreground">
+                  {activeAs
+                    ? toMacroDirection(activeAs.macro_direction ?? null)
+                    : (macroMock?.module_c_direction ?? "NEUTRAL").toLowerCase()}
+                </div>
+                <div className="text-muted-foreground">macro_confidence</div>
+                <div className="font-mono text-foreground">
+                  {activeAs
+                    ? toConfidenceUnit(activeAs.macro_confidence ?? null)
+                    : toConfidenceUnit(macroMock?.macro_confidence ?? 0)}
+                </div>
+                <div className="text-muted-foreground">dominant_driver</div>
+                <div className="font-medium text-foreground">
+                  {activeAs?.macro_dominant_driver ?? macroMock?.dominant_driver ?? "N/A"}
+                </div>
+                <div className="text-muted-foreground">surprise | bias</div>
+                <div className="font-mono text-foreground">
+                  {activeAs
+                    ? `${(activeAs.macro_surprise_score ?? 0).toFixed(2)} | ${(activeAs.macro_bias_score ?? 0).toFixed(2)}`
+                    : `${macroMock?.macro_surprise_score.toFixed(2) ?? "0.00"} | ${macroMock?.macro_bias_score.toFixed(2) ?? "0.00"}`}
+                </div>
+              </div>
+            </div>
+
+            {/* Geo */}
+            <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2.5">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Geo</div>
+              <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1">
+                <div className="text-muted-foreground">risk_regime</div>
+                <div className="font-medium text-foreground">
+                  {activeAs?.geo_risk_regime ?? geoMock?.risk_regime.toLowerCase() ?? "n/a"}
+                </div>
+                <div className="text-muted-foreground">bilateral_risk_score</div>
+                <div className="font-mono text-foreground">
+                  {activeAs
+                    ? (activeAs.geo_bilateral_risk ?? 0).toFixed(2)
+                    : geoMock?.bilateral_risk_score.toFixed(2) ?? "0.00"}
+                </div>
+                <div className="text-muted-foreground">base_driver</div>
+                <div className="font-medium text-foreground">
+                  {activeAs?.geo_base_zone_explanation?.dominant_driver ?? geoMock?.base_dominant_driver ?? "N/A"}
+                </div>
+                <div className="text-muted-foreground">quote_driver</div>
+                <div className="font-medium text-foreground">
+                  {activeAs?.geo_quote_zone_explanation?.dominant_driver ?? geoMock?.quote_dominant_driver ?? "N/A"}
+                </div>
+              </div>
+            </div>
+
+            {/* Sentiment */}
+            <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2.5">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Sentiment</div>
+              <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1">
+                <div className="text-muted-foreground">usdjpy_stocktwits_active</div>
+                <div className="font-medium text-foreground">
+                  {activeAs
+                    ? (activeAs.usdjpy_stocktwits_vol_signal != null ? "true" : "false")
+                    : (sentimentMock?.usdjpy_stocktwits_active ? "true" : "false")}
+                </div>
+                <div className="text-muted-foreground">composite_stress_flag</div>
+                <div className="font-medium text-foreground">
+                  {activeAs
+                    ? (activeAs.composite_stress_flag ? "true" : "false")
+                    : (sentimentMock?.composite_stress_flag ? "true" : "false")}
+                </div>
+                <div className="text-muted-foreground">stress_sources</div>
+                <div className="font-medium text-foreground">
+                  {activeAs
+                    ? (activeAs.sentiment_stress_sources?.join(", ") || "[]")
+                    : (sentimentMock?.stress_sources.join(", ") || "[]")}
+                </div>
+                <div className="text-muted-foreground">attention_zscores</div>
+                <div className="font-mono text-foreground">
+                  {activeAs
+                    ? `${(activeAs.gdelt_attention_zscore ?? 0).toFixed(2)} | ${(activeAs.macro_attention_zscore ?? 0).toFixed(2)}`
+                    : `${sentimentMock?.gdelt_attention_zscore.toFixed(2) ?? "0.00"} | ${sentimentMock?.macro_attention_zscore.toFixed(2) ?? "0.00"}`}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Direction Source</div>
+                <div className="mt-1 font-medium text-foreground">{activePair.source}</div>
+              </div>
+              <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Horizon</div>
+                <div className="mt-1 font-medium text-foreground">{activePair.horizon}</div>
+              </div>
+            </div>
           </div>
-
-          {/* Macro calendar events if available */}
-          {activeAs?.macro_top_calendar_events && activeAs.macro_top_calendar_events.length > 0 && (
-            <div className="mt-3">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-                Top Calendar Events
-              </p>
-              <div className="space-y-1">
-                {activeAs.macro_top_calendar_events.slice(0, 3).map((ev, i) => (
-                  <div key={i} className="flex justify-between text-[10px]">
-                    <span className="text-foreground font-medium truncate max-w-[140px]">{ev.event_name}</span>
-                    <span className={cn(
-                      "font-mono",
-                      ev.surprise_direction > 0 ? "text-[var(--long)]" : "text-[var(--short)]"
-                    )}>
-                      {ev.surprise_direction > 0 ? "+" : ""}{ev.contribution.toFixed(3)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Geo top events if available */}
-          {activeAs?.geo_top_events && activeAs.geo_top_events.length > 0 && (
-            <div className="mt-3">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-                Top Geo Events
-              </p>
-              <div className="space-y-1">
-                {activeAs.geo_top_events.slice(0, 2).map((ev, i) => (
-                  <div key={i} className="text-[10px] text-muted-foreground">
-                    {ev.actor1_name ?? "—"} ↔ {ev.actor2_name ?? "—"} · tone {ev.avg_tone.toFixed(1)}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
-      <OrderControls symbol={symbol} />
+      <OrderControls symbol={activePair.symbol} />
     </aside>
   );
 }
