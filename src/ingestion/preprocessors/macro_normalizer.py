@@ -363,19 +363,24 @@ class MacroNormalizer(BasePreprocessor):
         # Filter by date range if provided
         if start_date or end_date:
             # Use UTC-aware timestamps for reliable comparisons with start/end
-            timestamp_col = pd.to_datetime(df_silver["timestamp_utc"], utc=True)
             if start_date:
                 if getattr(start_date, "tzinfo", None) is None:
                     from datetime import timezone
 
                     start_date = start_date.replace(tzinfo=timezone.utc)
-                df_silver = df_silver[timestamp_col >= pd.to_datetime(start_date, utc=True)]
+                start_ts = pd.to_datetime(start_date, utc=True)
+                df_silver = df_silver[
+                    pd.to_datetime(df_silver["timestamp_utc"], utc=True) >= start_ts
+                ]
             if end_date:
                 if getattr(end_date, "tzinfo", None) is None:
                     from datetime import timezone
 
                     end_date = end_date.replace(tzinfo=timezone.utc)
-                df_silver = df_silver[timestamp_col <= pd.to_datetime(end_date, utc=True)]
+                end_ts = pd.to_datetime(end_date, utc=True)
+                df_silver = df_silver[
+                    pd.to_datetime(df_silver["timestamp_utc"], utc=True) <= end_ts
+                ]
 
         # Sort by timestamp
         df_silver = df_silver.sort_values("timestamp_utc").reset_index(drop=True)
