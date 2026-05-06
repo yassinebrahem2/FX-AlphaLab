@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.backend.dependencies import get_db
+from src.backend.email_service import send_welcome_email
 from src.backend.schemas.auth import (
     LoginRequest,
     RefreshRequest,
@@ -87,7 +88,9 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> TokenRespon
             status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
         ) from exc
 
-    return _issue_tokens(db, user)
+    response = _issue_tokens(db, user)
+    send_welcome_email(email, payload.full_name)
+    return response
 
 
 @router.post("/login", response_model=TokenResponse)

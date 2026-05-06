@@ -68,6 +68,13 @@ class Config:
     AUTH_ACCESS_TOKEN_MINUTES: int = int(os.getenv("AUTH_ACCESS_TOKEN_MINUTES", "1440"))
     AUTH_REFRESH_TOKEN_DAYS: int = int(os.getenv("AUTH_REFRESH_TOKEN_DAYS", "365"))
 
+    # SMTP / Email settings
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str | None = os.getenv("SMTP_USER")
+    SMTP_PASSWORD: str | None = os.getenv("SMTP_PASSWORD")
+    SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "FX-AlphaLab")
+
     @classmethod
     def validate(cls) -> None:
         """Validate required configuration."""
