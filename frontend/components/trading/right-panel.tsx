@@ -273,7 +273,7 @@ export function RightPanel({
       {/* Header — coworker's exact layout */}
       <div className="border-b border-border px-3 py-3">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-12 items-center justify-center overflow-hidden rounded-sm bg-muted/40 px-1">
+          <div className="flex h-9 w-12 items-center justify-center px-1">
             <Image src="/logo.png" alt="FX AlphaLab logo" width={44} height={28} className="h-auto w-full" />
           </div>
           <div>
@@ -358,13 +358,13 @@ export function RightPanel({
                 <DialogHeader className="shrink-0 border-b border-border bg-card px-5 py-3.5">
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/50 px-1">
+                      <div className="flex h-9 w-12 shrink-0 items-center justify-center px-1">
                         <Image
                           src="/logo.png"
                           alt="FX AlphaLab logo"
-                          width={28}
+                          width={44}
                           height={28}
-                          className="h-7 w-7 rounded-md"
+                          className="h-auto w-full"
                         />
                       </div>
                       <div className="min-w-0">
