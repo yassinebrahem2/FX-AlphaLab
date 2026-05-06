@@ -121,7 +121,7 @@ def admin_trigger(source_id: str):
     orchestrator = app.state.orchestrator
 
     # Run the source and obtain a CollectionResult
-    result = orchestrator.run_source(source_id)
+    result = orchestrator.run_source(source_id, force=True)
 
     # If the source is unknown according to configured sources, return 422
     if source_id not in getattr(orchestrator, "config", {}).sources:

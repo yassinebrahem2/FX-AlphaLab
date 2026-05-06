@@ -83,7 +83,7 @@ class CollectionOrchestrator:
             handler.close()
             self.logger.removeHandler(handler)
 
-    def run_source(self, source_id: str) -> CollectionResult:
+    def run_source(self, source_id: str, force: bool = False) -> CollectionResult:
         """Run collection for a single source.
 
         Logic:
@@ -114,7 +114,7 @@ class CollectionOrchestrator:
                 )
 
             source_config = self.config.sources[source_id]
-            if not source_config.enabled:
+            if not source_config.enabled and not force:
                 self.logger.info(f"Source {source_id} is disabled, skipping collection")
                 return CollectionResult(
                     source_id=source_id, rows_written=0, backfill_performed=False
